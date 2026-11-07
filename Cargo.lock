@@ -425,8 +425,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "chrono-tz",
- "pretty_assertions",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror",

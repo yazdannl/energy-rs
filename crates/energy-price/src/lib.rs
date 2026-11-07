@@ -1,20 +1,41 @@
-//! Prices and settlement.
+//! Prices and settlement: the single source of truth for money.
 //!
-//! Responsibility (PLAN.md §2, §4): be the single source of truth for money.
+//! Responsibility (PLAN.md §2 and §4, `reports/energy-rs/prices.md`):
 //!
-//! * [`provider`] — the `PriceProvider` trait with `ZonneplanDirect { refresh_token }` and the
-//!   `HaSensors` fallback. Prices are fetched once per publication (detected by max end timestamp
-//!   or forecast hash), never per tick.
-//! * [`contract`] — the yearly contract constants (`vat`, `energy_tax_ex`, `fee_incl`,
-//!   `feed_in_fee`, `bonus_pct`, `teruglever_kosten`, `saldering` regime) and the net-metering
-//!   toggle (date driven, manual override).
-//! * [`settlement`] — one `revenue(t, kwh, source)` function used by the optimizer, the dispatcher,
-//!   the sell floor and reporting. Exact-or-refuse on price gaps.
-//! * [`store`] — persisted 15-minute slots plus the import/export budget counters the regime needs.
+//! * [`book`] — validated, gap-free [`PriceBook`] slots with `buy_all_in` exactly as published and
+//!   `market` derived once at ingest; exact-or-refuse on gaps, never zero-filled.
+//! * [`provider`] — [`PriceProvider`] with `ZonneplanDirect` (refresh-token OAuth2 + consumer-prices
+//!   chart) and `HaSensorFallback` (integration sensor forecast, coverage-based staleness).  Prices
+//!   are fetched once per publication, never per tick.
+//! * [`settlement`] — contract constants (VAT, yearly energy tax, fees, Zonnebonus guards) and the
+//!   one [`Settlement::revenue`] / [`Settlement::export_price`] / [`Settlement::marginal_export`] /
+//!   [`Settlement::buy`] used by the optimizer, dispatch, the sell floor and reporting.  Net
+//!   metering is date-driven with a manual override; the annual budget and bonus counters advance
+//!   only through [`Settlement::settle`].
+//! * [`store`] — append-only publications in memory or SQLite (WAL, in-code migrations): a save is
+//!   idempotent by content hash and a repeated poll of an already-covered publication writes
+//!   nothing, the newest publication wins per slot on load, and a gap inside a loaded range is
+//!   refused rather than filled.
 //!
-//! Money is EUR in f64, rounded to 1e-6 on write; energy is Wh in f64.
+//! Money is EUR/kWh in f64, rounded to 1e-6 on ingest and write; time is UTC epoch seconds, tariff
+//! dates and years are `Europe/Amsterdam`.
 
-pub mod contract;
+pub mod book;
+pub mod error;
 pub mod provider;
 pub mod settlement;
 pub mod store;
+
+pub use book::{PriceBook, PriceQuery, Slot, SlotSource};
+pub use error::PriceError;
+pub use provider::{
+    BoxFuture, HaCredentials, HaSensorFallback, PriceProvider, ZonneplanCredentials,
+    ZonneplanDirect,
+};
+pub use settlement::{
+    BonusRules, Contract, Daylight, EnergyTaxTable, ExportSource, NetMetering, SALDERING_END_YEAR,
+    Saldering, Settlement, TaxYear,
+};
+pub use store::{
+    MemoryPriceRepository, PriceRepository, Publication, SaveOutcome, SqlitePriceRepository,
+};
