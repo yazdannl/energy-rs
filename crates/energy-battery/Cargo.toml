@@ -8,7 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-chrono.workspace = true
+axum.workspace = true
+futures-util.workspace = true
 mdns-sd.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -16,6 +17,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 # Status
 
-Phase gates from [PLAN.md](PLAN.md) §11. P0–P3 and P0.5 are done; P4–P10 are open.
+Phase gates from [PLAN.md](PLAN.md) §11. P0–P3, P0.5 and P5 are done; P4 and P6–P10 are open.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
@@ -10,12 +10,33 @@ Phase gates from [PLAN.md](PLAN.md) §11. P0–P3 and P0.5 are done; P4–P10 ar
 | P2 | `energy-ha` discovery/stats/subscriptions | recorded-fixture tests, live read-only smoke | **done** |
 | P3 | `energy-price` + settlement + store | formula unit tests vs researched numbers, toggle tests | **done** |
 | P4 | `energy-forecast` | 800/800 exact golden vectors, load-profile tests | todo |
-| P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | todo |
+| P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | **done** |
 | P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | todo |
 | P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | todo |
 | P8 | `energy-server` API + savings | contract tests, SSE smoke | todo |
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | todo |
+
+## P5 notes
+
+Done in `feat/battery` (no hardware touched, nothing pushed):
+
+- **Transport.** Plain HTTP `:80` per device (no TLS, no proxy, 5 s timeout), `GET /properties/report`
+  and `POST /properties/write` with `{sn,id,source:2,properties}`, a 512-byte body cap enforced
+  before sending, and typed errors for transport/HTTP/`code!=200`/401 (serial mismatch)/400/413.
+- **Report.** Both envelopes (packs top-level or under `properties`), unknown keys ignored, all §3.1
+  unit conversions as pure functions, `gridReverse`/`socLimit`/`oldMode` decoded, no kWh fabricated,
+  pack capacity labels from the serial prefix + `packType` (AB2000 = 1.92 kWh).
+- **Control.** Charge/discharge/hold/trim payloads, clamping to `min(config, chargeMaxLimit /
+  inverseMaxPower)`, ≥2 s pacing with a single in-flight claim, echo confirmation within 5 W on the
+  next report, `smartMode: 1` on every control write, a hold that never writes `acMode`, wedge
+  (`acMode ∉ {1,2}`) and restart (`messageId`/clock going back) faults that refuse writes until a
+  fresh report says otherwise, with a 10 s back-off pushed into the pacer.
+- **Discovery / fleet.** mDNS `_zendure._tcp` browse plus manual IP + SN, merged and deduped by
+  serial; staggered polling (default 5 s per device), a freshness-stamped cache, capacity-weighted
+  SoC, summed AC power, fan-out with per-device sequencing and partial-failure reporting.
+- **Fake device.** In-process axum server on `127.0.0.1:0` with echo, dropped writes <1.3 s, wedge
+  mode and 401/400/413 injection; 72 tests, one `#[ignore]`d read-only live test.
 
 ## P0.5 notes
 

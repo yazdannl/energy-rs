@@ -529,7 +529,8 @@ dependencies = [
 name = "energy-battery"
 version = "0.1.0"
 dependencies = [
- "chrono",
+ "axum",
+ "futures-util",
  "mdns-sd",
  "reqwest",
  "serde",
