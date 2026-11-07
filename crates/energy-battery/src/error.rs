@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use crate::control::ControlFault;
+use crate::control::{ControlFault, Direction};
 
 /// Everything a zenSDK client can refuse.
 ///
@@ -43,6 +43,18 @@ pub enum BatteryError {
     Invalid { reason: String },
     #[error("device {sn} was never read: poll a report before commanding it")]
     NotRead { sn: String },
+    #[error(
+        "no trustworthy power ceiling for {sn} ({direction}): refusing a {requested_w} W command"
+    )]
+    NoCeiling {
+        sn: String,
+        direction: Direction,
+        requested_w: u32,
+    },
+    #[error(
+        "device {sn} still has an unconfirmed command: poll a fresh report before the next write"
+    )]
+    Unconfirmed { sn: String },
     #[error(transparent)]
     Fault(#[from] ControlFault),
 }

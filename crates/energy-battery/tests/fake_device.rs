@@ -95,6 +95,9 @@ async fn pacing_keeps_two_writes_from_being_dropped() {
         .apply(Command::Charge { watts: 300 })
         .await
         .unwrap();
+    // The first command must be echoed before the next one may be sent.
+    let observation = controller.poll().await.unwrap();
+    assert_eq!(observation.confirmed, Some(Command::Charge { watts: 300 }));
     controller
         .apply(Command::Discharge { watts: 200 })
         .await

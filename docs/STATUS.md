@@ -241,11 +241,16 @@ Done in `feat/battery` (no hardware touched, nothing pushed):
 - **Report.** Both envelopes (packs top-level or under `properties`), unknown keys ignored, all §3.1
   unit conversions as pure functions, `gridReverse`/`socLimit`/`oldMode` decoded, no kWh fabricated,
   pack capacity labels from the serial prefix + `packType` (AB2000 = 1.92 kWh).
-- **Control.** Charge/discharge/hold/trim payloads, clamping to `min(config, chargeMaxLimit /
-  inverseMaxPower)`, ≥2 s pacing with a single in-flight claim, echo confirmation within 5 W on the
-  next report, `smartMode: 1` on every control write, a hold that never writes `acMode`, wedge
-  (`acMode ∉ {1,2}`) and restart (`messageId`/clock going back) faults that refuse writes until a
-  fresh report says otherwise, with a 10 s back-off pushed into the pacer.
+- **Control.** Charge/discharge/hold/trim payloads, clamping to the tightest known ceiling
+  (`min(config, chargeMaxLimit / inverseMaxPower, validated model hard limit)`) with a nonzero
+  command refused when none is known, ≥2 s pacing with a single in-flight claim taken *before* the
+  state is re-read and re-clamped, the pending command installed before the request leaves, echo
+  confirmation within 5 W only from a report newer than the pre-write one (so a duplicate cannot
+  confirm), `smartMode: 1` on every control write, a hold that never writes `acMode`, wedge
+  (`acMode ∉ {1,2}`) — nonzero writes refused, a bounded and logged emergency hold still allowed —
+  and restart (`messageId`/clock going back) faults that refuse writes until a fresh report says
+  otherwise, with a 10 s back-off pushed into the pacer. A second write is refused while the
+  previous one is unresolved.
 - **Discovery / fleet.** mDNS `_zendure._tcp` browse plus manual IP + SN, merged and deduped by
   serial; staggered polling (default 5 s per device), a freshness-stamped cache, capacity-weighted
   SoC, summed AC power, fan-out with per-device sequencing and partial-failure reporting.
@@ -274,8 +279,9 @@ Done in `chore/quality-gates`, policy documented in [LINTING.md](LINTING.md):
   and the long parity/oracle tests were split into per-case helpers. Behaviour is unchanged: the
   full parity, oracle and build-digest suites still pass, and `scripts/extract_core.py --check`
   still proves `csrc/core_solver.c` is the pinned upstream text.
-- **CI.** Eight jobs: `fmt`, `clippy`, `structure`, `test`, `web-lint`, `web-check`, `web-build`,
-  `build` (release binary after the UI build so `web/dist` is embedded).
+- **CI.** Nine jobs: `fmt`, `clippy`, `structure`, `test`, `web-lint`, `web-check`, `web-build`,
+  `web-test` (vitest plus the four web gates in one install), `build` (release binary after the UI
+  build so `web/dist` is embedded).
 
 ## P0 notes
 

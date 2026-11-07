@@ -22,6 +22,7 @@ use energy_battery::{BatteryError, BoxFuture, DeviceIo, Report, WriteAck, WriteR
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
+pub mod gated;
 pub mod latch_store;
 pub mod learning;
 pub mod learning_store;
@@ -99,8 +100,19 @@ pub fn report(sn: &str) -> Report {
 
 /// The default report with individual properties overridden.
 pub fn report_with(sn: &str, overrides: Value) -> Report {
+    report_at(sn, 4211, 1_791_959_470, overrides)
+}
+
+/// A report with an explicit counter and device clock.
+///
+/// The controller only lets a report that is *newer* than the pre-write report confirm or fault a
+/// command, so a test that scripts an echo has to move `messageId` (and the clock) forward.
+pub fn report_at(sn: &str, message_id: u32, timestamp: i64, overrides: Value) -> Report {
     let mut document = report_json(sn);
+    document["messageId"] = json!(message_id);
+    document["timestamp"] = json!(timestamp);
     let properties = document["properties"].as_object_mut().unwrap();
+    properties.insert("ts".to_owned(), json!(timestamp));
     for (key, value) in overrides.as_object().unwrap() {
         properties.insert(key.clone(), value.clone());
     }

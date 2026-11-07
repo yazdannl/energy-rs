@@ -6,7 +6,7 @@ use crate::report::Report;
 const CHARGING: i32 = 1;
 const DISCHARGING: i32 = 2;
 /// `messageId` counts in 8 bits; a jump of more than half the ring is a restart, not a wrap.
-const RESTART_WINDOW: u32 = 128;
+pub(super) const RESTART_WINDOW: u32 = 128;
 
 /// `acMode` outside {0, 1, 2} means the write loop wedged the AC path (`127`/`251`/`255` seen in
 /// the field). 0 is "not reported" and is not a fault; any other value is.
