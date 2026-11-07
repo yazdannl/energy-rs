@@ -1,0 +1,101 @@
+//! The writable-settings whitelist.
+//!
+//! Anything not listed here is invisible to the API on purpose: tokens, battery credentials and
+//! other private keys live in add-on options, never in the HTTP contract. Adding a setting means
+//! adding one line here, its validation kind, and a default.
+
+use super::setting_kind::SettingKind;
+use super::setting_spec::SettingSpec;
+
+const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const PRICE_PROVIDERS: [&str; 2] = ["zonneplan", "ha_sensor"];
+
+/// Every writable setting, in UI order.
+static SPECS: [SettingSpec; 11] = [
+    SettingSpec {
+        key: "grid_import_limit_w",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 20_000.0,
+        },
+        default: "0",
+    },
+    SettingSpec {
+        key: "grid_export_limit_w",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 20_000.0,
+        },
+        default: "0",
+    },
+    SettingSpec {
+        key: "reserve_soc_pct",
+        kind: SettingKind::Number {
+            min: 5.0,
+            max: 50.0,
+        },
+        default: "10",
+    },
+    SettingSpec {
+        key: "max_soc_pct",
+        kind: SettingKind::Number {
+            min: 80.0,
+            max: 100.0,
+        },
+        default: "100",
+    },
+    SettingSpec {
+        key: "battery_power_limit_w",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 4_000.0,
+        },
+        default: "0",
+    },
+    SettingSpec {
+        key: "price_provider",
+        kind: SettingKind::Choice(&PRICE_PROVIDERS),
+        default: "zonneplan",
+    },
+    SettingSpec {
+        key: "price_entity",
+        kind: SettingKind::Text,
+        default: "",
+    },
+    SettingSpec {
+        key: "replan_seconds",
+        kind: SettingKind::Number {
+            min: 60.0,
+            max: 3_600.0,
+        },
+        default: "900",
+    },
+    SettingSpec {
+        key: "stale_input_seconds",
+        kind: SettingKind::Number {
+            min: 60.0,
+            max: 7_200.0,
+        },
+        default: "900",
+    },
+    SettingSpec {
+        key: "full_charge_weekday",
+        kind: SettingKind::Choice(&WEEKDAYS),
+        default: "sun",
+    },
+    SettingSpec {
+        key: "full_charge_time",
+        kind: SettingKind::Text,
+        default: "03:00",
+    },
+];
+
+/// Every spec, in UI order.
+pub(crate) fn specs() -> &'static [SettingSpec] {
+    &SPECS
+}
+
+/// Look one spec up by key.
+pub(crate) fn spec(key: &str) -> Option<&'static SettingSpec> {
+    SPECS.iter().find(|spec| spec.key == key)
+}

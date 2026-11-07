@@ -15,6 +15,9 @@
 //! * [`wiring`] — measurements, session extraction, capacity relearning, cell latch and the
 //!   full-charge maintenance window.
 //! * [`mode`] — the persisted control mode.
+//! * [`stream`] — the contract with the HTTP server: the [`stream::EngineSnapshot`] the loop
+//!   publishes after every tick, the [`stream::SnapshotPublisher`] that carries it, and the small
+//!   set of [`stream::EngineCommand`]s the API may send back. The engine stays the only decider.
 //!
 //! Layers below this crate are synchronous where possible; only HA, zenSDK, timers and SQLite are
 //! async, and everything is supervised so a failure holds instead of guessing.
@@ -26,4 +29,5 @@ pub mod mode;
 pub mod plan;
 pub mod replan;
 pub mod safety;
+pub mod stream;
 pub mod wiring;
