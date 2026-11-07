@@ -1,6 +1,7 @@
 # Status
 
-Phase gates from [PLAN.md](PLAN.md) §11. P0–P3, P0.5 and P5 are done; P4 and P6–P10 are open.
+Phase gates from [PLAN.md](PLAN.md) §11. P0–P3, P0.5, P5 and the P6 ledger store are done;
+P4, P6 learning/protection and P7–P10 are open.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
@@ -11,11 +12,33 @@ Phase gates from [PLAN.md](PLAN.md) §11. P0–P3, P0.5 and P5 are done; P4 and 
 | P3 | `energy-price` + settlement + store | formula unit tests vs researched numbers, toggle tests | **done** |
 | P4 | `energy-forecast` | 800/800 exact golden vectors, load-profile tests | todo |
 | P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | **done** |
-| P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | todo |
+| P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | **partial**: ledger store done |
 | P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | todo |
 | P8 | `energy-server` API + savings | contract tests, SSE smoke | todo |
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | todo |
+
+## P6 notes (store)
+
+Done in `feat/ledger` (no learning yet, nothing pushed), details in [LEDGER.md](LEDGER.md):
+
+- **Schema and migrations.** SQLite at `/data/energy_rs.db` (configurable), WAL, foreign keys,
+  5 s busy timeout, `synchronous=NORMAL`; in-code forward-only numbered migrations recorded in
+  `meta.schema_version`, refused when the file is newer than the binary. Tables owned here:
+  packs, measurements, measurements_5m, sessions, plans/plan_slots, dispatch_log, events,
+  savings_daily, meta, settings/settings_history. Price tables stay with `energy-price`.
+- **Ingestion and rollup.** 1-minute sample upsert on `(pack_id, ts)`, batch writer; 5-minute
+  rollup writes per-pack bucket means and explicit empty buckets, and a conflict guard stops a
+  recomputation after retention from erasing populated buckets.
+- **Sessions.** Deterministic, re-runnable window extraction from either tier: deadband,
+  minimum samples, gap splitting, measured coverage (no full interval on a partial edge), SoC
+  gaps and one-sample reversals flagged, complete only when bounded both sides.
+- **Retention.** 1-minute 30 d, 5-minute 1 y, plans 200, dispatch 20 000, sessions/events/daily
+  forever, current local day never trimmed; per-table deleted counts; idempotent.
+- **Queries.** Range reads for measurements/sessions/plans/savings, latest pack state, current
+  plan, plan+dispatch insert helpers, settings get/set/as-of.
+- **Tests.** 38 in the crate (4 migration, 8 ingest/rollup, 9 query/settings, 7 retention,
+  8 sessions, 2 WAL concurrency) on top of the workspace suites.
 
 ## P5 notes
 
