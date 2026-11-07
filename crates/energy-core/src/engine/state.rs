@@ -1,0 +1,38 @@
+//! The state a tick reads and writes.
+
+use std::collections::BTreeMap;
+
+use energy_battery::protection::full_charge::{FullChargeAction, FullChargeScheduler};
+use energy_battery::protection::{CellLatch, CellVoltageGuard};
+
+use crate::dispatch::ManualOverride;
+use crate::engine::LiveLatch;
+use crate::engine::Watchdog;
+use crate::plan::Plan;
+use crate::safety::Authority;
+
+/// Everything the engine remembers between ticks.
+pub(crate) struct EngineState {
+    pub(crate) mode: Authority,
+    pub(crate) plan: Option<Plan>,
+    pub(crate) latch: LiveLatch,
+    pub(crate) overrides: Vec<ManualOverride>,
+    pub(crate) watchdog: Watchdog,
+    pub(crate) cells: CellVoltageGuard,
+    pub(crate) maintenance: FullChargeScheduler,
+    pub(crate) maintenance_action: FullChargeAction,
+    pub(crate) last_minute: Option<i64>,
+    pub(crate) last_session_check: Option<i64>,
+    pub(crate) pack_ids: BTreeMap<String, i64>,
+    pub(crate) known_packs: Vec<(String, Option<i64>)>,
+    pub(crate) last_stale_log: Option<i64>,
+    pub(crate) last_refusal_log: Option<i64>,
+    pub(crate) latch_dirty: bool,
+}
+
+impl EngineState {
+    /// The latches as the dispatcher reads them, in stable pack order.
+    pub(crate) fn latches(&self) -> Vec<CellLatch> {
+        self.cells.latches().cloned().collect()
+    }
+}
