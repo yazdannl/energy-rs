@@ -4,7 +4,7 @@ on:
   push:
   pull_request:
 
-# No deploy, no release: this workflow only proves the tree builds.
+# No deploy, no release: this workflow only proves the tree is clean and builds.
 permissions:
   contents: read
 
@@ -12,33 +12,100 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build:
+  fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
 
-      - name: Format
-        run: cargo fmt --check
-
-      - name: Clippy
+  # `-D warnings` plus the workspace lint policy in Cargo.toml: pedantic Clippy, no unwrap/expect/
+  # panic/todo in shipped code, and the size limits from clippy.toml.
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Test
+  # Structural limits (one type per file, file/function sizes, no catch-all modules, Svelte rules)
+  # that Clippy cannot express.
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: check_structure.py
+        run: python3 scripts/check_structure.py
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo test
         run: cargo test --workspace
 
+  web-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: Install
+        working-directory: web
+        run: npm ci
+      - name: ESLint
+        working-directory: web
+        run: npm run lint
+      - name: Prettier
+        working-directory: web
+        run: npm run format:check
 
-      - name: Build UI
+  web-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        working-directory: web
+        run: npm ci
+      - name: svelte-check
+        working-directory: web
+        run: npm run check
+
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install and build UI
         working-directory: web
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -46,6 +113,24 @@ jobs:
           npm ci
           npm run build
 
-      # After the UI build, so the release binary embeds the real web/dist.
+  # After the UI build in the same job, so the release binary embeds the real web/dist.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build UI
+        working-directory: web
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          npm ci
+          npm run build
       - name: Build release binary
         run: cargo build --release

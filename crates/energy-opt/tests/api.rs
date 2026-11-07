@@ -1,5 +1,17 @@
 //! Contract tests for the crate's public surface: defaults, typed errors and degenerate scenarios.
 
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library, not to the
+// tests that prove it refuses.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
 use energy_opt::{
     BatterySpec, Config, ConfigError, InputError, PvChargePreference, SolveError, SolveInput,
     Window, solve, solve_with_terminal_row,

@@ -6,7 +6,8 @@
 use serde_json::Value;
 
 use crate::error::PriceError;
-use crate::provider::parse::{ParsedSeries, RawSlot, amount_eur, parse_timestamp};
+use crate::provider::parse::{amount_eur, parse_timestamp};
+use crate::provider::{ParsedSeries, RawSlot};
 
 /// Parse `GET /api/states/<sensor>` for a Zonneplan electricity tariff sensor.
 pub fn parse_state(payload: &Value) -> Result<ParsedSeries, PriceError> {
@@ -65,7 +66,7 @@ fn check_unit(unit: Option<&str>) -> Result<(), PriceError> {
         return Ok(());
     };
     let lower = unit.to_lowercase();
-    if lower.contains('m') && (lower.contains('³') || lower.contains("3")) {
+    if lower.contains('m') && (lower.contains('³') || lower.contains('3')) {
         return Err(PriceError::GasDecoy);
     }
     if !lower.contains("kwh") {

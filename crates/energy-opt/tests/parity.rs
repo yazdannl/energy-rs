@@ -14,11 +14,23 @@
 //! The old differential used 1e-9 on paths and objectives and exact equality on decisions; that is
 //! exactly the contract pinned here.
 
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library, not to the
+// tests that prove it refuses.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
 use std::path::PathBuf;
 
 use energy_opt::validate::{self, Slot};
 use energy_opt::{
-    BatterySpec, Config, PvChargePreference, SolveInput, SolveResult, solve,
+    BatterySpec, Config, PvChargePreference, SolveInput, SolveResult, Window, solve,
     solve_with_terminal_row,
 };
 use serde::Deserialize;
@@ -203,186 +215,158 @@ fn fixture_is_current() {
     assert_eq!(fixture.tolerance.value, 1e-9);
 }
 
-#[test]
-fn objective_and_paths_match_the_python_reference() {
-    let fixture: Fixture = serde_json::from_str(
+fn load_fixture() -> Fixture {
+    serde_json::from_str(
         &std::fs::read_to_string(fixture_path()).expect("the parity fixture is checked in"),
     )
-    .expect("the parity fixture parses");
-    let objective_tol = fixture.tolerance.objective;
-    let path_tol = fixture.tolerance.path;
-    let value_tol = fixture.tolerance.value;
+    .expect("the parity fixture parses")
+}
 
+#[test]
+fn objective_and_paths_match_the_python_reference() {
+    let fixture = load_fixture();
     for case in &fixture.cases {
         let config = case.config();
         let row = case.terminal_row(&config);
         let result = solve_case(case, &config, row.as_deref());
-        let expected = &case.expected;
+        check_scalars(case, &result, &fixture.tolerance);
+        check_series(case, &result, &fixture.tolerance);
+    }
+}
 
-        assert!(
-            close(result.objective_eur, expected.objective_eur, objective_tol),
-            "{}: objective {} != {}",
-            case.name,
-            result.objective_eur,
-            expected.objective_eur
-        );
-        assert!(
-            close(
-                result.cycle_cost_eur,
-                expected.cycle_cost_eur,
-                objective_tol
-            ),
-            "{}: cycle cost {} != {}",
-            case.name,
-            result.cycle_cost_eur,
-            expected.cycle_cost_eur
-        );
-        assert!(
-            close(
-                result.terminal_error_kwh,
-                expected.terminal_error_kwh,
-                objective_tol
-            ),
-            "{}: terminal error {} != {}",
-            case.name,
+/// The four costs, the step and the two counts.
+fn check_scalars(case: &Case, result: &SolveResult, tolerance: &Tolerance) {
+    let expected = &case.expected;
+    let checks = [
+        ("objective", result.objective_eur, expected.objective_eur),
+        ("cycle cost", result.cycle_cost_eur, expected.cycle_cost_eur),
+        (
+            "terminal error",
             result.terminal_error_kwh,
-            expected.terminal_error_kwh
-        );
-        assert!(
-            close(
-                result.internal_objective_eur,
-                expected.internal_objective_eur,
-                objective_tol
-            ),
-            "{}: internal objective {} != {}",
-            case.name,
+            expected.terminal_error_kwh,
+        ),
+        (
+            "internal objective",
             result.internal_objective_eur,
-            expected.internal_objective_eur
-        );
-        assert!(
-            close(
-                result.effective_step_kwh,
-                expected.effective_step_kwh,
-                value_tol
-            ),
-            "{}: step {} != {}",
-            case.name,
+            expected.internal_objective_eur,
+        ),
+        (
+            "step",
             result.effective_step_kwh,
-            expected.effective_step_kwh
+            expected.effective_step_kwh,
+        ),
+    ];
+    for (what, got, want) in checks {
+        assert!(
+            close(got, want, tolerance.objective),
+            "{}: {what} {got} != {want}",
+            case.name
         );
-        assert_eq!(result.iterations, expected.iterations, "{}", case.name);
-        assert_eq!(result.states, expected.states, "{}", case.name);
-        assert_eq!(result.grid.len(), expected.grid.len(), "{}", case.name);
-        for (index, (got, want)) in result.grid.iter().zip(&expected.grid).enumerate() {
-            assert!(
-                close(*got, *want, value_tol),
-                "{}: grid[{index}] {got} != {want}",
-                case.name
-            );
-        }
-        for (index, (got, want)) in result.energies.iter().zip(&expected.energies).enumerate() {
-            assert!(
-                close(*got, *want, path_tol),
-                "{}: energies[{index}] {got} != {want}",
-                case.name
-            );
-        }
-        for (index, (got, want)) in result.powers.iter().zip(&expected.powers).enumerate() {
-            assert!(
-                close(*got, *want, path_tol),
-                "{}: powers[{index}] {got} != {want}",
-                case.name
-            );
-        }
-        let windows: Vec<f64> = result
-            .windows
-            .iter()
-            .flat_map(|window| window.values())
-            .collect();
-        for (index, (got, want)) in windows.iter().zip(&expected.windows).enumerate() {
-            assert!(
-                close(*got, *want, value_tol),
-                "{}: windows[{index}] {got} != {want}",
-                case.name
-            );
-        }
-        assert_eq!(result.value.len(), expected.value.len(), "{}", case.name);
-        for (index, (got, want)) in result.value.iter().zip(&expected.value).enumerate() {
-            assert!(
-                close(*got, *want, value_tol),
-                "{}: value[{index}] {got} != {want}",
-                case.name
-            );
-        }
+    }
+    assert_eq!(result.iterations, expected.iterations, "{}", case.name);
+    assert_eq!(result.states, expected.states, "{}", case.name);
+}
+
+/// Every reported series, against the Python reference.
+fn check_series(case: &Case, result: &SolveResult, tolerance: &Tolerance) {
+    let expected = &case.expected;
+    assert_eq!(result.grid.len(), expected.grid.len(), "{}", case.name);
+    for (index, (got, want)) in result.grid.iter().zip(&expected.grid).enumerate() {
+        assert!(
+            close(*got, *want, tolerance.value),
+            "{}: grid[{index}] {got} != {want}",
+            case.name
+        );
+    }
+    for (index, (got, want)) in result.energies.iter().zip(&expected.energies).enumerate() {
+        assert!(
+            close(*got, *want, tolerance.path),
+            "{}: energies[{index}] {got} != {want}",
+            case.name
+        );
+    }
+    for (index, (got, want)) in result.powers.iter().zip(&expected.powers).enumerate() {
+        assert!(
+            close(*got, *want, tolerance.path),
+            "{}: powers[{index}] {got} != {want}",
+            case.name
+        );
+    }
+    let windows: Vec<f64> = result.windows.iter().flat_map(Window::values).collect();
+    for (index, (got, want)) in windows.iter().zip(&expected.windows).enumerate() {
+        assert!(
+            close(*got, *want, tolerance.value),
+            "{}: windows[{index}] {got} != {want}",
+            case.name
+        );
+    }
+    assert_eq!(result.value.len(), expected.value.len(), "{}", case.name);
+    for (index, (got, want)) in result.value.iter().zip(&expected.value).enumerate() {
+        assert!(
+            close(*got, *want, tolerance.value),
+            "{}: value[{index}] {got} != {want}",
+            case.name
+        );
     }
 }
 
 #[test]
 fn decisions_match_the_reference_argmin_exactly() {
-    let fixture: Fixture = serde_json::from_str(
-        &std::fs::read_to_string(fixture_path()).expect("the parity fixture is checked in"),
-    )
-    .expect("the parity fixture parses");
-
+    let fixture = load_fixture();
     for case in &fixture.cases {
-        let config = case.config();
-        let row = case.terminal_row(&config);
-        let result = solve_case(case, &config, row.as_deref());
-        let n = result.powers.len();
-        let states = result.states;
-        let mut energy = validate::clamp(config.start_kwh, config.e_min_kwh, config.e_max_kwh);
+        check_decisions(case);
+    }
+}
 
-        for i in 0..n {
-            let slot = Slot {
-                pv_kw: case.slots.pv_kw[i],
-                load_kw: case.slots.load_kw[i],
-                buy: case.slots.buy[i],
-                sell: case.slots.sell[i],
-                minutes: case.slots.minutes[i],
-            };
-            let dt = slot.minutes / 60.0;
-            let (lo, hi) = validate::bounds(&config, &slot, energy, dt);
-            // The stored decision is taken at the grid point the state snaps to.
-            let mut state = energy;
-            let mut action_lo = lo;
-            let mut action_hi = hi;
-            if let Some(point) = result
-                .grid
-                .iter()
-                .find(|point| (**point - energy).abs() <= validate::EPS_KWH)
-            {
-                state = *point;
-                (action_lo, action_hi) = validate::bounds(&config, &slot, state, dt);
-            }
-            let extra = match (i + 1 == n, config.e_target) {
-                (true, Some(target)) => Some(validate::exact_power(&config, state, target, dt)),
-                _ => None,
-            };
-            let next_row = &result.value[(i + 1) * states..(i + 2) * states];
-            let (choice, _cost) = validate::argmin_at(
-                &config,
-                &slot,
-                state,
-                action_lo,
-                action_hi,
-                dt,
-                extra,
-                next_row,
-                &result.grid,
-            )
-            .expect("the reference action set is not empty");
-            let expected = validate::clamp(choice, lo, hi);
-            assert_eq!(
-                result.powers[i], expected,
-                "{}: slot {i} returned {} but the reference argmin is {expected}",
-                case.name, result.powers[i]
-            );
-            energy = validate::clamp(
-                validate::next_energy(&config, energy, result.powers[i], dt),
-                config.e_min_kwh,
-                config.e_max_kwh,
-            );
+/// Every stored power against the reference one-step argmin at the grid-snapped state.
+fn check_decisions(case: &Case) {
+    let config = case.config();
+    let row = case.terminal_row(&config);
+    let result = solve_case(case, &config, row.as_deref());
+    let n = result.powers.len();
+    let states = result.states;
+    let mut energy = validate::clamp(config.start_kwh, config.e_min_kwh, config.e_max_kwh);
+    for i in 0..n {
+        let slot = Slot {
+            pv_kw: case.slots.pv_kw[i],
+            load_kw: case.slots.load_kw[i],
+            buy: case.slots.buy[i],
+            sell: case.slots.sell[i],
+            minutes: case.slots.minutes[i],
+        };
+        let dt = slot.minutes / 60.0;
+        let (lo, hi) = validate::bounds(&config, &slot, energy, dt);
+        // The stored decision is taken at the grid point the state snaps to.
+        let mut state = energy;
+        let mut action_lo = lo;
+        let mut action_hi = hi;
+        if let Some(point) = result
+            .grid
+            .iter()
+            .find(|point| (**point - energy).abs() <= validate::EPS_KWH)
+        {
+            state = *point;
+            (action_lo, action_hi) = validate::bounds(&config, &slot, state, dt);
         }
+        let extra = match (i + 1 == n, config.e_target) {
+            (true, Some(target)) => Some(validate::exact_power(&config, state, target, dt)),
+            _ => None,
+        };
+        let next_row = &result.value[(i + 1) * states..(i + 2) * states];
+        let context = validate::SlotContext::new(&config, slot, dt, next_row, &result.grid);
+        let (choice, _cost) = validate::argmin_at(&context, state, action_lo, action_hi, extra)
+            .expect("the reference action set is not empty");
+        let expected = validate::clamp(choice, lo, hi);
+        assert_eq!(
+            result.powers[i], expected,
+            "{}: slot {i} returned {} but the reference argmin is {expected}",
+            case.name, result.powers[i]
+        );
+        energy = validate::clamp(
+            validate::next_energy(&config, energy, result.powers[i], dt),
+            config.e_min_kwh,
+            config.e_max_kwh,
+        );
     }
 }
 

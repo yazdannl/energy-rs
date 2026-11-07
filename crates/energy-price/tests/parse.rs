@@ -2,15 +2,27 @@
 //! filtering, gap refusal and coverage-based staleness.  No network: every payload here is a
 //! fixture ingested exactly like a live one.
 
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here, and fixture timestamps/money read better verbatim than with digit separators.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint,
+    clippy::unreadable_literal
+)]
 
-use common::{contract, instant};
+mod support;
+
 use energy_price::book::query::PriceQuery;
 use energy_price::provider::{ProviderKind, ingest, parse_chart, parse_state};
 use serde_json::{Value, json};
+use support::{contract, instant};
 
 fn query(from: &str, to: &str, now: i64, horizon_secs: i64) -> PriceQuery {
-    PriceQuery::new(common::date(from), common::date(to), now, horizon_secs)
+    PriceQuery::new(support::date(from), support::date(to), now, horizon_secs)
         .expect("the fixture query is valid")
 }
 
@@ -300,8 +312,8 @@ fn coverage_staleness_is_decided_by_the_book_not_by_the_sensor_state() {
 
 #[test]
 fn a_query_refuses_an_inverted_range_or_a_negative_horizon() {
-    let from = common::date("2026-11-20");
-    let to = common::date("2026-11-19");
+    let from = support::date("2026-11-20");
+    let to = support::date("2026-11-19");
     assert!(PriceQuery::new(from, to, 0, 0).is_err());
     assert!(PriceQuery::new(from, from, 0, -1).is_err());
     assert_eq!(PriceQuery::new(from, from, 0, 0).expect("valid").days(), 1);

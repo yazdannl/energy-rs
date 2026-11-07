@@ -2,7 +2,19 @@
 //! refuse ranges and the same semantics in memory and SQLite.  Money is canonicalised to 1e-6 so a
 //! publication's identity does not depend on floating-point noise.
 
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here, and fixture timestamps/money read better verbatim than with digit separators.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint,
+    clippy::unreadable_literal
+)]
+
+mod support;
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +26,7 @@ use energy_price::{
 const START: &str = "2026-11-20T00:00:00+01:00";
 
 fn book(start: &str, buy_all_in: &[f64]) -> PriceBook {
-    common::book(common::quarter_hourly(start, buy_all_in))
+    support::book(support::quarter_hourly(start, buy_all_in))
 }
 
 fn repositories() -> Vec<(&'static str, Box<dyn PriceRepository>)> {
@@ -52,7 +64,7 @@ fn saving_the_same_publication_twice_writes_once() {
 fn a_later_poll_of_the_same_publication_is_not_stored_again() {
     // Past slots are filtered on every poll, so the same publication arrives truncated.
     let full = book(START, &[0.20, 0.21, 0.19, 0.18]);
-    let truncated = common::book(common::quarter_hourly(
+    let truncated = support::book(support::quarter_hourly(
         "2026-11-20T00:30:00+01:00",
         &[0.19, 0.18],
     ));
@@ -86,7 +98,7 @@ fn an_extended_publication_is_stored_beside_the_old_one() {
         assert_eq!(latest.id, extended.publication().id, "{name}");
         assert_eq!(
             latest.first_t_start,
-            common::instant(START),
+            support::instant(START),
             "{name}: publications are never rewritten"
         );
 
@@ -107,8 +119,8 @@ fn a_revised_price_arrives_as_a_new_publication_and_wins_the_load() {
     for (name, repo) in repositories() {
         repo.save_publication(&book(START, &[0.20, 0.21]))
             .expect(name);
-        let revised = common::book(vec![common::slot_from_instant(
-            common::instant(START),
+        let revised = support::book(vec![support::slot_from_instant(
+            support::instant(START),
             0.30,
             energy_price::SlotSource::ZonneplanQuarterHourly,
         )]);
@@ -119,8 +131,8 @@ fn a_revised_price_arrives_as_a_new_publication_and_wins_the_load() {
         );
         let loaded = repo
             .load(
-                common::instant(START),
-                common::instant("2026-11-20T00:15:00+01:00"),
+                support::instant(START),
+                support::instant("2026-11-20T00:15:00+01:00"),
             )
             .expect(name);
         assert_eq!(loaded.len(), 1, "{name}");
@@ -145,7 +157,7 @@ fn a_hole_between_publications_is_refused_not_filled() {
         assert!(
             matches!(
                 error,
-                PriceError::Gap { t_start } if t_start == common::instant("2026-11-20T00:30:00+01:00")
+                PriceError::Gap { t_start } if t_start == support::instant("2026-11-20T00:30:00+01:00")
             ),
             "{name}: {error}"
         );
@@ -157,7 +169,7 @@ fn a_hole_between_publications_is_refused_not_filled() {
 #[test]
 fn money_is_canonicalised_before_it_is_hashed_and_stored() {
     let unrounded = PriceBook::new(vec![energy_price::Slot::new(
-        common::instant(START),
+        support::instant(START),
         0.2,
         0.05715033057851243,
         energy_price::SlotSource::ZonneplanQuarterHourly,
@@ -183,20 +195,20 @@ fn money_is_canonicalised_before_it_is_hashed_and_stored() {
 #[test]
 fn a_provider_fallback_switch_mid_day_still_loads_as_one_book() {
     // Yesterday's slots came from the HA sensor, today's from the direct API: same 15-min grid.
-    let ha = common::book(vec![
-        common::market_slot(
+    let ha = support::book(vec![
+        support::market_slot(
             "2026-11-20T00:00:00+01:00",
             0.20,
             energy_price::SlotSource::HaQuarterHourly,
         ),
-        common::market_slot(
+        support::market_slot(
             "2026-11-20T00:15:00+01:00",
             0.21,
             energy_price::SlotSource::HaQuarterHourly,
         ),
     ]);
-    let direct = common::book(vec![common::slot_from_instant(
-        common::instant("2026-11-20T00:30:00+01:00"),
+    let direct = support::book(vec![support::slot_from_instant(
+        support::instant("2026-11-20T00:30:00+01:00"),
         0.22,
         energy_price::SlotSource::ZonneplanQuarterHourly,
     )]);
@@ -215,7 +227,7 @@ fn a_provider_fallback_switch_mid_day_still_loads_as_one_book() {
     );
 
     // A 15-minute and an hourly publication do not form one book.
-    let hourly = common::book(vec![common::market_slot(
+    let hourly = support::book(vec![support::market_slot(
         "2026-11-20T01:00:00+01:00",
         0.23,
         energy_price::SlotSource::ZonneplanHourly,
@@ -281,12 +293,12 @@ fn the_save_outcome_names_the_publication_it_touched() {
         panic!("the first save stores a publication");
     };
     assert_eq!(publication.slot_count, 1);
-    assert_eq!(publication.first_t_start, common::instant(START));
+    assert_eq!(publication.first_t_start, support::instant(START));
     assert_eq!(
         publication.last_t_end,
-        common::instant("2026-11-20T00:15:00+01:00")
+        support::instant("2026-11-20T00:15:00+01:00")
     );
-    assert!(publication.covers(common::instant(START)));
+    assert!(publication.covers(support::instant(START)));
     assert!(!publication.covers(publication.last_t_end));
     assert!(publication.fetched_at > 0);
 }

@@ -37,3 +37,9 @@ pub enum PriceError {
     #[error("price store failed: {0}")]
     Store(String),
 }
+
+impl From<rusqlite::Error> for PriceError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.to_string())
+    }
+}

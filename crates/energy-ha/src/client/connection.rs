@@ -89,7 +89,7 @@ impl Shared {
         lock(&self.subscriptions).get(&id).cloned()
     }
 
-    pub(crate) fn fail_all(&self, error: HaError) {
+    pub(crate) fn fail_all(&self, error: &HaError) {
         let waiters: Vec<_> = lock(&self.waiters)
             .drain()
             .map(|(_, sender)| sender)

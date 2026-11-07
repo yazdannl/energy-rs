@@ -1,6 +1,17 @@
 //! Shared fixtures for the integration tests: the researched Zonneplan contract, a slot builder
 //! whose `market` is derived the way providers derive it, and date/instant helpers.
 #![allow(dead_code)]
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here, and fixture timestamps/money read better verbatim than with digit separators.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint,
+    clippy::unreadable_literal
+)]
 
 use chrono::{DateTime, NaiveDate};
 use energy_price::book::query::{local_date_of, local_year_of};

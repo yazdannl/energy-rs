@@ -9,7 +9,6 @@
 use rusqlite::Connection;
 
 use crate::error::PriceError;
-use crate::store::publication::store_error;
 
 /// Current schema version (`PRAGMA user_version`).
 pub(crate) const SCHEMA_VERSION: i64 = 1;
@@ -37,13 +36,10 @@ CREATE INDEX IF NOT EXISTS price_slots_by_start ON price_slots(t_start);
 
 /// Apply pending migrations in code.
 pub(crate) fn migrate(conn: &Connection) -> Result<(), PriceError> {
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(store_error)?;
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version < 1 {
-        conn.execute_batch(MIGRATION_V1).map_err(store_error)?;
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
-            .map_err(store_error)?;
+        conn.execute_batch(MIGRATION_V1)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
 }

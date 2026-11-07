@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+//! A minimal Home Assistant WebSocket server for the transport tests.
 
 use std::{
     error::Error,
@@ -14,52 +14,9 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
-pub const TOKEN: &str = "test-token";
+use super::{Handler, Reply, TOKEN};
 
-pub type Handler = Arc<dyn Fn(u64, &str, &Value) -> Reply + Send + Sync>;
-
-#[derive(Debug, Clone, Default)]
-pub struct Reply {
-    pub result: Value,
-    pub error: Option<(String, String)>,
-    pub events: Vec<Value>,
-    pub close_after: bool,
-    pub silent: bool,
-}
-
-impl Reply {
-    pub fn ok(result: Value) -> Self {
-        Self {
-            result,
-            ..Self::default()
-        }
-    }
-
-    pub fn fail(code: &str, message: &str) -> Self {
-        Self {
-            error: Some((code.to_owned(), message.to_owned())),
-            ..Self::default()
-        }
-    }
-
-    pub fn with_event(mut self, event: Value) -> Self {
-        self.events.push(event);
-        self
-    }
-
-    pub fn close_after(mut self) -> Self {
-        self.close_after = true;
-        self
-    }
-
-    pub fn silent() -> Self {
-        Self {
-            silent: true,
-            ..Self::default()
-        }
-    }
-}
-
+/// A bound fake server; aborting it happens on drop.
 pub struct FakeServer {
     addr: SocketAddr,
     pub connections: Arc<AtomicUsize>,
@@ -69,6 +26,7 @@ pub struct FakeServer {
 }
 
 impl FakeServer {
+    /// Bind `127.0.0.1:0` and answer every connection with `handler`.
     pub async fn spawn(handler: Handler) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -105,10 +63,12 @@ impl FakeServer {
         }
     }
 
+    /// The `http://` base URL to configure a client with.
     pub fn base_url(&self) -> String {
         format!("http://{}", self.addr)
     }
 
+    /// How many requests arrived (unsubscribes excluded).
     pub fn requests(&self) -> usize {
         self.request_ids
             .lock()
@@ -123,6 +83,7 @@ impl Drop for FakeServer {
     }
 }
 
+/// Accept one connection, authenticate it and then answer requests.
 async fn serve(
     stream: tokio::net::TcpStream,
     handler: Handler,
@@ -130,33 +91,48 @@ async fn serve(
     request_types: Arc<Mutex<Vec<String>>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut socket = accept_async(stream).await?;
+    if !authenticate(&mut socket).await? {
+        return Ok(());
+    }
+    serve_requests(&mut socket, handler, request_ids, request_types).await
+}
+
+/// The auth handshake; `false` means the token was refused and the socket is done.
+async fn authenticate(
+    socket: &mut WebSocketStream<tokio::net::TcpStream>,
+) -> Result<bool, Box<dyn Error + Send + Sync>> {
     send_json(
-        &mut socket,
+        socket,
         json!({"type": "auth_required", "ha_version": "2026.10.4"}),
     )
     .await?;
-
-    let auth = next_json(&mut socket).await?.ok_or("closed before auth")?;
+    let auth = next_json(socket).await?.ok_or("closed before auth")?;
     let token_ok = auth.get("access_token").and_then(Value::as_str) == Some(TOKEN);
     let type_ok = auth.get("type").and_then(Value::as_str) == Some("auth");
     if !token_ok || !type_ok {
         send_json(
-            &mut socket,
+            socket,
             json!({"type": "auth_invalid", "message": "Invalid access token"}),
         )
         .await?;
-        return Ok(());
+        return Ok(false);
     }
     send_json(
-        &mut socket,
+        socket,
         json!({"type": "auth_ok", "ha_version": "2026.10.4"}),
     )
     .await?;
+    Ok(true)
+}
 
-    loop {
-        let Some(request) = next_json(&mut socket).await? else {
-            break;
-        };
+/// Answer every request until the client closes or the handler asks to close.
+async fn serve_requests(
+    socket: &mut WebSocketStream<tokio::net::TcpStream>,
+    handler: Handler,
+    request_ids: Arc<Mutex<Vec<u64>>>,
+    request_types: Arc<Mutex<Vec<String>>>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    while let Some(request) = next_json(socket).await? {
         let Some(id) = request.get("id").and_then(Value::as_u64) else {
             continue;
         };
@@ -178,40 +154,47 @@ async fn serve(
         if reply.silent {
             continue;
         }
-        if let Some((code, message)) = reply.error {
-            send_json(
-                &mut socket,
-                json!({
-                    "id": id,
-                    "type": "result",
-                    "success": false,
-                    "error": {"code": code, "message": message},
-                }),
-            )
-            .await?;
-        } else {
-            send_json(
-                &mut socket,
-                json!({
-                    "id": id,
-                    "type": "result",
-                    "success": true,
-                    "result": reply.result,
-                }),
-            )
-            .await?;
-        }
-        for event in reply.events {
-            send_json(
-                &mut socket,
-                json!({"id": id, "type": "event", "event": event}),
-            )
-            .await?;
-        }
-        if reply.close_after {
+        let close_after = reply.close_after;
+        send_reply(socket, id, reply).await?;
+        if close_after {
             let _ = socket.close(None).await;
             break;
         }
+    }
+    Ok(())
+}
+
+/// Send the result (or the error) and any follow-up events for one request.
+async fn send_reply(
+    socket: &mut WebSocketStream<tokio::net::TcpStream>,
+    id: u64,
+    reply: Reply,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some((code, message)) = reply.error {
+        send_json(
+            socket,
+            json!({
+                "id": id,
+                "type": "result",
+                "success": false,
+                "error": {"code": code, "message": message},
+            }),
+        )
+        .await?;
+    } else {
+        send_json(
+            socket,
+            json!({
+                "id": id,
+                "type": "result",
+                "success": true,
+                "result": reply.result,
+            }),
+        )
+        .await?;
+    }
+    for event in reply.events {
+        send_json(socket, json!({"id": id, "type": "event", "event": event})).await?;
     }
     Ok(())
 }
@@ -242,18 +225,4 @@ async fn next_json(
             Some(Err(error)) => return Err(Box::new(error)),
         }
     }
-}
-
-/// Load a scrubbed JSON fixture from `tests/fixtures`.
-pub fn fixture(name: &str) -> Value {
-    let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);
-    let text = std::fs::read_to_string(&path).expect("read fixture");
-    serde_json::from_str(&text).expect("parse fixture")
-}
-
-pub fn result(name: &str) -> Value {
-    fixture(name)
-        .get("result")
-        .cloned()
-        .expect("fixture has result")
 }

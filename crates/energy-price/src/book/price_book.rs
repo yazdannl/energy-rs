@@ -133,3 +133,12 @@ impl PriceBook {
         Ok(())
     }
 }
+
+impl<'a> IntoIterator for &'a PriceBook {
+    type Item = &'a Slot;
+    type IntoIter = std::slice::Iter<'a, Slot>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.slots.iter()
+    }
+}

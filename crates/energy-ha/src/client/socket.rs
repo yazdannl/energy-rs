@@ -28,7 +28,7 @@ pub(crate) async fn handshake(config: &Config) -> Result<(Socket, String), HaErr
             let fallback_version = version_of(&first);
             send_auth(&mut socket, config).await?;
             let reply = read_auth_frame(&mut socket, config).await?;
-            authenticate(socket, reply, fallback_version, config)
+            authenticate(socket, &reply, fallback_version, config)
         }
         other => Err(HaError::Protocol(format!(
             "unexpected first WebSocket frame {other:?}"
@@ -38,7 +38,7 @@ pub(crate) async fn handshake(config: &Config) -> Result<(Socket, String), HaErr
 
 fn authenticate(
     socket: Socket,
-    reply: Value,
+    reply: &Value,
     fallback_version: String,
     config: &Config,
 ) -> Result<(Socket, String), HaError> {
@@ -47,8 +47,7 @@ fn authenticate(
             let version = reply
                 .get("ha_version")
                 .and_then(Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or(fallback_version);
+                .map_or(fallback_version, str::to_owned);
             Ok((socket, version))
         }
         Some("auth_invalid") => {
@@ -121,54 +120,79 @@ pub(crate) async fn run(
     mut out_rx: mpsc::Receiver<Outgoing>,
     shared: Arc<Shared>,
 ) {
-    let mut close_error = HaError::Disconnected;
-
-    loop {
-        tokio::select! {
+    let close_error = loop {
+        let outcome = tokio::select! {
             biased;
-            incoming = socket.next() => {
-                match incoming {
-                    Some(Ok(Message::Text(text))) => {
-                        if let Err(error) = handle_frame(&shared, text.as_str()) {
-                            debug!(error = %error, "ignoring invalid Home Assistant frame");
-                        }
-                    }
-                    Some(Ok(Message::Binary(_))) => debug!("ignoring binary Home Assistant frame"),
-                    Some(Ok(Message::Ping(payload))) => {
-                        if let Err(error) = socket.send(Message::Pong(payload)).await {
-                            close_error = HaError::Ws(error.to_string());
-                            break;
-                        }
-                    }
-                    Some(Ok(Message::Pong(_) | Message::Frame(_))) => {}
-                    Some(Ok(Message::Close(_))) => break,
-                    Some(Err(error)) => {
-                        close_error = HaError::Ws(error.to_string());
-                        break;
-                    }
-                    None => break,
-                }
-            }
-            outgoing = out_rx.recv() => {
-                match outgoing {
-                    Some(Outgoing::Text(text)) => {
-                        if let Err(error) = socket.send(Message::Text(text.into())).await {
-                            close_error = HaError::Ws(error.to_string());
-                            break;
-                        }
-                    }
-                    Some(Outgoing::Close) => {
-                        let _ = socket.close(None).await;
-                        break;
-                    }
-                    None => break,
-                }
-            }
+            incoming = socket.next() => on_frame(&mut socket, &shared, incoming).await,
+            outgoing = out_rx.recv() => on_outgoing(&mut socket, outgoing).await,
+        };
+        match outcome {
+            Ok(true) => {}
+            Ok(false) => break HaError::Disconnected,
+            Err(error) => break error,
         }
-    }
-
-    shared.fail_all(close_error);
+    };
+    shared.fail_all(&close_error);
     shared.mark_closed();
+}
+
+/// Handle one incoming frame; `Ok(false)` stops the loop.
+async fn on_frame(
+    socket: &mut Socket,
+    shared: &Shared,
+    incoming: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
+) -> Result<bool, HaError> {
+    match incoming {
+        Some(Ok(Message::Text(text))) => {
+            log_invalid_frame(shared, text.as_str());
+            Ok(true)
+        }
+        Some(Ok(Message::Binary(_))) => {
+            debug!("ignoring binary Home Assistant frame");
+            Ok(true)
+        }
+        Some(Ok(Message::Ping(payload))) => answer_ping(socket, payload).await,
+        Some(Ok(Message::Pong(_) | Message::Frame(_))) => Ok(true),
+        Some(Ok(Message::Close(_))) | None => Ok(false),
+        Some(Err(error)) => Err(HaError::Ws(error.to_string())),
+    }
+}
+
+/// Parse one text frame; an invalid frame is logged and dropped, never fatal.
+fn log_invalid_frame(shared: &Shared, text: &str) {
+    if let Err(error) = handle_frame(shared, text) {
+        debug!(error = %error, "ignoring invalid Home Assistant frame");
+    }
+}
+
+/// Answer a ping; a failed send is a transport error.
+async fn answer_ping(
+    socket: &mut Socket,
+    payload: tokio_tungstenite::tungstenite::Bytes,
+) -> Result<bool, HaError> {
+    socket
+        .send(Message::Pong(payload))
+        .await
+        .map_err(|error| HaError::Ws(error.to_string()))?;
+    Ok(true)
+}
+
+/// Handle one queued outgoing message; `Ok(false)` stops the loop.
+async fn on_outgoing(socket: &mut Socket, outgoing: Option<Outgoing>) -> Result<bool, HaError> {
+    match outgoing {
+        Some(Outgoing::Text(text)) => {
+            socket
+                .send(Message::Text(text.into()))
+                .await
+                .map_err(|error| HaError::Ws(error.to_string()))?;
+            Ok(true)
+        }
+        Some(Outgoing::Close) => {
+            let _ = socket.close(None).await;
+            Ok(false)
+        }
+        None => Ok(false),
+    }
 }
 
 fn handle_frame(shared: &Shared, text: &str) -> Result<(), HaError> {
@@ -176,15 +200,15 @@ fn handle_frame(shared: &Shared, text: &str) -> Result<(), HaError> {
     match value {
         Value::Array(messages) => {
             for message in messages {
-                handle_message(shared, message)?;
+                handle_message(shared, &message)?;
             }
         }
-        message => handle_message(shared, message)?,
+        message => handle_message(shared, &message)?,
     }
     Ok(())
 }
 
-fn handle_message(shared: &Shared, message: Value) -> Result<(), HaError> {
+fn handle_message(shared: &Shared, message: &Value) -> Result<(), HaError> {
     let Some(object) = message.as_object() else {
         return Err(HaError::Protocol("frame is not a JSON object".to_owned()));
     };

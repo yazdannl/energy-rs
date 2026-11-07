@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::book::{PriceBook, Slot, SlotSource};
 use crate::error::PriceError;
 use crate::store::publication::{
-    already_stored, book_bounds, canonical_book, content_hash, publication_from_book, store_error,
+    already_stored, book_bounds, canonical_book, content_hash, publication_from_book,
 };
 use crate::store::{PriceRepository, Publication, SaveOutcome, schema};
 
@@ -25,23 +25,20 @@ pub struct SqlitePriceRepository {
 impl SqlitePriceRepository {
     /// Open (and migrate) a database file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PriceError> {
-        let conn = Connection::open(path).map_err(store_error)?;
+        let conn = Connection::open(path)?;
         Self::prepare(conn)
     }
 
     /// Open an in-memory database (tests).
     pub fn open_in_memory() -> Result<Self, PriceError> {
-        let conn = Connection::open_in_memory().map_err(store_error)?;
+        let conn = Connection::open_in_memory()?;
         Self::prepare(conn)
     }
 
     fn prepare(conn: Connection) -> Result<Self, PriceError> {
-        conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(store_error)?;
-        conn.pragma_update(None, "foreign_keys", true)
-            .map_err(store_error)?;
-        conn.pragma_update(None, "synchronous", "NORMAL")
-            .map_err(store_error)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", true)?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         schema::migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -73,7 +70,9 @@ impl PriceRepository for SqlitePriceRepository {
             }
         }
         let mut publication = publication_from_book(&book, 0, hash)?;
-        let tx = conn.transaction().map_err(store_error)?;
+        let slot_count = i64::try_from(publication.slot_count)
+            .map_err(|_| PriceError::Store("slot count does not fit SQLite".to_owned()))?;
+        let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO price_publications
                 (source, content_hash, first_t_start, last_t_end, slot_count, fetched_at)
@@ -83,14 +82,13 @@ impl PriceRepository for SqlitePriceRepository {
                 publication.content_hash,
                 publication.first_t_start,
                 publication.last_t_end,
-                publication.slot_count as i64,
+                slot_count,
                 publication.fetched_at,
             ],
-        )
-        .map_err(store_error)?;
+        )?;
         publication.id = tx.last_insert_rowid();
         insert_slots(&tx, publication.id, &book)?;
-        tx.commit().map_err(store_error)?;
+        tx.commit()?;
         Ok(SaveOutcome::Stored { publication })
     }
 
@@ -111,32 +109,27 @@ fn insert_slots(
     id: i64,
     book: &PriceBook,
 ) -> Result<(), PriceError> {
-    let mut insert = tx
-        .prepare(
-            "INSERT INTO price_slots (publication_id, t_start, buy_all_in, market, source)
+    let mut insert = tx.prepare(
+        "INSERT INTO price_slots (publication_id, t_start, buy_all_in, market, source)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(publication_id, t_start) DO NOTHING",
-        )
-        .map_err(store_error)?;
-    for slot in book.iter() {
-        insert
-            .execute(params![
-                id,
-                slot.t_start,
-                slot.buy_all_in,
-                slot.market,
-                slot.source.as_str(),
-            ])
-            .map_err(store_error)?;
+    )?;
+    for slot in book {
+        insert.execute(params![
+            id,
+            slot.t_start,
+            slot.buy_all_in,
+            slot.market,
+            slot.source.as_str(),
+        ])?;
     }
     Ok(())
 }
 
 /// Newest publication per slot start in `[from, to)`, ascending.
 fn load_slots(conn: &Connection, from: i64, to: i64) -> Result<Vec<Slot>, PriceError> {
-    let mut statement = conn
-        .prepare(
-            "SELECT s.t_start, s.buy_all_in, s.market, s.source
+    let mut statement = conn.prepare(
+        "SELECT s.t_start, s.buy_all_in, s.market, s.source
                  FROM price_slots s
                  WHERE s.t_start >= ?1 AND s.t_start < ?2
                    AND s.publication_id = (
@@ -144,19 +137,13 @@ fn load_slots(conn: &Connection, from: i64, to: i64) -> Result<Vec<Slot>, PriceE
                        WHERE newer.t_start = s.t_start
                    )
                  ORDER BY s.t_start",
-        )
-        .map_err(store_error)?;
-    let mut rows = statement.query(params![from, to]).map_err(store_error)?;
+    )?;
+    let mut rows = statement.query(params![from, to])?;
     let mut slots = Vec::new();
-    while let Some(row) = rows.next().map_err(store_error)? {
-        let source_text: String = row.get(3).map_err(store_error)?;
+    while let Some(row) = rows.next()? {
+        let source_text: String = row.get(3)?;
         let source = SlotSource::from_key(&source_text)?;
-        slots.push(Slot::new(
-            row.get(0).map_err(store_error)?,
-            row.get(1).map_err(store_error)?,
-            row.get(2).map_err(store_error)?,
-            source,
-        ));
+        slots.push(Slot::new(row.get(0)?, row.get(1)?, row.get(2)?, source));
     }
     Ok(slots)
 }
@@ -200,8 +187,7 @@ fn read_publication<P: rusqlite::Params>(
                 row.get(6)?,
             ))
         })
-        .optional()
-        .map_err(store_error)?;
+        .optional()?;
     let Some((id, source, content_hash, first_t_start, last_t_end, slot_count, fetched_at)) = raw
     else {
         return Ok(None);

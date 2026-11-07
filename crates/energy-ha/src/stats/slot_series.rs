@@ -32,7 +32,7 @@ pub async fn slot_series(
         .with_types(vec![StatType::Change])
         .with_unit("energy", "kWh");
     let response = statistics_during_period(connection, &query).await?;
-    let rows = response.get(entity_id).map(Vec::as_slice).unwrap_or(&[]);
+    let rows = response.get(entity_id).map_or(&[][..], Vec::as_slice);
     Ok(parse_slots(rows, from_ms, to_ms, granularity))
 }
 

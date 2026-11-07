@@ -1,4 +1,15 @@
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
+mod support;
 
 use std::{
     sync::{
@@ -8,19 +19,19 @@ use std::{
     time::Duration,
 };
 
-use common::{FakeServer, TOKEN};
 use energy_ha::{Config, Connection, EnergyPreferences, HaClient, HaError, ReconnectPolicy};
 use serde_json::{Value, json};
+use support::{FakeServer, TOKEN};
 
 #[tokio::test]
 async fn authenticated_calls_increment_ids_and_deserialize() {
     let server = FakeServer::spawn(Arc::new(|_, command, request| match command {
-        "energy/get_prefs" => common::Reply::ok(json!({
+        "energy/get_prefs" => support::Reply::ok(json!({
             "energy_sources": [],
             "device_consumption": []
         })),
-        "test/echo" => common::Reply::ok(json!({"value": request["value"].clone()})),
-        _ => common::Reply::fail("unknown_command", "unexpected"),
+        "test/echo" => support::Reply::ok(json!({"value": request["value"].clone()})),
+        _ => support::Reply::fail("unknown_command", "unexpected"),
     }))
     .await;
     let config = Config::direct(&server.base_url(), TOKEN).expect("config");
@@ -50,11 +61,10 @@ async fn authenticated_calls_increment_ids_and_deserialize() {
 
 #[tokio::test]
 async fn bad_token_is_an_auth_error() {
-    let server = FakeServer::spawn(Arc::new(|_, _, _| common::Reply::ok(Value::Null))).await;
+    let server = FakeServer::spawn(Arc::new(|_, _, _| support::Reply::ok(Value::Null))).await;
     let config = Config::direct(&server.base_url(), "wrong-token").expect("config");
-    let error = match Connection::connect(&config).await {
-        Ok(_) => panic!("auth must fail"),
-        Err(error) => error,
+    let Err(error) = Connection::connect(&config).await else {
+        panic!("auth must fail");
     };
     assert!(matches!(error, HaError::Auth(_)));
     assert!(!format!("{error:?}").contains("wrong-token"));
@@ -62,7 +72,7 @@ async fn bad_token_is_an_auth_error() {
 
 #[tokio::test]
 async fn request_timeout_is_reported() {
-    let server = FakeServer::spawn(Arc::new(|_, _, _| common::Reply::silent())).await;
+    let server = FakeServer::spawn(Arc::new(|_, _, _| support::Reply::silent())).await;
     let config = Config::direct(&server.base_url(), TOKEN)
         .expect("config")
         .with_request_timeout(Duration::from_millis(50));
@@ -81,9 +91,9 @@ async fn supervisor_reconnects_and_serves_the_next_call() {
     let server = FakeServer::spawn(Arc::new(move |_, _, _| {
         let call = handler_calls.fetch_add(1, Ordering::SeqCst) + 1;
         if call == 1 {
-            common::Reply::ok(json!({"call": 1})).close_after()
+            support::Reply::ok(json!({"call": 1})).close_after()
         } else {
-            common::Reply::ok(json!({"call": call}))
+            support::Reply::ok(json!({"call": call}))
         }
     }))
     .await;

@@ -89,14 +89,14 @@ impl Config {
 
         let mut rest = url.clone();
         rest.set_scheme(http_scheme)
-            .map_err(|_| HaError::Config("could not build REST URL".to_owned()))?;
+            .map_err(|()| HaError::Config("could not build REST URL".to_owned()))?;
         rest.set_path("/api");
         rest.set_query(None);
         rest.set_fragment(None);
 
         let mut ws = url;
         ws.set_scheme(ws_scheme)
-            .map_err(|_| HaError::Config("could not build WebSocket URL".to_owned()))?;
+            .map_err(|()| HaError::Config("could not build WebSocket URL".to_owned()))?;
         ws.set_path("/api/websocket");
         ws.set_query(None);
         ws.set_fragment(None);
@@ -140,16 +140,19 @@ impl Config {
         &self.ws_url
     }
 
+    #[must_use]
     pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = request_timeout;
         self
     }
 
+    #[must_use]
     pub fn with_connect_timeout(mut self, connect_timeout: Duration) -> Self {
         self.connect_timeout = connect_timeout;
         self
     }
 
+    #[must_use]
     pub fn with_reconnect(mut self, reconnect: ReconnectPolicy) -> Self {
         self.reconnect = reconnect;
         self

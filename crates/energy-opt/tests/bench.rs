@@ -4,6 +4,18 @@
 //! port needs the same for the 120 x 15-minute horizon at 398 states and 24 power steps.  Run with
 //! `cargo test -p energy-opt --test bench -- --nocapture` to see the numbers.
 
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library, not to the
+// tests that prove it refuses.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
 use std::time::{Duration, Instant};
 
 use energy_opt::{BatterySpec, Config, SolveInput, solve};

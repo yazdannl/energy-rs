@@ -45,6 +45,7 @@ impl Contract {
     }
 
     /// Replace the yearly tax table (configuration, tests for later years).
+    #[must_use]
     pub fn with_tax(mut self, tax: EnergyTaxTable) -> Self {
         self.tax = tax;
         self

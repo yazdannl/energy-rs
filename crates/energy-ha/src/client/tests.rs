@@ -1,3 +1,7 @@
+// Test module: assertions fail by panicking and `unwrap` is the intended way to express the
+// expected value, so the shipped-code panic policy does not apply here.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::time::Duration;
 
 use super::{Config, ReconnectPolicy};

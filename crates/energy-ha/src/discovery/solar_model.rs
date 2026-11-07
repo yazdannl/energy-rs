@@ -13,7 +13,7 @@ pub struct SolarModel {
 impl SolarModel {
     pub(crate) fn merge(&mut self, prefs: &SolarPrefs, rules: &mut Vec<PowerRule>) {
         if self.energy.is_none() {
-            self.energy = prefs.stat_energy_from.clone();
+            self.energy.clone_from(&prefs.stat_energy_from);
         }
         if let Some(rule) =
             PowerRule::from_source(prefs.stat_rate.as_deref(), prefs.power_config.as_ref())

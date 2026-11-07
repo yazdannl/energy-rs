@@ -1,12 +1,23 @@
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
+mod support;
 
 use std::collections::HashMap;
 
-use common::{FakeServer, TOKEN};
 use energy_ha::{
     Config, Connection, EnergyPreferences, PowerReading, SiteModel, discover, fetch_prefs, to_watts,
 };
 use serde_json::{Value, json};
+use support::{FakeServer, TOKEN};
 
 fn prefs(value: Value) -> EnergyPreferences {
     serde_json::from_value(value).expect("prefs")
@@ -29,7 +40,7 @@ fn readings(items: &[(&str, f64, &str)]) -> HashMap<String, PowerReading> {
 #[test]
 fn fixture_mapping_uses_stat_rate_when_present() {
     let prefs: EnergyPreferences =
-        serde_json::from_value(common::result("energy_prefs.json")).expect("prefs");
+        serde_json::from_value(support::result("energy_prefs.json")).expect("prefs");
     let site = SiteModel::from_prefs(&prefs);
 
     assert!(site.configured);
@@ -46,6 +57,13 @@ fn fixture_mapping_uses_stat_rate_when_present() {
         Some(energy_ha::PowerRule::Direct(_))
     ));
     assert_eq!(site.solar.forecast_entry_ids.len(), 2);
+}
+
+#[test]
+fn fixture_mapping_maps_batteries_and_devices() {
+    let prefs: EnergyPreferences =
+        serde_json::from_value(support::result("energy_prefs.json")).expect("prefs");
+    let site = SiteModel::from_prefs(&prefs);
 
     assert_eq!(site.batteries.len(), 4);
     for battery in &site.batteries {
@@ -347,9 +365,9 @@ fn live_balance_clamps_negative_load_and_never_zero_fills() {
 async fn not_found_prefs_means_no_dashboard() {
     let server = FakeServer::spawn(std::sync::Arc::new(|_, command, _| {
         if command == "energy/get_prefs" {
-            common::Reply::fail("not_found", "No prefs")
+            support::Reply::fail("not_found", "No prefs")
         } else {
-            common::Reply::ok(json!({}))
+            support::Reply::ok(json!({}))
         }
     }))
     .await;

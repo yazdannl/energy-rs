@@ -34,6 +34,7 @@ pub async fn fetch_prefs(connection: &Connection) -> Result<Option<EnergyPrefere
 pub async fn discover(connection: &Connection) -> Result<SiteModel, HaError> {
     Ok(fetch_prefs(connection)
         .await?
-        .map(|prefs| SiteModel::from_prefs(&prefs))
-        .unwrap_or_else(SiteModel::not_configured))
+        .map_or_else(SiteModel::not_configured, |prefs| {
+            SiteModel::from_prefs(&prefs)
+        }))
 }

@@ -1,10 +1,22 @@
 //! Worked examples from `reports/energy-rs/prices.md`: the published build-up inverted, the
 //! post-saldering feed-in, the two negative-price thresholds, and what one slot's net flow earns.
 
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here, and fixture timestamps/money read better verbatim than with digit separators.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint,
+    clippy::unreadable_literal
+)]
 
-use common::{ENERGY_TAX_EX, FEE_INCL, contract, quarter_hourly, slot_at};
+mod support;
+
 use energy_price::settlement::{ExportSource, NetMetering, Saldering, Settlement};
+use support::{ENERGY_TAX_EX, FEE_INCL, contract, quarter_hourly, slot_at};
 
 const BUY: f64 = 0.20;
 /// `(0.20 - 0.02) / 1.21 - 0.09161` in full f64 precision.
@@ -18,14 +30,14 @@ fn close(actual: f64, expected: f64) -> bool {
 
 /// 2026 (saldering on) with a fresh annual budget of `import_kwh`.
 fn saldering_2026(import_kwh: f64) -> Settlement {
-    let mut settlement = Settlement::on(contract(), common::date("2026-11-20"));
+    let mut settlement = Settlement::on(contract(), support::date("2026-11-20"));
     settlement.set_import_ytd(2026, import_kwh);
     settlement
 }
 
 /// 2027 (saldering off by date) with no annual netting.
 fn post_saldering_2027() -> Settlement {
-    Settlement::on(contract(), common::date("2027-06-01"))
+    Settlement::on(contract(), support::date("2027-06-01"))
 }
 
 #[test]
@@ -203,17 +215,17 @@ fn the_regime_is_date_driven_with_a_manual_override() {
         FEED_IN_AT_0_20
     ));
 
-    let mut date_driven = Settlement::on(contract, common::date("2026-11-20"));
-    assert_eq!(date_driven.today(), common::date("2026-11-20"));
-    date_driven.set_today(common::date("2027-01-02"));
-    assert_eq!(date_driven.today(), common::date("2027-01-02"));
+    let mut date_driven = Settlement::on(contract, support::date("2026-11-20"));
+    assert_eq!(date_driven.today(), support::date("2026-11-20"));
+    date_driven.set_today(support::date("2027-01-02"));
+    assert_eq!(date_driven.today(), support::date("2027-01-02"));
     assert_eq!(date_driven.regime(), NetMetering::DateDriven);
 }
 
 #[test]
 fn a_book_of_slots_prices_each_slot_independently() {
     let settlement = post_saldering_2027();
-    let book = common::book(quarter_hourly(
+    let book = support::book(quarter_hourly(
         "2027-06-01T02:00:00+02:00",
         &[0.10, 0.20, -0.05],
     ));

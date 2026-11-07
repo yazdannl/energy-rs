@@ -37,8 +37,18 @@
           class="grid size-9 place-items-center rounded-lg bg-emerald-500/15 text-emerald-400"
           aria-hidden="true"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="size-5">
-            <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z" stroke-linecap="round" stroke-linejoin="round" />
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            class="size-5"
+          >
+            <path
+              d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
           </svg>
         </span>
         <div>
