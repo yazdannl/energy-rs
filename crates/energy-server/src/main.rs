@@ -1,9 +1,9 @@
 //! `energy-server` binary: the add-on entrypoint.
 //!
 //! Binds `0.0.0.0:8099` (ingress; never loopback only, the Supervisor connects from the Docker
-//! network), logs to stdout, and shuts down gracefully on SIGTERM so the ledger can be checkpointed
-//! once P6 lands. Options come from `/data/options.json`; P0 reads only the port from the
-//! environment.
+//! network), logs to stdout, and shuts down gracefully on SIGTERM so the ledger can be checkpointed.
+//! Configuration comes from `/data/options.json` (written by the Supervisor); `energy_rs/run.sh`
+//! passes the log level as `LOG_LEVEL` and the data folder as `ENERGY_RS_DATA`.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         %addr,
+        data_dir = %std::env::var("ENERGY_RS_DATA").as_deref().unwrap_or("/data"),
         "energy-server listening"
     );
 
@@ -43,7 +44,10 @@ async fn main() -> Result<()> {
 }
 
 fn init_tracing() {
-    let directives = std::env::var("ENERGY_RS_LOG")
+    // `LOG_LEVEL` comes from the add-on options (`log_level`) via run.sh; the other two are for
+    // development and for a manual `docker run`.
+    let directives = std::env::var("LOG_LEVEL")
+        .or_else(|_| std::env::var("ENERGY_RS_LOG"))
         .or_else(|_| std::env::var("RUST_LOG"))
         .unwrap_or_else(|_| "info".to_owned());
     tracing_subscriber::fmt()

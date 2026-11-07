@@ -9,15 +9,41 @@ arch:
 startup: application
 boot: auto
 init: false
+# Seconds the Supervisor waits after SIGTERM before it kills the container; run.sh execs the binary
+# so the signal goes straight to the shutdown path (stop dispatch, checkpoint the ledger).
+timeout: 30
 ingress: true
 ingress_port: 8099
+ingress_entry: /
 panel_icon: mdi:home-battery
 panel_title: Energy
+panel_admin: true
 homeassistant_api: true
 hassio_api: false
+# The health endpoint answers 200 while the HTTP server lives and never calls Home Assistant, so a
+# Core restart does not restart this add-on.
+watchdog: "http://[HOST]:[PORT:8099]/api/v1/health"
+# SQLite/WAL in /data: stop before a backup instead of copying a hot WAL.
+backup: cold
+# Prebuilt per-arch images published by .github/workflows/release.yml on a `v*` tag; `{arch}` is
+# substituted with aarch64/amd64 and the tag is always `version`. Delete this line to make the
+# Supervisor build energy_rs/ on the device instead (it compiles Rust there: slow).
+image: "ghcr.io/yazdannl/energy-rs-{arch}"
+# /data is always mounted read-write; the entry documents that the ledger and options.json live
+# there (type `data`, short form). No other host folder is needed.
+map:
+  - data:rw
+# Every value must be non-null: the Supervisor rejects an explicit null ("Missing required option").
+# Optional settings belong in `schema:` only, where absent means "unset".
 options:
   mode: dry_run
   log_level: info
+  price_provider: auto
+  batteries: "[]"
 schema:
   mode: list(advisory|dry_run|auto)
   log_level: list(trace|debug|info|warn|error)
+  price_provider: list(auto|zonneplan|ha_sensor)
+  zonneplan_refresh_token: password?
+  price_entity: str?
+  batteries: str

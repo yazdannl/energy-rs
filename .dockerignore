@@ -1,3 +1,12 @@
-target
-web/node_modules
+# Keep the build context small. `web/dist` is NOT ignored: rust-embed embeds it at compile time.
+# The UI is built before the image (see energy_rs/README.md), so web/src and the node toolchain are
+# not part of the context.
 .git
+.github
+target
+**/target
+web/node_modules
+build
+*.db
+*.db-wal
+*.db-shm

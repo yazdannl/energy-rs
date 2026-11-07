@@ -37,6 +37,9 @@ it in `dry_run` first: it plans and logs intended setpoints without touching the
 default `dry_run` mode is deliberate — `auto` is a separate, explicit switch and until then the old
 add-on keeps controlling the hardware.
 
+The manifest pulls a prebuilt per-arch image; building the add-on locally (image or release tarball)
+is covered in [energy_rs/README.md](energy_rs/README.md) and [docs/RELEASE.md](docs/RELEASE.md).
+
 ## Development
 
 ```bash
@@ -57,8 +60,10 @@ cargo build --release      # embeds web/dist into the binary
 ```
 
 The server serves `GET /api/v1/health` and the embedded UI on `:8099`
-(`ENERGY_RS_LOG=debug cargo run -p energy-server`). The add-on image is built from the repository
-root: `docker build -f energy_rs/Dockerfile -t energy-rs:0.1.0 .`
+(`ENERGY_RS_LOG=debug cargo run -p energy-server`). The add-on image builds from the repository root
+with `docker build -f energy_rs/Dockerfile -t energy-rs:0.1.0 .`, or through the staged
+Supervisor-context folder with `scripts/build_addon_local.sh`; releases are described in
+[docs/RELEASE.md](docs/RELEASE.md).
 
 ## License
 

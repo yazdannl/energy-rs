@@ -1,7 +1,7 @@
 # Status
 
-Phase gates from [PLAN.md](PLAN.md) §11. P0–P3, P0.5, P5 and the P6 ledger store are done;
-P4, P6 learning/protection and P7–P10 are open.
+Phase gates from [PLAN.md](PLAN.md) §11. P0–P3, P0.5, P5, the P6 ledger store and the P10 packaging
+are done; P4, P6 learning/protection, P7–P9 and the live P10 rollout are open.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
@@ -16,7 +16,59 @@ P4, P6 learning/protection and P7–P10 are open.
 | P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | todo |
 | P8 | `energy-server` API + savings | contract tests, SSE smoke | todo |
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
-| P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | todo |
+| P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | **partial**: packaging, image and release pipeline done; nothing published, installed or shadowed yet |
+
+## P10 notes (packaging)
+
+Done in `chore/packaging`; install and release details in [RELEASE.md](RELEASE.md) and
+`energy_rs/README.md`. Nothing was pushed, published or installed.
+
+- **Build context.** One Dockerfile serves `docker build -f energy_rs/Dockerfile .` from the
+  repository root *and* a staged add-on folder (what the Supervisor uses as context). Both layouts
+  put `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `crates/` and `web/dist/` at the context
+  root; the builder resolves the one difference (`energy_rs/run.sh` vs `run.sh`) with a single
+  `install`. No BuildKit-only features, so the Supervisor's legacy builder can build it too.
+- **Staging.** `scripts/stage_addon.sh` writes `build/energy_rs/`: manifest (with `image:` stripped so
+  a local build is actually built), Dockerfile, `run.sh`, store art, `README.md` as `DOCS.md`, the
+  workspace manifests, `crates/` and `web/dist/` — 5.4 MB, the whole Supervisor context. It fails
+  loudly when a path the Dockerfile copies is missing; `ci.yml`'s `packaging` job stages the folder
+  on every push and re-checks the manifest contract (image placeholder, ingress 8099, watchdog path,
+  `map: data:rw`, arch list, mode enum).
+- **Manifest.** `timeout: 30`, `ingress_entry: /`, `panel_admin`, `watchdog` on
+  `http://[HOST]:[PORT:8099]/api/v1/health` (the endpoint never calls HA, so a Core restart cannot
+  restart the add-on), `backup: cold` for the SQLite WAL, `image: ghcr.io/yazdannl/energy-rs-{arch}`
+  (delete the line to let the Supervisor build on the device). Options: `mode`, `log_level`,
+  `price_provider`, `price_entity?`, `zonneplan_refresh_token?` (`password?`, documented plain-text
+  trade-off), `batteries` (JSON string, manual LAN `address`/`serial` entries).
+- **Entrypoint.** `run.sh` reads `log_level` from `/data/options.json` without jq, exports `LOG_LEVEL`
+  and `ENERGY_RS_DATA=/data`, then `exec`s the binary; `main.rs` prefers `LOG_LEVEL` over
+  `ENERGY_RS_LOG`/`RUST_LOG` and logs the data folder.
+- **Image.** `rust:1.99.1-slim-bookworm` + `build-essential` builder → `debian:bookworm-slim` runtime
+  (ca-certificates, tzdata), `io.hass.{version,arch,type}` labels, `EXPOSE 8099`, `ENTRYPOINT
+  ["/run.sh"]`, bin only (`cargo build --release --locked --bin energy-server`, so the release
+  profile's `strip`/thin LTO apply).
+- **Release pipeline.** `release.yml` on a `v*` tag: version lockstep + tag match → gates → native
+  matrix images (`ubuntu-24.04`/amd64, `ubuntu-24.04-arm`/aarch64) pushed to
+  `ghcr.io/yazdannl/energy-rs-{amd64,aarch64}:<version>` → staged tarball
+  `energy-rs-addon-<version>.tar.gz` attached to a GitHub release. A manual dispatch builds both
+  images without pushing (default) and smoke-tests `/api/v1/health`.
+- **Versioning.** `scripts/bump_version.sh <x.y.z>` rewrites `[workspace.package] version`,
+  the eight internal `Cargo.lock` entries (offline, no re-resolve) and `energy_rs/config.yaml`, then
+  verifies with `cargo metadata --locked --offline`; `--check` is a CI job and a release precondition,
+  `--show` feeds the workflows. `cargo build --release --locked` in the image and in CI's `build` job
+  now refuses a stale lock.
+- **Local validation (this sandbox: aarch64, 6.4 GB Docker volume, no route for build containers).**
+  `docker build -f energy_rs/Dockerfile .` (repository-root context) produced a 110 MB image whose
+  `GET /api/v1/health` answers `{"status":"ok","version":"0.1.0"}` and whose labels are
+  `io.hass.version=0.1.0`, `io.hass.arch=aarch64`, `io.hass.type=app`;
+  `scripts/build_addon_local.sh` (staged Supervisor context) produced the same image and answer. The
+  final `run.sh` mounted into that image reads `log_level` from `/data/options.json`: `warn`
+  suppresses the startup INFO line, `debug` shows it, so the option really reaches the binary. Both
+  builds needed `--network host` here: the daemon pulls images fine but gives build containers no
+  default route, so `apt-get` and crates.io are unreachable without it (GitHub runners do not need
+  it). ~6 min per build, almost all of it the Rust release compile. Gates were run in this worktree:
+  `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`,
+  `python3 scripts/check_structure.py`, `npm ci && npm run build` — all green.
 
 ## P6 notes (store)
 
