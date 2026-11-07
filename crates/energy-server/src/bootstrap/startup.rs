@@ -14,7 +14,9 @@ use energy_ledger::{Ledger, LedgerConfig};
 use crate::bootstrap::booted::Booted;
 use crate::bootstrap::engine::Ports;
 use crate::bootstrap::site_cache::SiteCache;
-use crate::bootstrap::{config, engine, fleet, ha, ha_loop, meter, options, prices, profile};
+use crate::bootstrap::{
+    config, engine, fleet, ha, ha_loop, meter, options, prices, profile, savings,
+};
 use crate::service::Service;
 use crate::service_options::ServiceOptions;
 
@@ -170,6 +172,7 @@ fn spawn_loops(
             service.profile_refresh(),
         ),
         ha_loop::spawn(ha.client(), ha.site(), Arc::clone(cache)),
+        savings::spawn(ha, prices, service),
     ];
     tasks.retain(|task| !task.is_finished());
     tasks

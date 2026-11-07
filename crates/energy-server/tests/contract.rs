@@ -172,17 +172,33 @@ async fn savings_roll_up_days_and_totals() {
     assert_eq!(body["period"], "day");
     assert_eq!(body["days"].as_array().unwrap().len(), 1);
     assert_eq!(body["days"][0]["actualEur"], 0.5);
+    assert_eq!(body["days"][0]["complete"], false);
+    assert_eq!(body["days"][0]["coverageHours"], 6.0);
     assert_eq!(body["totals"]["savingEur"], 0.5);
+    assert_eq!(body["totals"]["completeDays"], 0);
 
     let (status, body) = get(&fixture.router(), "/api/v1/savings?period=lifetime").await;
     assert_eq!(status, 200);
-    assert_eq!(body["days"].as_array().unwrap().len(), 2);
+    assert_eq!(body["days"].as_array().unwrap().len(), 3);
     let totals = &body["totals"];
-    assert_eq!(totals["actualEur"], 2.0);
-    assert_eq!(totals["baselineEur"], 3.5);
-    assert_eq!(totals["savingEur"], 1.5);
-    assert_eq!(totals["importWh"], 6_000.0);
+    // Lifetime counts complete days only: the provisional today and the measured gap stay out.
+    assert_eq!(totals["actualEur"], 1.5);
+    assert_eq!(totals["baselineEur"], 2.5);
+    assert_eq!(totals["savingEur"], 1.0);
+    assert_eq!(totals["arbitrageEur"], 0.4);
+    assert_eq!(totals["selfConsumptionEur"], 0.5);
+    assert_eq!(totals["feedInEur"], 0.2);
+    assert_eq!(totals["batteryBalanceEur"], -0.1);
+    assert_eq!(totals["importWh"], 4_000.0);
     assert_eq!(totals["completeDays"], 1);
+    let gap = body["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|day| day["complete"] == false && day["coverageHours"] == 3.0)
+        .expect("the incomplete day is still listed");
+    assert!(gap["savingEur"].is_null());
+    assert!(gap["actualEur"].is_null());
 
     let (status, body) = get(&fixture.router(), "/api/v1/savings?period=week").await;
     assert_eq!(status, 400);

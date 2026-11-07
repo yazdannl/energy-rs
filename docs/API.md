@@ -196,21 +196,39 @@ Newest dispatch attempts first over the last 7 days.
 
 Measured accounting from `savings_daily`, never from planned values. `day` is today (local),
 `month` the current calendar month to today, `year` the current year to today, `lifetime` all rows.
+The method, the counterfactual and the saldering-budget approximations are in `docs/SAVINGS.md`.
 
 ```json
 { "period": "lifetime", "fromDay": "1970-01-01", "toDay": "2026-01-01",
   "days": [{ "day": "2026-01-01", "actualEur": 0.5, "baselineEur": 1.0, "savingEur": 0.5,
+             "arbitrageEur": 0.3, "selfConsumptionEur": 0.4, "feedInEur": -0.1,
+             "batteryBalanceEur": -0.1,
              "importWh": 2000.0, "exportWh": 0.0, "pvWh": 3000.0,
+             "batteryChargeWh": 2000.0, "batteryDischargeWh": 1800.0,
+             "coverageHours": 24.0, "complete": true },
+           { "day": "2026-01-02", "actualEur": null, "baselineEur": null, "savingEur": null,
+             "arbitrageEur": null, "selfConsumptionEur": null, "feedInEur": null,
+             "batteryBalanceEur": null,
+             "importWh": 500.0, "exportWh": 0.0, "pvWh": 0.0,
              "batteryChargeWh": 0.0, "batteryDischargeWh": 0.0,
              "coverageHours": 6.0, "complete": false }],
-  "totals": { "actualEur": 2.0, "baselineEur": 3.5, "savingEur": 1.5,
-              "importWh": 6000.0, "exportWh": 1000.0, "pvWh": 9000.0,
+  "totals": { "actualEur": 1.5, "baselineEur": 2.5, "savingEur": 1.0,
+              "arbitrageEur": 0.4, "selfConsumptionEur": 0.5,
+              "feedInEur": 0.2, "batteryBalanceEur": -0.1,
+              "importWh": 4000.0, "exportWh": 1000.0, "pvWh": 9000.0,
               "batteryChargeWh": 2000.0, "batteryDischargeWh": 1800.0,
               "days": 2, "completeDays": 1 } }
 ```
 
-`complete` means the full local day was covered; a partial day keeps its `coverageHours` instead of
-being dropped.
+* `savingEur = baselineEur - actualEur`, and the four split fields sum to it exactly:
+  battery arbitrage, PV self-consumption, the feed-in effect and the battery's own energy balance.
+* `complete` means every quarter-hour of the local day had a price and an import, export, PV and
+  load measurement. Money is `null` for a **closed** day with a gap (it keeps its measured energy
+  and `coverageHours` instead of a fake number); the current day is provisional — money present,
+  `complete: false` — and `period=day` is that measured-so-far value.
+* `lifetime` totals sum complete days only. `month`/`year`/`day` also include the provisional current
+  day; a `null` day is in `days` but in no total. `days` counts the rows, `completeDays` the complete
+  ones.
 
 ### `GET /settings` / `PATCH /settings`
 

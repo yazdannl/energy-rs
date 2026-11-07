@@ -198,8 +198,9 @@ fn savings_days_round_trip_rounded_to_a_micro_euro() {
         .get("2026-06-15")
         .unwrap()
         .unwrap();
-    assert_eq!(stored.actual_eur, 0.3);
-    assert!((stored.saving_eur - 0.7).abs() < 1e-12);
+    assert_eq!(stored.actual_eur, Some(0.3));
+    assert!((stored.saving_eur.unwrap() - 0.7).abs() < 1e-12);
+    assert_eq!(stored.arbitrage_eur, None);
     assert_eq!(stored.import_kwh, 2.5);
     assert_eq!(stored.coverage_hours, 23.5);
     assert!(!stored.complete);

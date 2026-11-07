@@ -222,7 +222,15 @@ fn seed_savings(ledger: &Ledger) {
     yesterday.battery_discharge_kwh = 1.8;
     yesterday.coverage_hours = 24.0;
     yesterday.complete = true;
+    yesterday.arbitrage_eur = Some(0.4);
+    yesterday.self_consumption_eur = Some(0.5);
+    yesterday.feed_in_eur = Some(0.2);
+    yesterday.battery_balance_eur = Some(-0.1);
     savings.upsert(&yesterday).expect("yesterday");
+    let mut last_week = SavingsDaily::incomplete(local_day(-7));
+    last_week.import_kwh = 1.0;
+    last_week.coverage_hours = 3.0;
+    savings.upsert(&last_week).expect("incomplete day");
     let mut today = SavingsDaily::new(local_day(0), 0.5, 1.0);
     today.import_kwh = 2.0;
     today.pv_kwh = 3.0;

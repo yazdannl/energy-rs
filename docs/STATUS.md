@@ -15,10 +15,11 @@ notes are the first section below.
 | P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | **done** |
 | P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | **done** |
 | P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | **done** |
-| P8 | `energy-server` API + savings | contract tests, SSE smoke | **partial**: API/SSE/commands done; savings math still open |
+| P8 | `energy-server` API + savings | contract tests, SSE smoke | **done**: API/SSE/commands and the measured savings rollup (P13) |
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | **partial**: packaging, image and release pipeline done; nothing published, installed or shadowed yet |
 | P12 | Runtime assembly: bootstrap, engine/API bridge, load profile, lifecycle | end-to-end boot test with fake HA + fake devices, graceful stop | **done** |
+| P13 | Savings accounting: measured counterfactual, split, rollups, catch-up | accounting/rollup tests, `docs/SAVINGS.md` | **done** |
 
 ## P12 notes (runtime assembly)
 
