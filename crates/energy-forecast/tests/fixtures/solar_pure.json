@@ -1,0 +1,1701 @@
+{
+ "bias": {
+  "decay": [
+   {
+    "decayed": [
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ],
+    "factors": [
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ],
+    "label": "none",
+    "updated_at": null
+   },
+   {
+    "decayed": [
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25,
+     1.25
+    ],
+    "factors": [
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ],
+    "label": "7d",
+    "updated_at": "2026-02-28T12:00:00+00:00"
+   },
+   {
+    "decayed": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "factors": [
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ],
+    "label": "14d",
+    "updated_at": "2026-02-21T12:00:00+00:00"
+   },
+   {
+    "decayed": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "factors": [
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ],
+    "label": "14d1h",
+    "updated_at": "2026-02-21T11:00:00+00:00"
+   },
+   {
+    "decayed": [
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ],
+    "factors": [
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ],
+    "label": "future",
+    "updated_at": "2026-03-07T12:00:00+00:00"
+   }
+  ],
+  "now": "2026-03-07T12:00:00+00:00",
+  "payload": {
+   "counts": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "factors": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    0.916,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.06,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "mape_pct": 20.4,
+   "updated_at": "2026-03-07T12:00:00+00:00"
+  },
+  "samples": [
+   [
+    "2026-03-07T07:00:00+00:00",
+    1.5,
+    1.65
+   ],
+   [
+    "2026-03-07T07:30:00+00:00",
+    2.0,
+    1.0
+   ],
+   [
+    "2026-03-07T12:00:00+00:00",
+    3.0,
+    3.9
+   ],
+   [
+    "2026-03-07T12:15:00+00:00",
+    0.01,
+    5.0
+   ],
+   [
+    "2026-03-07T22:00:00+00:00",
+    0.4,
+    -1.0
+   ]
+  ],
+  "tz": "Europe/Amsterdam"
+ },
+ "capacity_slots": [
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1772776800,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772776800,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772776800,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1772798400,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 801.142961298094,
+   "pv_kw": 2.633259784493697,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772798400,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 801.142961298094,
+   "pv_kw": 2.2608254367832212,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772798400,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 801.142961298094,
+   "pv_kw": 2.723886068413519,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1772820000,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772820000,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772820000,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1782036000,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 903.8545242313738,
+   "pv_kw": 2.9708602392695362,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1782036000,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 903.8545242313738,
+   "pv_kw": 2.5506774673809365,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1782036000,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 903.8545242313738,
+   "pv_kw": 3.0731053823866707,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1797854400,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 544.4458424949272,
+   "pv_kw": 1.789527476536405,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1797854400,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 544.4458424949272,
+   "pv_kw": 1.5364261675206845,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1797854400,
+   "lat": 52.0,
+   "lon": 5.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 544.4458424949272,
+   "pv_kw": 1.8511158644827526,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1772776800,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772776800,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772776800,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.0,
+   "pv_kw": 0.0,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1772798400,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 906.2939791745025,
+   "pv_kw": 2.9788784319119785,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772798400,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 906.2939791745025,
+   "pv_kw": 2.557561609230446,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772798400,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 906.2939791745025,
+   "pv_kw": 3.0813995291933085,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1772820000,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.045240229370314335,
+   "pv_kw": 0.0001486991490870666,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772820000,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.045240229370314335,
+   "pv_kw": 0.00012766792728302704,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1772820000,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 0.045240229370314335,
+   "pv_kw": 0.00015381677985906874,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1782036000,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 824.7819057375981,
+   "pv_kw": 2.710958128918476,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1782036000,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 824.7819057375981,
+   "pv_kw": 2.3275345379915016,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1782036000,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 824.7819057375981,
+   "pv_kw": 2.8042584795078334,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  },
+  {
+   "attenuation": 0.9667290475285529,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": 40.0,
+   "epoch": 1797854400,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 739.1964091300151,
+   "pv_kw": 2.4296489778182724,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 25.0
+  },
+  {
+   "attenuation": 0.83,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1797854400,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": 0.83,
+   "performance_ratio": 0.85,
+   "poa_wm2": 739.1964091300151,
+   "pv_kw": 2.086012266564903,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 30.0
+  },
+  {
+   "attenuation": 1.0,
+   "azimuth_deg": 180.0,
+   "capacity_wp": 4000.0,
+   "cloud_pct": null,
+   "epoch": 1797854400,
+   "lat": 40.0,
+   "lon": -3.0,
+   "nasa_clearness": null,
+   "performance_ratio": 0.85,
+   "poa_wm2": 739.1964091300151,
+   "pv_kw": 2.5132677910420513,
+   "tilt_deg": 35.0,
+   "tz": "Europe/Amsterdam",
+   "uncertainty_pct": 35.0
+  }
+ ],
+ "derived": {
+  "azimuth_deg": 180.0,
+  "capacity_wp": 6676.5770104290405,
+  "lat": 52.0,
+  "lon": 5.0,
+  "performance_ratio": 0.85,
+  "samples": [
+   [
+    "2026-03-06T08:00:00+00:00",
+    2.0
+   ],
+   [
+    "2026-03-06T08:15:00+00:00",
+    2.05
+   ],
+   [
+    "2026-03-06T08:30:00+00:00",
+    2.1
+   ],
+   [
+    "2026-03-06T08:45:00+00:00",
+    2.15
+   ],
+   [
+    "2026-03-06T09:00:00+00:00",
+    2.2
+   ],
+   [
+    "2026-03-06T09:15:00+00:00",
+    2.25
+   ],
+   [
+    "2026-03-06T09:30:00+00:00",
+    2.3
+   ],
+   [
+    "2026-03-06T09:45:00+00:00",
+    2.35
+   ],
+   [
+    "2026-03-06T10:00:00+00:00",
+    2.4
+   ],
+   [
+    "2026-03-06T10:15:00+00:00",
+    2.45
+   ],
+   [
+    "2026-03-06T10:30:00+00:00",
+    2.5
+   ],
+   [
+    "2026-03-06T10:45:00+00:00",
+    2.55
+   ],
+   [
+    "2026-03-06T11:00:00+00:00",
+    2.6
+   ],
+   [
+    "2026-03-06T11:15:00+00:00",
+    2.65
+   ],
+   [
+    "2026-03-06T11:30:00+00:00",
+    2.7
+   ],
+   [
+    "2026-03-06T11:45:00+00:00",
+    2.75
+   ],
+   [
+    "2026-03-06T12:00:00+00:00",
+    2.8
+   ],
+   [
+    "2026-03-06T12:15:00+00:00",
+    2.85
+   ],
+   [
+    "2026-03-06T12:30:00+00:00",
+    2.9
+   ],
+   [
+    "2026-03-06T12:45:00+00:00",
+    2.95
+   ],
+   [
+    "2026-03-06T13:00:00+00:00",
+    3.0
+   ],
+   [
+    "2026-03-06T13:15:00+00:00",
+    3.05
+   ],
+   [
+    "2026-03-06T13:30:00+00:00",
+    3.1
+   ],
+   [
+    "2026-03-06T13:45:00+00:00",
+    3.1500000000000004
+   ],
+   [
+    "2026-03-06T14:00:00+00:00",
+    3.2
+   ],
+   [
+    "2026-03-06T14:15:00+00:00",
+    3.25
+   ],
+   [
+    "2026-03-06T14:30:00+00:00",
+    3.3
+   ],
+   [
+    "2026-03-06T14:45:00+00:00",
+    3.35
+   ],
+   [
+    "2026-03-06T15:00:00+00:00",
+    3.4000000000000004
+   ],
+   [
+    "2026-03-06T15:15:00+00:00",
+    3.45
+   ]
+  ],
+  "tilt_deg": 35.0,
+  "usable": 30
+ },
+ "ha_energy": {
+  "all": {
+   "providers": 2,
+   "series": [
+    [
+     "2026-03-06T07:00:00+00:00",
+     3.0
+    ],
+    [
+     "2026-03-06T08:00:00+00:00",
+     1.5
+    ],
+    [
+     "2026-03-06T09:00:00+00:00",
+     0.5
+    ],
+    [
+     "2026-03-06T10:00:00+00:00",
+     2.0
+    ]
+   ],
+   "wh": [
+    [
+     "2026-03-06T07:00:00+00:00",
+     3000.0
+    ],
+    [
+     "2026-03-06T08:00:00+00:00",
+     1500.0
+    ],
+    [
+     "2026-03-06T09:00:00+00:00",
+     500.0
+    ],
+    [
+     "2026-03-06T10:00:00+00:00",
+     2000.0
+    ]
+   ]
+  },
+  "alpha": {
+   "providers": 1,
+   "series": [
+    [
+     "2026-03-06T07:00:00+00:00",
+     2.5
+    ],
+    [
+     "2026-03-06T08:00:00+00:00",
+     1.5
+    ],
+    [
+     "2026-03-06T09:00:00+00:00",
+     0.5
+    ]
+   ],
+   "wh": [
+    [
+     "2026-03-06T07:00:00+00:00",
+     2500.0
+    ],
+    [
+     "2026-03-06T08:00:00+00:00",
+     1500.0
+    ],
+    [
+     "2026-03-06T09:00:00+00:00",
+     500.0
+    ]
+   ]
+  }
+ },
+ "ha_energy_payload": {
+  "alpha": {
+   "wh_hours": {
+    "2026-03-06T07:00:00+00:00": 2500.0,
+    "2026-03-06T08:00:00+00:00": 1500.0,
+    "2026-03-06T09:00:00+00:00": 500.0
+   }
+  },
+  "beta": {
+   "wh_hours": {
+    "2026-03-06T07:00:00+00:00": 500.0,
+    "2026-03-06T10:00:00+00:00": 2000.0
+   }
+  },
+  "not-a-provider": {
+   "other": {}
+  }
+ },
+ "head": {
+  "candidate_factors": [
+   0.9956755699050974,
+   0.9939299912731505,
+   0.9919201612129355,
+   0.9896633475580844,
+   0.9871782873186711,
+   0.9844848261230514,
+   0.9816035594297647,
+   0.9785554861173109,
+   1.0307978956597983,
+   1.0349462365591398,
+   1.0392251918050754,
+   1.0436101708907783,
+   1.0480776997011552,
+   1.0526056060007896,
+   1.0571731585036637,
+   1.0617611625630599,
+   1.0663520164548592,
+   1.0709297328271612,
+   1.075479930191972,
+   1.0799897993879632,
+   1.0844480497980267,
+   1.088844839811771,
+   1.0931716956276267,
+   1.0974214220323466
+  ],
+  "candidate_mae": 0.34561171622698983,
+  "fit": [
+   {
+    "actual_kw": 0.4,
+    "forecast_kw": 0.5,
+    "hour": 0,
+    "moment": "2026-03-01T00:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.44000000000000006,
+    "forecast_kw": 0.55,
+    "hour": 0,
+    "moment": "2026-03-02T00:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.48,
+    "forecast_kw": 0.6,
+    "hour": 1,
+    "moment": "2026-03-01T01:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.52,
+    "forecast_kw": 0.65,
+    "hour": 1,
+    "moment": "2026-03-02T01:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.5599999999999999,
+    "forecast_kw": 0.7,
+    "hour": 2,
+    "moment": "2026-03-01T02:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.6000000000000001,
+    "forecast_kw": 0.75,
+    "hour": 2,
+    "moment": "2026-03-02T02:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.6400000000000001,
+    "forecast_kw": 0.8,
+    "hour": 3,
+    "moment": "2026-03-01T03:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.6800000000000002,
+    "forecast_kw": 0.8500000000000001,
+    "hour": 3,
+    "moment": "2026-03-02T03:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.7200000000000001,
+    "forecast_kw": 0.9,
+    "hour": 4,
+    "moment": "2026-03-01T04:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.7600000000000001,
+    "forecast_kw": 0.9500000000000001,
+    "hour": 4,
+    "moment": "2026-03-02T04:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.8,
+    "forecast_kw": 1.0,
+    "hour": 5,
+    "moment": "2026-03-01T05:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.8400000000000001,
+    "forecast_kw": 1.05,
+    "hour": 5,
+    "moment": "2026-03-02T05:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.8800000000000001,
+    "forecast_kw": 1.1,
+    "hour": 6,
+    "moment": "2026-03-01T06:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.9200000000000002,
+    "forecast_kw": 1.1500000000000001,
+    "hour": 6,
+    "moment": "2026-03-02T06:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.9600000000000002,
+    "forecast_kw": 1.2000000000000002,
+    "hour": 7,
+    "moment": "2026-03-01T07:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.0000000000000002,
+    "forecast_kw": 1.2500000000000002,
+    "hour": 7,
+    "moment": "2026-03-02T07:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.625,
+    "forecast_kw": 1.3,
+    "hour": 8,
+    "moment": "2026-03-01T08:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.6875,
+    "forecast_kw": 1.35,
+    "hour": 8,
+    "moment": "2026-03-02T08:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.75,
+    "forecast_kw": 1.4,
+    "hour": 9,
+    "moment": "2026-03-01T09:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.8125,
+    "forecast_kw": 1.45,
+    "hour": 9,
+    "moment": "2026-03-02T09:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.875,
+    "forecast_kw": 1.5,
+    "hour": 10,
+    "moment": "2026-03-01T10:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.9375,
+    "forecast_kw": 1.55,
+    "hour": 10,
+    "moment": "2026-03-02T10:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.0,
+    "forecast_kw": 1.6,
+    "hour": 11,
+    "moment": "2026-03-01T11:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.0625,
+    "forecast_kw": 1.6500000000000001,
+    "hour": 11,
+    "moment": "2026-03-02T11:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.125,
+    "forecast_kw": 1.7000000000000002,
+    "hour": 12,
+    "moment": "2026-03-01T12:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.1875000000000004,
+    "forecast_kw": 1.7500000000000002,
+    "hour": 12,
+    "moment": "2026-03-02T12:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.25,
+    "forecast_kw": 1.8,
+    "hour": 13,
+    "moment": "2026-03-01T13:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.3125,
+    "forecast_kw": 1.85,
+    "hour": 13,
+    "moment": "2026-03-02T13:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.375,
+    "forecast_kw": 1.9000000000000001,
+    "hour": 14,
+    "moment": "2026-03-01T14:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.4375,
+    "forecast_kw": 1.9500000000000002,
+    "hour": 14,
+    "moment": "2026-03-02T14:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.5,
+    "forecast_kw": 2.0,
+    "hour": 15,
+    "moment": "2026-03-01T15:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.5625,
+    "forecast_kw": 2.05,
+    "hour": 15,
+    "moment": "2026-03-02T15:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.625,
+    "forecast_kw": 2.1,
+    "hour": 16,
+    "moment": "2026-03-01T16:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.6875,
+    "forecast_kw": 2.15,
+    "hour": 16,
+    "moment": "2026-03-02T16:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.75,
+    "forecast_kw": 2.2,
+    "hour": 17,
+    "moment": "2026-03-01T17:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.8125,
+    "forecast_kw": 2.25,
+    "hour": 17,
+    "moment": "2026-03-02T17:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.875,
+    "forecast_kw": 2.3,
+    "hour": 18,
+    "moment": "2026-03-01T18:00:00+00:00"
+   },
+   {
+    "actual_kw": 2.9374999999999996,
+    "forecast_kw": 2.3499999999999996,
+    "hour": 18,
+    "moment": "2026-03-02T18:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.0000000000000004,
+    "forecast_kw": 2.4000000000000004,
+    "hour": 19,
+    "moment": "2026-03-01T19:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.0625,
+    "forecast_kw": 2.45,
+    "hour": 19,
+    "moment": "2026-03-02T19:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.125,
+    "forecast_kw": 2.5,
+    "hour": 20,
+    "moment": "2026-03-01T20:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.1875,
+    "forecast_kw": 2.55,
+    "hour": 20,
+    "moment": "2026-03-02T20:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.25,
+    "forecast_kw": 2.6,
+    "hour": 21,
+    "moment": "2026-03-01T21:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.3125,
+    "forecast_kw": 2.65,
+    "hour": 21,
+    "moment": "2026-03-02T21:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.375,
+    "forecast_kw": 2.7,
+    "hour": 22,
+    "moment": "2026-03-01T22:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.4375,
+    "forecast_kw": 2.75,
+    "hour": 22,
+    "moment": "2026-03-02T22:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.5000000000000004,
+    "forecast_kw": 2.8000000000000003,
+    "hour": 23,
+    "moment": "2026-03-01T23:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.5625,
+    "forecast_kw": 2.85,
+    "hour": 23,
+    "moment": "2026-03-02T23:00:00+00:00"
+   }
+  ],
+  "holdout": [
+   {
+    "actual_kw": 0.82,
+    "forecast_kw": 1.0,
+    "hour": 0,
+    "moment": "2026-03-05T00:00:00+00:00"
+   },
+   {
+    "actual_kw": 0.9839999999999999,
+    "forecast_kw": 1.2,
+    "hour": 1,
+    "moment": "2026-03-05T01:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.148,
+    "forecast_kw": 1.4,
+    "hour": 2,
+    "moment": "2026-03-05T02:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.312,
+    "forecast_kw": 1.6,
+    "hour": 3,
+    "moment": "2026-03-05T03:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.476,
+    "forecast_kw": 1.8,
+    "hour": 4,
+    "moment": "2026-03-05T04:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.64,
+    "forecast_kw": 2.0,
+    "hour": 5,
+    "moment": "2026-03-05T05:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.804,
+    "forecast_kw": 2.2,
+    "hour": 6,
+    "moment": "2026-03-05T06:00:00+00:00"
+   },
+   {
+    "actual_kw": 1.9680000000000002,
+    "forecast_kw": 2.4000000000000004,
+    "hour": 7,
+    "moment": "2026-03-05T07:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.12,
+    "forecast_kw": 2.6,
+    "hour": 8,
+    "moment": "2026-03-05T08:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.36,
+    "forecast_kw": 2.8,
+    "hour": 9,
+    "moment": "2026-03-05T09:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.5999999999999996,
+    "forecast_kw": 3.0,
+    "hour": 10,
+    "moment": "2026-03-05T10:00:00+00:00"
+   },
+   {
+    "actual_kw": 3.84,
+    "forecast_kw": 3.2,
+    "hour": 11,
+    "moment": "2026-03-05T11:00:00+00:00"
+   }
+  ],
+  "incumbent_factors": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ],
+  "incumbent_mae": 0.3973333333333333
+ },
+ "merge": {
+  "entries": [
+   {
+    "name": "alpha",
+    "series": [
+     [
+      "2026-03-06T06:00:00+00:00",
+      1.0
+     ],
+     [
+      "2026-03-06T08:00:00+00:00",
+      3.0
+     ]
+    ],
+    "state": "ok",
+    "weight": 1.0
+   },
+   {
+    "name": "beta",
+    "series": [
+     [
+      "2026-03-06T07:00:00+00:00",
+      2.0
+     ],
+     [
+      "2026-03-06T09:00:00+00:00",
+      0.5
+     ]
+    ],
+    "state": "ok",
+    "weight": 2.0
+   },
+   {
+    "name": "empty",
+    "series": [],
+    "state": "failed",
+    "weight": 1.0
+   },
+   {
+    "name": "off",
+    "series": [
+     [
+      "2026-03-06T06:00:00+00:00",
+      9.0
+     ]
+    ],
+    "state": "disabled",
+    "weight": 1.0
+   },
+   {
+    "name": "degraded",
+    "series": [
+     [
+      "2026-03-06T06:00:00+00:00",
+      1.5
+     ]
+    ],
+    "state": "failed",
+    "weight": 0.5
+   }
+  ],
+  "grid": [
+   "2026-03-06T06:00:00+00:00",
+   "2026-03-06T06:30:00+00:00",
+   "2026-03-06T07:00:00+00:00",
+   "2026-03-06T07:30:00+00:00",
+   "2026-03-06T08:00:00+00:00",
+   "2026-03-06T08:30:00+00:00",
+   "2026-03-06T09:00:00+00:00",
+   "2026-03-06T09:30:00+00:00"
+  ],
+  "results": {
+   "max": {
+    "report": [
+     {
+      "name": "alpha",
+      "points": 2,
+      "state": "ok",
+      "weight": 1.0
+     },
+     {
+      "name": "beta",
+      "points": 2,
+      "state": "ok",
+      "weight": 2.0
+     },
+     {
+      "name": "empty",
+      "points": 0,
+      "state": "failed",
+      "weight": 1.0
+     },
+     {
+      "name": "off",
+      "points": 0,
+      "state": "disabled",
+      "weight": 1.0
+     },
+     {
+      "name": "degraded",
+      "points": 1,
+      "state": "failed",
+      "weight": 0.5
+     }
+    ],
+    "values": [
+     1.5,
+     1.5,
+     2.0,
+     2.5,
+     3.0,
+     3.0,
+     3.0,
+     3.0
+    ]
+   },
+   "median": {
+    "report": [
+     {
+      "name": "alpha",
+      "points": 2,
+      "state": "ok",
+      "weight": 1.0
+     },
+     {
+      "name": "beta",
+      "points": 2,
+      "state": "ok",
+      "weight": 2.0
+     },
+     {
+      "name": "empty",
+      "points": 0,
+      "state": "failed",
+      "weight": 1.0
+     },
+     {
+      "name": "off",
+      "points": 0,
+      "state": "disabled",
+      "weight": 1.0
+     },
+     {
+      "name": "degraded",
+      "points": 1,
+      "state": "failed",
+      "weight": 0.5
+     }
+    ],
+    "values": [
+     1.0,
+     1.5,
+     2.0,
+     1.625,
+     1.5,
+     1.5,
+     1.5,
+     1.5
+    ]
+   },
+   "weighted_mean": {
+    "report": [
+     {
+      "name": "alpha",
+      "points": 2,
+      "state": "ok",
+      "weight": 1.0
+     },
+     {
+      "name": "beta",
+      "points": 2,
+      "state": "ok",
+      "weight": 2.0
+     },
+     {
+      "name": "empty",
+      "points": 0,
+      "state": "failed",
+      "weight": 1.0
+     },
+     {
+      "name": "off",
+      "points": 0,
+      "state": "disabled",
+      "weight": 1.0
+     },
+     {
+      "name": "degraded",
+      "points": 1,
+      "state": "failed",
+      "weight": 0.5
+     }
+    ],
+    "values": [
+     0.5,
+     0.6428571428571429,
+     1.9285714285714286,
+     1.8571428571428572,
+     1.7857142857142858,
+     1.5714285714285714,
+     1.3571428571428572,
+     1.3571428571428572
+    ]
+   }
+  }
+ },
+ "note": "Solar pure-function parity: capacity physics, merge/interpolation, HA Energy Wh->kW, EWMA bias update and decay, head fit and holdout MAE, derived-size fit. Generated by scripts/gen_forecast_fixtures.py against ha-energy-manager commit 00092d7."
+}
