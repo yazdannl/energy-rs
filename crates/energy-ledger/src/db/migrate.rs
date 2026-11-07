@@ -15,7 +15,7 @@ use crate::db::migrations::MIGRATIONS;
 use crate::error::LedgerError;
 
 /// Current schema version; adding a migration bumps this and appends to the list.
-pub(crate) const SCHEMA_VERSION: i64 = 4;
+pub(crate) const SCHEMA_VERSION: i64 = 5;
 
 const VERSION_KEY: &str = "schema_version";
 
@@ -150,6 +150,31 @@ mod tests {
                 .unwrap();
             assert_eq!(tables, 1);
         }
+    }
+
+    #[test]
+    fn v5_keeps_old_savings_money_and_leaves_the_split_null() {
+        let mut conn = migrated_to(4);
+        conn.execute(
+            "INSERT INTO savings_daily
+                (day_local, actual_eur, baseline_eur, saving_eur, import_kwh, export_kwh, pv_kwh,
+                 battery_charge_kwh, battery_discharge_kwh, coverage_hours, complete)
+             VALUES ('2026-06-15', 0.5, 1.0, 0.5, 2.0, 1.0, 3.0, 1.0, 0.9, 24.0, 1)",
+            [],
+        )
+        .unwrap();
+        run(&mut conn).unwrap();
+        let (actual, saving, split, complete): (f64, f64, Option<f64>, i64) = conn
+            .query_row(
+                "SELECT actual_eur, saving_eur, arbitrage_eur, complete FROM savings_daily",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert!((actual - 0.5).abs() < 1e-12);
+        assert!((saving - 0.5).abs() < 1e-12);
+        assert_eq!(split, None);
+        assert_eq!(complete, 1);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 pub mod fakes;
 pub mod harness;
+pub mod savings;
 
 use chrono::NaiveDate;
 use energy_core::plan::{PackSpec, PackState, Plan, PlanSummary};

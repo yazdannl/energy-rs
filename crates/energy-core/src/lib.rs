@@ -12,6 +12,8 @@
 //!   code that talks to `energy-battery` writes.
 //! * [`engine`] — the tokio loop, progress watchdog, persisted live-write latch, boot neutralisation,
 //!   modes `advisory` -> `dry_run` -> `auto`, per-pack overrides and the shutdown hold.
+//! * [`savings`] — measured daily savings against a no-battery counterfactual, the four-way split
+//!   of the difference and the rollup that writes `savings_daily` (see `docs/SAVINGS.md`).
 //! * [`wiring`] — measurements, session extraction, capacity relearning, cell latch and the
 //!   full-charge maintenance window.
 //! * [`mode`] — the persisted control mode.
@@ -30,5 +32,6 @@ pub mod plan;
 pub mod plan_source;
 pub mod replan;
 pub mod safety;
+pub mod savings;
 pub mod stream;
 pub mod wiring;

@@ -20,6 +20,7 @@ mod option_value;
 pub mod options;
 pub mod prices;
 pub mod profile;
+pub mod savings;
 pub mod shutdown;
 pub mod site_cache;
 pub mod startup;

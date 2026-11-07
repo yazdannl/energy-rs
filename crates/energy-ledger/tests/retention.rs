@@ -210,7 +210,7 @@ fn sessions_and_daily_savings_are_kept_forever() {
             .unwrap()
             .unwrap()
             .saving_eur,
-        1.0
+        Some(1.0)
     );
 }
 
