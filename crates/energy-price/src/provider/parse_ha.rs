@@ -9,7 +9,7 @@ use crate::error::PriceError;
 use crate::provider::parse::{ParsedSeries, RawSlot, amount_eur, parse_timestamp};
 
 /// Parse `GET /api/states/<sensor>` for a Zonneplan electricity tariff sensor.
-pub(crate) fn parse_state(payload: &Value) -> Result<ParsedSeries, PriceError> {
+pub fn parse_state(payload: &Value) -> Result<ParsedSeries, PriceError> {
     let state = payload
         .get("state")
         .and_then(Value::as_str)

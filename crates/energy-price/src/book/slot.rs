@@ -5,6 +5,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Tz;
 
 use crate::book::SlotSource;
+use crate::book::query::TARIFF_TZ;
 
 /// Prices are money in EUR/kWh, rounded to 1e-6 on write (PLAN.md §2).
 pub const MONEY_SCALE: f64 = 1_000_000.0;
@@ -38,10 +39,9 @@ impl Slot {
         self.t_start + self.source.slot_seconds()
     }
 
-    /// Start instant in `Europe/Amsterdam` when representable.
+    /// Start instant in the tariff timezone (`Europe/Amsterdam`) when representable.
     pub fn local_start(&self) -> Option<DateTime<Tz>> {
-        DateTime::<Utc>::from_timestamp(self.t_start, 0)
-            .map(|utc| utc.with_timezone(&chrono_tz::Europe::Amsterdam))
+        DateTime::<Utc>::from_timestamp(self.t_start, 0).map(|utc| utc.with_timezone(&TARIFF_TZ))
     }
 
     /// Local tariff date (the key for saldering years, DST and publication timing).

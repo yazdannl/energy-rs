@@ -1,13 +1,13 @@
 # Status
 
-Phase gates from [PLAN.md](PLAN.md) §11. P0 and P1 are done; P2–P10 are open.
+Phase gates from [PLAN.md](PLAN.md) §11. P0–P3 are done; P4–P10 are open.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
 | P0 | Repo scaffold, workspace, CI, add-on skeleton, docs | `cargo build` + `cargo test` green, add-on builds for aarch64 | **done** |
 | P1 | `energy-opt` + C core + validation + Rust oracle | differential tests, `-ffp-contract=off`, bench < 50 ms/solve | **done** |
-| P2 | `energy-ha` discovery/stats/subscriptions | recorded-fixture tests, live read-only smoke | todo |
-| P3 | `energy-price` + settlement + store | formula unit tests vs researched numbers, toggle tests | todo |
+| P2 | `energy-ha` discovery/stats/subscriptions | recorded-fixture tests, live read-only smoke | **done** |
+| P3 | `energy-price` + settlement + store | formula unit tests vs researched numbers, toggle tests | **done** |
 | P4 | `energy-forecast` | 800/800 exact golden vectors, load-profile tests | todo |
 | P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | todo |
 | P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | todo |
@@ -73,3 +73,36 @@ Done in `energy-opt` (`feat/opt-core`):
 
 Open after P1: the engine's periodic full differential (`PLAN.md` §6) still has to call
 `oracle::solve`; the C core does not yet feed `energy-core` (P7).
+
+## P3 notes
+
+`energy-price` is the money authority; every formula is `reports/energy-rs/prices.md` restated once.
+
+- `book`: `Slot` (`t_start`, `buy_all_in` as published, `market` derived at ingest), `PriceBook`
+  refuses duplicates, holes, off-grid starts and mixed 15-minute/hourly ranges; providers may differ
+  inside one book (a fallback switch mid-day is normal).  Nothing is ever zero-filled.
+- `provider`: `ZonneplanDirect` (refresh-token OAuth2, `electricity-quarter-hourly` with the hourly
+  chart as fallback, raw amounts `/1e7` and gas-decoy rejection by grid and by unit) and
+  `HaSensorFallback` (HA REST states + `forecast` attribute, both entry shapes).  Credentials are
+  redacted from `Debug` and never appear in errors.  Both require a slot covering *now* only: before
+  ~13:00 CET tomorrow is unpublished and the caller shortens its horizon.
+- `settlement`: `market = (buy - fee_incl)/(1+vat) - energy_tax_ex`, `feed_in_post = market + fee`
+  with the Zonnebonus guards (PV, daylight, positive, 7 500 kWh/yr, per calendar year), yearly tax
+  table (an unknown year is refused), and the four functions the rest of the system may use:
+  `buy`, `export_price`, `marginal_export` (`buy - feed_in_post` while netting lasts, ~0.12), and
+  `revenue`.  Net metering is date-driven (`local year < 2027`) with a manual override; export at a
+  negative price is refused (clamped to 0), negative import prices pay you.
+- `store`: `PriceRepository` with `MemoryPriceRepository` and `SqlitePriceRepository` (WAL, in-code
+  migrations).  Publications are append-only, keyed by content hash; a save is idempotent, and a
+  later poll that adds no coverage and no changed slot is a no-op.  `load_book` refuses a hole.
+- Tests (42): worked examples from prices.md (0.20 -> market 0.057150 -> feed-in 0.07715, the
+  negative-price thresholds, marginal export), the toggle under the 2026/2027 boundary and a manual
+  override, budget exhaustion, bonus guards and year rollover, both payload shapes and the gas
+  decoy, past-slot filtering, coverage staleness, gap refusal and save-twice idempotency in both
+  repositories.
+- Verified read-only against the live instance: the quarter-hourly sensor publishes `€/kWh` plus a
+  144-entry `forecast` of `price_tax_included.amount` fixed-point integers (15-minute grid, no
+  `tariff_group`), the legacy hourly sensor a 36-entry `forecast`; the gas decoy is one entry in
+  `€/m³` and is rejected.
+- Not covered by tests (needs network): the OAuth token exchange and the two HTTP fetch paths; the
+  recorded-payload parsers behind them are tested.

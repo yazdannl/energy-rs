@@ -15,6 +15,9 @@ pub struct PriceBook {
 impl PriceBook {
     /// Sort by start instant, then require finite prices, one resolution, boundary-aligned and
     /// strictly contiguous slots.  Duplicates and holes are refused.
+    ///
+    /// Slots from different providers may share a book (a fallback switch mid-day is normal), but a
+    /// single book never mixes 15-minute and hourly slots: that would break the grid arithmetic.
     pub fn new(mut slots: Vec<Slot>) -> Result<Self, PriceError> {
         slots.sort_by_key(|slot| slot.t_start);
         let mut previous: Option<&Slot> = None;
@@ -43,7 +46,7 @@ impl PriceBook {
                         t_start: slot.t_start,
                     });
                 }
-                if prev.source != slot.source {
+                if prev.source.slot_seconds() != slot.source.slot_seconds() {
                     return Err(PriceError::Payload(format!(
                         "mixed resolutions: {} and {}",
                         prev.source, slot.source

@@ -14,6 +14,9 @@ pub mod zonneplan_credentials;
 
 pub use ha::HaSensorFallback;
 pub use ha_credentials::HaCredentials;
+pub use parse::{ParsedSeries, ProviderKind, RawSlot, ingest};
+pub use parse_ha::parse_state;
+pub use parse_zonneplan::parse_chart;
 pub use price_provider::{BoxFuture, PriceProvider};
 pub use zonneplan::ZonneplanDirect;
 pub use zonneplan_credentials::ZonneplanCredentials;

@@ -9,7 +9,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::book::{PriceBook, Slot, SlotSource};
 use crate::error::PriceError;
-use crate::store::publication::{canonical_book, content_hash, publication_from_book, store_error};
+use crate::store::publication::{
+    already_stored, book_bounds, canonical_book, content_hash, publication_from_book, store_error,
+};
 use crate::store::{PriceRepository, Publication, SaveOutcome, schema};
 
 const PUBLICATION_COLUMNS: &str =
@@ -57,9 +59,18 @@ impl PriceRepository for SqlitePriceRepository {
     fn save_publication(&self, book: &PriceBook) -> Result<SaveOutcome, PriceError> {
         let book = canonical_book(book)?;
         let hash = content_hash(&book);
+        let (first, end) = book_bounds(&book)?;
         let mut conn = self.lock()?;
         if let Some(publication) = read_publication_by_hash(&conn, &hash)? {
             return Ok(SaveOutcome::Unchanged { publication });
+        }
+        if let Some(latest) = read_latest_publication(&conn)? {
+            let stored = load_slots(&conn, first, end)?;
+            if already_stored(&book, &stored, Some(&latest)) {
+                return Ok(SaveOutcome::Unchanged {
+                    publication: latest,
+                });
+            }
         }
         let mut publication = publication_from_book(&book, 0, hash)?;
         let tx = conn.transaction().map_err(store_error)?;
@@ -78,35 +89,54 @@ impl PriceRepository for SqlitePriceRepository {
         )
         .map_err(store_error)?;
         publication.id = tx.last_insert_rowid();
-        {
-            let mut insert = tx
-                .prepare(
-                    "INSERT INTO price_slots (publication_id, t_start, buy_all_in, market, source)
-                     VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(publication_id, t_start) DO NOTHING",
-                )
-                .map_err(store_error)?;
-            for slot in book.iter() {
-                insert
-                    .execute(params![
-                        publication.id,
-                        slot.t_start,
-                        slot.buy_all_in,
-                        slot.market,
-                        slot.source.as_str(),
-                    ])
-                    .map_err(store_error)?;
-            }
-        }
+        insert_slots(&tx, publication.id, &book)?;
         tx.commit().map_err(store_error)?;
         Ok(SaveOutcome::Stored { publication })
     }
 
     fn load(&self, from: i64, to: i64) -> Result<Vec<Slot>, PriceError> {
         let conn = self.lock()?;
-        let mut statement = conn
-            .prepare(
-                "SELECT s.t_start, s.buy_all_in, s.market, s.source
+        load_slots(&conn, from, to)
+    }
+
+    fn latest_publication(&self) -> Result<Option<Publication>, PriceError> {
+        let conn = self.lock()?;
+        read_latest_publication(&conn)
+    }
+}
+
+/// Append the publication's slot rows (one row set per publication, never updated).
+fn insert_slots(
+    tx: &rusqlite::Transaction<'_>,
+    id: i64,
+    book: &PriceBook,
+) -> Result<(), PriceError> {
+    let mut insert = tx
+        .prepare(
+            "INSERT INTO price_slots (publication_id, t_start, buy_all_in, market, source)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(publication_id, t_start) DO NOTHING",
+        )
+        .map_err(store_error)?;
+    for slot in book.iter() {
+        insert
+            .execute(params![
+                id,
+                slot.t_start,
+                slot.buy_all_in,
+                slot.market,
+                slot.source.as_str(),
+            ])
+            .map_err(store_error)?;
+    }
+    Ok(())
+}
+
+/// Newest publication per slot start in `[from, to)`, ascending.
+fn load_slots(conn: &Connection, from: i64, to: i64) -> Result<Vec<Slot>, PriceError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT s.t_start, s.buy_all_in, s.market, s.source
                  FROM price_slots s
                  WHERE s.t_start >= ?1 AND s.t_start < ?2
                    AND s.publication_id = (
@@ -114,34 +144,32 @@ impl PriceRepository for SqlitePriceRepository {
                        WHERE newer.t_start = s.t_start
                    )
                  ORDER BY s.t_start",
-            )
-            .map_err(store_error)?;
-        let mut rows = statement.query(params![from, to]).map_err(store_error)?;
-        let mut slots = Vec::new();
-        while let Some(row) = rows.next().map_err(store_error)? {
-            let source_text: String = row.get(3).map_err(store_error)?;
-            let source = SlotSource::from_key(&source_text)?;
-            slots.push(Slot::new(
-                row.get(0).map_err(store_error)?,
-                row.get(1).map_err(store_error)?,
-                row.get(2).map_err(store_error)?,
-                source,
-            ));
-        }
-        Ok(slots)
-    }
-
-    fn latest_publication(&self) -> Result<Option<Publication>, PriceError> {
-        let conn = self.lock()?;
-        read_publication(
-            &conn,
-            &format!(
-                "SELECT {PUBLICATION_COLUMNS} FROM price_publications
-                 ORDER BY last_t_end DESC, id DESC LIMIT 1"
-            ),
-            [],
         )
+        .map_err(store_error)?;
+    let mut rows = statement.query(params![from, to]).map_err(store_error)?;
+    let mut slots = Vec::new();
+    while let Some(row) = rows.next().map_err(store_error)? {
+        let source_text: String = row.get(3).map_err(store_error)?;
+        let source = SlotSource::from_key(&source_text)?;
+        slots.push(Slot::new(
+            row.get(0).map_err(store_error)?,
+            row.get(1).map_err(store_error)?,
+            row.get(2).map_err(store_error)?,
+            source,
+        ));
     }
+    Ok(slots)
+}
+
+fn read_latest_publication(conn: &Connection) -> Result<Option<Publication>, PriceError> {
+    read_publication(
+        conn,
+        &format!(
+            "SELECT {PUBLICATION_COLUMNS} FROM price_publications
+             ORDER BY last_t_end DESC, id DESC LIMIT 1"
+        ),
+        [],
+    )
 }
 
 fn read_publication_by_hash(

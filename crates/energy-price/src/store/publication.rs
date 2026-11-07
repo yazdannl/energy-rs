@@ -1,7 +1,7 @@
 //! Publication identity.  A publication is detected by the content hash of its slots (plus the
 //! source), which is also the idempotency key for saves; stored rows are never rewritten.
 
-use crate::book::{PriceBook, SlotSource};
+use crate::book::{PriceBook, Slot, SlotSource};
 use crate::error::PriceError;
 
 const FNV_OFFSET: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
@@ -61,21 +61,50 @@ pub(crate) fn publication_from_book(
     id: i64,
     content_hash: String,
 ) -> Result<Publication, PriceError> {
-    let first = book
-        .first()
-        .ok_or_else(|| PriceError::Payload("cannot store an empty price book".to_owned()))?;
-    let last = book
-        .last()
-        .ok_or_else(|| PriceError::Payload("cannot store an empty price book".to_owned()))?;
+    let (first_t_start, last_t_end) = book_bounds(book)?;
+    let source = book.first().ok_or_else(empty_book)?.source;
     Ok(Publication {
         id,
-        source: first.source,
+        source,
         content_hash,
-        first_t_start: first.t_start,
-        last_t_end: last.t_end(),
+        first_t_start,
+        last_t_end,
         slot_count: book.len(),
         fetched_at: now_utc(),
     })
+}
+
+/// First slot start and exclusive coverage end of a book; an empty book cannot be stored.
+pub(crate) fn book_bounds(book: &PriceBook) -> Result<(i64, i64), PriceError> {
+    let first = book.first().ok_or_else(empty_book)?;
+    let last = book.last().ok_or_else(empty_book)?;
+    Ok((first.t_start, last.t_end()))
+}
+
+/// Whether the stored slots already are exactly the fetched publication.
+///
+/// A provider is polled every 15 minutes but publishes roughly once a day; the same publication
+/// must not create a new row set on every poll.  The check is `max_end` (no new coverage) plus
+/// slot-for-slot equality of the loaded range, so a genuinely revised or extended publication is
+/// still stored as a new (immutable) publication.
+pub(crate) fn already_stored(
+    book: &PriceBook,
+    stored: &[Slot],
+    latest: Option<&Publication>,
+) -> bool {
+    let (Some(last), Some(latest)) = (book.last(), latest) else {
+        return false;
+    };
+    latest.last_t_end >= last.t_end()
+        && stored.len() == book.len()
+        && stored
+            .iter()
+            .zip(book.iter())
+            .all(|(stored, fetched)| stored == fetched)
+}
+
+fn empty_book() -> PriceError {
+    PriceError::Payload("cannot store an empty price book".to_owned())
 }
 
 /// Current UTC time in epoch seconds.

@@ -13,7 +13,7 @@ pub(crate) const CHART_QUARTER: &str = "electricity-quarter-hourly";
 pub(crate) const CHART_HOUR: &str = "electricity-hourly";
 
 /// Parse one chart payload, refusing non-electricity grids.
-pub(crate) fn parse_chart(payload: &Value) -> Result<ParsedSeries, PriceError> {
+pub fn parse_chart(payload: &Value) -> Result<ParsedSeries, PriceError> {
     let prices = payload
         .pointer("/chart/series/prices")
         .and_then(Value::as_array)

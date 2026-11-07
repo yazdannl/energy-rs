@@ -98,7 +98,9 @@ impl HaSensorFallback {
         })?;
         let series = parse_state(&payload)?;
         let book = ingest(series, ProviderKind::Ha, contract, &query)?;
-        book.check_coverage(query.now(), query.horizon_secs())?;
+        // Only `now` must be covered: before ~13:00 CET tomorrow is not published, and the caller
+        // shortens its horizon instead of the provider inventing slots (prices.md §1.4, §4.7).
+        book.check_coverage(query.now(), 0)?;
         Ok(book)
     }
 }

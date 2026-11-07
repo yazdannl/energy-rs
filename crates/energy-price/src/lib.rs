@@ -8,11 +8,14 @@
 //!   chart) and `HaSensorFallback` (integration sensor forecast, coverage-based staleness).  Prices
 //!   are fetched once per publication, never per tick.
 //! * [`settlement`] — contract constants (VAT, yearly energy tax, fees, Zonnebonus guards) and the
-//!   one [`Settlement::revenue`] / [`Settlement::export_price`] / [`Settlement::buy`] used by the
-//!   optimizer, dispatch, the sell floor and reporting.  Net metering is date-driven with a manual
-//!   override.
-//! * [`store`] — append-only publications in memory or SQLite (WAL, in-code migrations), idempotent
-//!   saves by content hash, newest publication per slot on load.
+//!   one [`Settlement::revenue`] / [`Settlement::export_price`] / [`Settlement::marginal_export`] /
+//!   [`Settlement::buy`] used by the optimizer, dispatch, the sell floor and reporting.  Net
+//!   metering is date-driven with a manual override; the annual budget and bonus counters advance
+//!   only through [`Settlement::settle`].
+//! * [`store`] — append-only publications in memory or SQLite (WAL, in-code migrations): a save is
+//!   idempotent by content hash and a repeated poll of an already-covered publication writes
+//!   nothing, the newest publication wins per slot on load, and a gap inside a loaded range is
+//!   refused rather than filled.
 //!
 //! Money is EUR/kWh in f64, rounded to 1e-6 on ingest and write; time is UTC epoch seconds, tariff
 //! dates and years are `Europe/Amsterdam`.

@@ -5,7 +5,7 @@
 use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::book::Slot;
-use crate::book::query::{TARIFF_TZ, local_date_of};
+use crate::book::query::{TARIFF_TZ, local_date_of, local_year_of};
 use crate::settlement::{Contract, ExportSource, NetMetering, Saldering};
 
 /// Contract, regime, budget and bonus counters: everything needed to price a slot.
@@ -15,6 +15,7 @@ pub struct Settlement {
     regime: NetMetering,
     budget: Option<Saldering>,
     bonus_ytd_kwh: f64,
+    bonus_year: i32,
     today: NaiveDate,
 }
 
@@ -32,6 +33,7 @@ impl Settlement {
             regime: NetMetering::DateDriven,
             budget: None,
             bonus_ytd_kwh: 0.0,
+            bonus_year: today.year(),
             today,
         }
     }
@@ -51,9 +53,14 @@ impl Settlement {
         self.budget.as_ref()
     }
 
-    /// Daytime PV export counted against the Zonnebonus cap, kWh year to date.
+    /// Bonus-earning export counted against the Zonnebonus cap, kWh for [`Settlement::bonus_year`].
     pub fn bonus_ytd_kwh(&self) -> f64 {
         self.bonus_ytd_kwh
+    }
+
+    /// Calendar year the Zonnebonus counter belongs to; the cap is annual, not lifetime.
+    pub fn bonus_year(&self) -> i32 {
+        self.bonus_year
     }
 
     /// Local date that drives the date-driven regime.
@@ -89,8 +96,9 @@ impl Settlement {
         }
     }
 
-    /// Restore the persisted bonus counter (year rollover resets it to zero).
-    pub fn set_bonus_ytd_kwh(&mut self, kwh: f64) {
+    /// Restore the persisted bonus counter for its year; other years count from zero.
+    pub fn set_bonus_ytd_kwh(&mut self, year: i32, kwh: f64) {
+        self.bonus_year = year;
         self.bonus_ytd_kwh = if kwh.is_finite() { kwh.max(0.0) } else { 0.0 };
     }
 
@@ -111,13 +119,17 @@ impl Settlement {
     }
 
     /// The published all-in import price, EUR/kWh.
+    ///
+    /// A kWh discharged into the house replaces an import and is worth exactly this, whatever the
+    /// netting regime says about exports.
     pub fn buy(&self, slot: &Slot) -> f64 {
         slot.buy_all_in
     }
 
     /// Raw post-saldering feed-in price (may be negative; export uses the clamped price).
     pub fn feed_in_post(&self, slot: &Slot, source: ExportSource) -> f64 {
-        self.contract.feed_in_post(slot, source, self.bonus_ytd_kwh)
+        self.contract
+            .feed_in_post(slot, source, self.bonus_kwh_for(slot))
     }
 
     /// The export price per kWh: 1:1 all-in while budget remains, else the clamped feed-in.
@@ -126,6 +138,20 @@ impl Settlement {
             return slot.buy_all_in.max(0.0);
         }
         self.feed_in_post(slot, source).max(0.0)
+    }
+
+    /// Marginal value of one exported kWh, EUR/kWh -- the sell floor's input.
+    ///
+    /// While the saldering budget lasts, an exported kWh spends allowance that a later PV kWh would
+    /// otherwise have netted 1:1, so its marginal value is the all-in price minus the export price a
+    /// later export earns (`buy - feed_in_post`, ~0.12 in 2026), never the full all-in price
+    /// (prices.md §3.2).  Outside saldering it is the export price itself.
+    pub fn marginal_export(&self, slot: &Slot, source: ExportSource) -> f64 {
+        if self.budget_remaining(slot) > 0.0 {
+            (slot.buy_all_in - self.feed_in_post(slot, source)).max(0.0)
+        } else {
+            self.export_price(slot, source)
+        }
     }
 
     /// Revenue in EUR for a signed net slot flow: positive kWh = export, negative = import.
@@ -162,6 +188,7 @@ impl Settlement {
             netted = budget.consume(date.year(), kwh);
         }
         let rest = kwh - netted;
+        self.roll_bonus_year(slot);
         let counts_for_bonus = rest > 0.0
             && self
                 .contract
@@ -170,6 +197,25 @@ impl Settlement {
             self.bonus_ytd_kwh += rest;
         }
         revenue
+    }
+
+    /// Bonus-earning kWh to compare with the annual cap: zero for another calendar year.
+    fn bonus_kwh_for(&self, slot: &Slot) -> f64 {
+        match local_year_of(slot.t_start) {
+            Some(year) if year == self.bonus_year => self.bonus_ytd_kwh,
+            Some(_) => 0.0,
+            None => self.bonus_ytd_kwh,
+        }
+    }
+
+    /// Start a new bonus year when settlement moves forward into one (never backwards).
+    fn roll_bonus_year(&mut self, slot: &Slot) {
+        if let Some(year) = local_year_of(slot.t_start)
+            && year > self.bonus_year
+        {
+            self.bonus_year = year;
+            self.bonus_ytd_kwh = 0.0;
+        }
     }
 
     fn slot_date(&self, slot: &Slot) -> NaiveDate {

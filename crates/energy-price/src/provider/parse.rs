@@ -13,30 +13,51 @@ use crate::settlement::Contract;
 /// Zonneplan/HA fixed-point scale: raw int / 1e7 = EUR/kWh (prices.md §1.2).
 pub(crate) const AMOUNT_SCALE: f64 = 1e7;
 
+/// Below this magnitude an amount is already EUR/kWh, not fixed point: a raw amount of 1 000 is
+/// 0.0001 EUR/kWh, so the two shapes cannot be confused in practice.
+const SCALED_BELOW: f64 = 1_000.0;
+
 /// Which provider parsed a series; determines the stored [`SlotSource`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProviderKind {
+pub enum ProviderKind {
+    /// Zonneplan app API (`app-api.zonneplan.nl`).
     Zonneplan,
+    /// Home Assistant sensor forecast.
     Ha,
 }
 
 /// One parsed price before validation.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct RawSlot {
-    pub(crate) t_start: i64,
-    pub(crate) buy_all_in: f64,
+pub struct RawSlot {
+    /// Slot start instant, UTC epoch seconds.
+    pub t_start: i64,
+    /// EUR/kWh exactly as published (fixed point already divided by 1e7).
+    pub buy_all_in: f64,
 }
 
 /// Parsed entries plus the resolution the payload advertises.
 #[derive(Debug, Clone)]
-pub(crate) struct ParsedSeries {
-    pub(crate) raw: Vec<RawSlot>,
-    pub(crate) step: i64,
+pub struct ParsedSeries {
+    /// Entries in payload order (not yet sorted, filtered or validated).
+    pub raw: Vec<RawSlot>,
+    /// Advertised slot duration in seconds (900 or 3600 for electricity).
+    pub step: i64,
 }
 
 /// Raw fixed-point amount (or an already-scaled float) to EUR/kWh.
+///
+/// Both published shapes are accepted: the fixed-point `amount` (raw integer, divide by 1e7) and a
+/// sensor that republishes the same value already scaled.  A NaN/infinite amount is refused.
 pub(crate) fn amount_eur(value: &Value) -> Option<f64> {
-    value.as_f64().map(|amount| amount / AMOUNT_SCALE)
+    let amount = value.as_f64()?;
+    if !amount.is_finite() {
+        return None;
+    }
+    Some(if amount.abs() < SCALED_BELOW {
+        amount
+    } else {
+        amount / AMOUNT_SCALE
+    })
 }
 
 /// Parse RFC3339 offsets first, then fall back to naive Amsterdam local time for HA sensors.
@@ -101,7 +122,10 @@ pub(crate) fn build_book(
 
 /// Filter, derive and validate one payload for a query.  An empty result is a refusal, never an
 /// empty book: exact-or-refuse on coverage.
-pub(crate) fn ingest(
+///
+/// This is also the recorded-fixture entry point: a stored payload is ingested exactly like a live
+/// one, so parser and grid tests need no network.
+pub fn ingest(
     series: ParsedSeries,
     provider: ProviderKind,
     contract: &Contract,

@@ -112,6 +112,11 @@ impl Contract {
     }
 
     /// Whether the Zonnebonus applies to this slot/source at this year-to-date export.
+    ///
+    /// Only PV, daylight and a positive `market + fee`, under the annual cap.  Netting is decided by
+    /// [`Settlement`](crate::settlement::Settlement) *before* this call, so the bonus lands on the
+    /// un-netted remainder only -- the "no stacking on the netted part" assumption of prices.md
+    /// §3.2 (flagged `[?]` there; the exposure is <0.8 ct/kWh).
     pub fn bonus_applies(&self, slot: &Slot, source: ExportSource, bonus_ytd_kwh: f64) -> bool {
         let raw = slot.market + self.feed_in_fee;
         let daylight = match self.daylight {

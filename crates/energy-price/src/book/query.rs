@@ -71,7 +71,11 @@ impl PriceQuery {
         self.now
     }
 
-    /// Required coverage after `now`, in seconds.
+    /// Coverage the caller wants after `now`, in seconds.
+    ///
+    /// Providers deliver whatever is published (a slot covering `now` and nothing more, before the
+    /// ~13:00 CET publication) and never extend the book; the caller compares this against
+    /// [`PriceBook::coverage_end`](crate::book::PriceBook::coverage_end) and shortens its horizon.
     pub const fn horizon_secs(&self) -> i64 {
         self.horizon_secs
     }
