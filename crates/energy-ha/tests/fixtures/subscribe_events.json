@@ -1,0 +1,103 @@
+{
+ "event_count": 2,
+ "events": [
+  {
+   "event_type": "state_changed",
+   "data": {
+    "entity_id": "sensor.example_851",
+    "old_state": {
+     "entity_id": "sensor.example_851",
+     "state": "1.52",
+     "attributes": {
+      "state_class": "measurement",
+      "unit_of_measurement": "A",
+      "device_class": "current",
+      "friendly_name": "Example name"
+     },
+     "last_changed": "2026-11-07T09:06:02.153669+00:00",
+     "last_reported": "2026-11-07T09:06:03.141347+00:00",
+     "last_updated": "2026-11-07T09:06:02.153669+00:00",
+     "context": {
+      "id": "00000000-0000-4000-8000-999999999999",
+      "parent_id": null,
+      "user_id": null
+     }
+    },
+    "new_state": {
+     "entity_id": "sensor.example_851",
+     "state": "1.53",
+     "attributes": {
+      "state_class": "measurement",
+      "unit_of_measurement": "A",
+      "device_class": "current",
+      "friendly_name": "Example name"
+     },
+     "last_changed": "2026-11-07T09:06:04.140050+00:00",
+     "last_reported": "2026-11-07T09:06:04.140050+00:00",
+     "last_updated": "2026-11-07T09:06:04.140050+00:00",
+     "context": {
+      "id": "00000000-0000-4000-8000-999999999999",
+      "parent_id": null,
+      "user_id": null
+     }
+    }
+   },
+   "origin": "LOCAL",
+   "time_fired": "2026-11-07T09:06:04.140050+00:00",
+   "context": {
+    "id": "00000000-0000-4000-8000-999999999999",
+    "parent_id": null,
+    "user_id": null
+   }
+  },
+  {
+   "event_type": "state_changed",
+   "data": {
+    "entity_id": "sensor.example_852",
+    "old_state": {
+     "entity_id": "sensor.example_852",
+     "state": "1.52",
+     "attributes": {
+      "state_class": "measurement",
+      "unit_of_measurement": "A",
+      "device_class": "current",
+      "friendly_name": "Example name"
+     },
+     "last_changed": "2026-11-07T09:06:02.153956+00:00",
+     "last_reported": "2026-11-07T09:06:03.141481+00:00",
+     "last_updated": "2026-11-07T09:06:02.153956+00:00",
+     "context": {
+      "id": "00000000-0000-4000-8000-999999999999",
+      "parent_id": null,
+      "user_id": null
+     }
+    },
+    "new_state": {
+     "entity_id": "sensor.example_852",
+     "state": "1.53",
+     "attributes": {
+      "state_class": "measurement",
+      "unit_of_measurement": "A",
+      "device_class": "current",
+      "friendly_name": "Example name"
+     },
+     "last_changed": "2026-11-07T09:06:04.140552+00:00",
+     "last_reported": "2026-11-07T09:06:04.140552+00:00",
+     "last_updated": "2026-11-07T09:06:04.140552+00:00",
+     "context": {
+      "id": "00000000-0000-4000-8000-999999999999",
+      "parent_id": null,
+      "user_id": null
+     }
+    }
+   },
+   "origin": "LOCAL",
+   "time_fired": "2026-11-07T09:06:04.140552+00:00",
+   "context": {
+    "id": "00000000-0000-4000-8000-999999999999",
+    "parent_id": null,
+    "user_id": null
+   }
+  }
+ ]
+}

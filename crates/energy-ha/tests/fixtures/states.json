@@ -1,0 +1,388 @@
+[
+ {
+  "entity_id": "sensor.example_214",
+  "state": "0",
+  "attributes": {
+   "state_class": "measurement",
+   "unit_of_measurement": "W",
+   "device_class": "power",
+   "friendly_name": "Example name"
+  },
+  "last_changed": "2026-11-07T08:53:51.232988+00:00",
+  "last_reported": "2026-11-07T08:53:51.232988+00:00",
+  "last_updated": "2026-11-07T08:53:51.232988+00:00",
+  "context": {
+   "id": "00000000-0000-4000-8000-999999999999",
+   "parent_id": null,
+   "user_id": null
+  }
+ },
+ {
+  "entity_id": "sensor.example_1001",
+  "state": "0.4081426",
+  "attributes": {
+   "state_class": "measurement",
+   "forecast": [
+    {
+     "start_date": "2026-11-06T09:00:00+01:00",
+     "datetime": "2026-11-06T08:00:00+00:00",
+     "electricity_price": 4732769,
+     "electricity_price_excl_tax": 3624288,
+     "sustainability_score": 420,
+     "tariff_group": "normal"
+    },
+    {
+     "start_date": "2026-11-06T10:00:00+01:00",
+     "datetime": "2026-11-06T09:00:00+00:00",
+     "electricity_price": 4354463,
+     "electricity_price_excl_tax": 3245982,
+     "sustainability_score": 567,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-06T11:00:00+01:00",
+     "datetime": "2026-11-06T10:00:00+00:00",
+     "electricity_price": 4056319,
+     "electricity_price_excl_tax": 2947838,
+     "sustainability_score": 656,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-06T12:00:00+01:00",
+     "datetime": "2026-11-06T11:00:00+00:00",
+     "electricity_price": 3982872,
+     "electricity_price_excl_tax": 2874391,
+     "sustainability_score": 695,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-06T13:00:00+01:00",
+     "datetime": "2026-11-06T12:00:00+00:00",
+     "electricity_price": 4069083,
+     "electricity_price_excl_tax": 2960602,
+     "sustainability_score": 663,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-06T14:00:00+01:00",
+     "datetime": "2026-11-06T13:00:00+00:00",
+     "electricity_price": 4439042,
+     "electricity_price_excl_tax": 3330561,
+     "sustainability_score": 583,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-06T15:00:00+01:00",
+     "datetime": "2026-11-06T14:00:00+00:00",
+     "electricity_price": 4980426,
+     "electricity_price_excl_tax": 3871945,
+     "sustainability_score": 424,
+     "tariff_group": "normal"
+    },
+    {
+     "start_date": "2026-11-06T16:00:00+01:00",
+     "datetime": "2026-11-06T15:00:00+00:00",
+     "electricity_price": 5372858,
+     "electricity_price_excl_tax": 4264377,
+     "sustainability_score": 211,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-06T17:00:00+01:00",
+     "datetime": "2026-11-06T16:00:00+00:00",
+     "electricity_price": 5621091,
+     "electricity_price_excl_tax": 4512610,
+     "sustainability_score": 141,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-06T18:00:00+01:00",
+     "datetime": "2026-11-06T17:00:00+00:00",
+     "electricity_price": 5642809,
+     "electricity_price_excl_tax": 4534328,
+     "sustainability_score": 150,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-06T19:00:00+01:00",
+     "datetime": "2026-11-06T18:00:00+00:00",
+     "electricity_price": 5516033,
+     "electricity_price_excl_tax": 4407552,
+     "sustainability_score": 169,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-06T20:00:00+01:00",
+     "datetime": "2026-11-06T19:00:00+00:00",
+     "electricity_price": 5203611,
+     "electricity_price_excl_tax": 4095130,
+     "sustainability_score": 184,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-06T21:00:00+01:00",
+     "datetime": "2026-11-06T20:00:00+00:00",
+     "electricity_price": 4869409,
+     "electricity_price_excl_tax": 3760928,
+     "sustainability_score": 192,
+     "tariff_group": "normal"
+    },
+    {
+     "start_date": "2026-11-06T22:00:00+01:00",
+     "datetime": "2026-11-06T21:00:00+00:00",
+     "electricity_price": 4650913,
+     "electricity_price_excl_tax": 3542432,
+     "sustainability_score": 190,
+     "tariff_group": "normal"
+    },
+    {
+     "start_date": "2026-11-06T23:00:00+01:00",
+     "datetime": "2026-11-06T22:00:00+00:00",
+     "electricity_price": 4364718,
+     "electricity_price_excl_tax": 3256237,
+     "sustainability_score": 188,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T00:00:00+01:00",
+     "datetime": "2026-11-06T23:00:00+00:00",
+     "electricity_price": 4380690,
+     "electricity_price_excl_tax": 3272209,
+     "sustainability_score": 191,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T01:00:00+01:00",
+     "datetime": "2026-11-07T00:00:00+00:00",
+     "electricity_price": 4238121,
+     "electricity_price_excl_tax": 3129640,
+     "sustainability_score": 185,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T02:00:00+01:00",
+     "datetime": "2026-11-07T01:00:00+00:00",
+     "electricity_price": 4161831,
+     "electricity_price_excl_tax": 3053350,
+     "sustainability_score": 178,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T03:00:00+01:00",
+     "datetime": "2026-11-07T02:00:00+00:00",
+     "electricity_price": 4097277,
+     "electricity_price_excl_tax": 2988796,
+     "sustainability_score": 180,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T04:00:00+01:00",
+     "datetime": "2026-11-07T03:00:00+00:00",
+     "electricity_price": 4113007,
+     "electricity_price_excl_tax": 3004526,
+     "sustainability_score": 171,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T05:00:00+01:00",
+     "datetime": "2026-11-07T04:00:00+00:00",
+     "electricity_price": 4152514,
+     "electricity_price_excl_tax": 3044033,
+     "sustainability_score": 161,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T06:00:00+01:00",
+     "datetime": "2026-11-07T05:00:00+00:00",
+     "electricity_price": 4156295,
+     "electricity_price_excl_tax": 3047814,
+     "sustainability_score": 150,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T07:00:00+01:00",
+     "datetime": "2026-11-07T06:00:00+00:00",
+     "electricity_price": 4319403,
+     "electricity_price_excl_tax": 3210922,
+     "sustainability_score": 140,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T08:00:00+01:00",
+     "datetime": "2026-11-07T07:00:00+00:00",
+     "electricity_price": 4353586,
+     "electricity_price_excl_tax": 3245105,
+     "sustainability_score": 167,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T09:00:00+01:00",
+     "datetime": "2026-11-07T08:00:00+00:00",
+     "electricity_price": 4200642,
+     "electricity_price_excl_tax": 3092161,
+     "sustainability_score": 310,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T10:00:00+01:00",
+     "datetime": "2026-11-07T09:00:00+00:00",
+     "electricity_price": 4081426,
+     "electricity_price_excl_tax": 2972945,
+     "sustainability_score": 423,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T11:00:00+01:00",
+     "datetime": "2026-11-07T10:00:00+00:00",
+     "electricity_price": 4042676,
+     "electricity_price_excl_tax": 2934195,
+     "sustainability_score": 502,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T12:00:00+01:00",
+     "datetime": "2026-11-07T11:00:00+00:00",
+     "electricity_price": 4056712,
+     "electricity_price_excl_tax": 2948231,
+     "sustainability_score": 539,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T13:00:00+01:00",
+     "datetime": "2026-11-07T12:00:00+00:00",
+     "electricity_price": 4052931,
+     "electricity_price_excl_tax": 2944450,
+     "sustainability_score": 496,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T14:00:00+01:00",
+     "datetime": "2026-11-07T13:00:00+00:00",
+     "electricity_price": 4254275,
+     "electricity_price_excl_tax": 3145794,
+     "sustainability_score": 376,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T15:00:00+01:00",
+     "datetime": "2026-11-07T14:00:00+00:00",
+     "electricity_price": 4826393,
+     "electricity_price_excl_tax": 3717912,
+     "sustainability_score": 226,
+     "tariff_group": "normal"
+    },
+    {
+     "start_date": "2026-11-07T16:00:00+01:00",
+     "datetime": "2026-11-07T15:00:00+00:00",
+     "electricity_price": 5165859,
+     "electricity_price_excl_tax": 4057378,
+     "sustainability_score": 102,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-07T17:00:00+01:00",
+     "datetime": "2026-11-07T16:00:00+00:00",
+     "electricity_price": 5204669,
+     "electricity_price_excl_tax": 4096188,
+     "sustainability_score": 73,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-07T18:00:00+01:00",
+     "datetime": "2026-11-07T17:00:00+00:00",
+     "electricity_price": 5219764,
+     "electricity_price_excl_tax": 4111283,
+     "sustainability_score": 74,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-07T19:00:00+01:00",
+     "datetime": "2026-11-07T18:00:00+00:00",
+     "electricity_price": 5203550,
+     "electricity_price_excl_tax": 4095069,
+     "sustainability_score": 77,
+     "tariff_group": "high"
+    },
+    {
+     "start_date": "2026-11-07T20:00:00+01:00",
+     "datetime": "2026-11-07T19:00:00+00:00",
+     "electricity_price": 5051574,
+     "electricity_price_excl_tax": 3943093,
+     "sustainability_score": 81,
+     "tariff_group": "normal"
+    },
+    {
+     "start_date": "2026-11-07T21:00:00+01:00",
+     "datetime": "2026-11-07T20:00:00+00:00",
+     "electricity_price": 4781290,
+     "electricity_price_excl_tax": 3672809,
+     "sustainability_score": 97,
+     "tariff_group": "normal"
+    },
+    {
+     "start_date": "2026-11-07T22:00:00+01:00",
+     "datetime": "2026-11-07T21:00:00+00:00",
+     "electricity_price": 4516361,
+     "electricity_price_excl_tax": 3407880,
+     "sustainability_score": 107,
+     "tariff_group": "low"
+    },
+    {
+     "start_date": "2026-11-07T23:00:00+01:00",
+     "datetime": "2026-11-07T22:00:00+00:00",
+     "electricity_price": 4182703,
+     "electricity_price_excl_tax": 3074222,
+     "sustainability_score": 109,
+     "tariff_group": "low"
+    }
+   ],
+   "unit_of_measurement": "\u20ac/kWh",
+   "icon": "mdi:cash",
+   "friendly_name": "Example name"
+  },
+  "last_changed": "2026-11-07T09:00:00.003267+00:00",
+  "last_reported": "2026-11-07T09:00:00.003267+00:00",
+  "last_updated": "2026-11-07T09:00:00.003267+00:00",
+  "context": {
+   "id": "00000000-0000-4000-8000-999999999999",
+   "parent_id": null,
+   "user_id": null
+  }
+ },
+ {
+  "entity_id": "sensor.example_236",
+  "state": "34",
+  "attributes": {
+   "state_class": "measurement",
+   "unit_of_measurement": "%",
+   "device_class": "battery",
+   "friendly_name": "Example name"
+  },
+  "last_changed": "2026-11-07T08:58:52.052025+00:00",
+  "last_reported": "2026-11-07T08:58:52.052025+00:00",
+  "last_updated": "2026-11-07T08:58:52.052025+00:00",
+  "context": {
+   "id": "00000000-0000-4000-8000-999999999999",
+   "parent_id": null,
+   "user_id": null
+  }
+ },
+ {
+  "entity_id": "sensor.example_1007",
+  "state": "0.356",
+  "attributes": {
+   "state_class": "total_increasing",
+   "unit_of_measurement": "kWh",
+   "device_class": "energy",
+   "friendly_name": "Example name"
+  },
+  "last_changed": "2026-11-07T08:53:51.227080+00:00",
+  "last_reported": "2026-11-07T08:53:51.227080+00:00",
+  "last_updated": "2026-11-07T08:53:51.227080+00:00",
+  "context": {
+   "id": "00000000-0000-4000-8000-999999999999",
+   "parent_id": null,
+   "user_id": null
+  }
+ }
+]

@@ -1,0 +1,258 @@
+{
+ "type": "recorder/get_statistics_metadata",
+ "result": [
+  {
+   "statistic_id": "sensor.example_1007",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_214",
+   "display_unit_of_measurement": "W",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "W",
+   "unit_class": "power"
+  },
+  {
+   "statistic_id": "sensor.example_1001",
+   "display_unit_of_measurement": "\u20ac/kWh",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "\u20ac/kWh",
+   "unit_class": null
+  },
+  {
+   "statistic_id": "sensor.example_236",
+   "display_unit_of_measurement": "%",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "%",
+   "unit_class": "unitless"
+  },
+  {
+   "statistic_id": "sensor.example_205",
+   "display_unit_of_measurement": "W",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "W",
+   "unit_class": "power"
+  },
+  {
+   "statistic_id": "sensor.example_221",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_743",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_667",
+   "display_unit_of_measurement": "%",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "%",
+   "unit_class": "unitless"
+  },
+  {
+   "statistic_id": "sensor.example_653",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_757",
+   "display_unit_of_measurement": "%",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "%",
+   "unit_class": "unitless"
+  },
+  {
+   "statistic_id": "sensor.example_858",
+   "display_unit_of_measurement": "W",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "W",
+   "unit_class": "power"
+  },
+  {
+   "statistic_id": "sensor.example_527",
+   "display_unit_of_measurement": "%",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "%",
+   "unit_class": "unitless"
+  },
+  {
+   "statistic_id": "sensor.example_855",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_512",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_451",
+   "display_unit_of_measurement": "Wh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "Wh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_652",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_742",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_211",
+   "display_unit_of_measurement": "W",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "W",
+   "unit_class": "power"
+  },
+  {
+   "statistic_id": "sensor.example_1005",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_1009",
+   "display_unit_of_measurement": "m\u00b3",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "m\u00b3",
+   "unit_class": "volume"
+  },
+  {
+   "statistic_id": "sensor.example_222",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  },
+  {
+   "statistic_id": "sensor.example_275",
+   "display_unit_of_measurement": "W",
+   "has_mean": true,
+   "mean_type": 1,
+   "has_sum": false,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "W",
+   "unit_class": "power"
+  },
+  {
+   "statistic_id": "sensor.example_513",
+   "display_unit_of_measurement": "kWh",
+   "has_mean": false,
+   "mean_type": 0,
+   "has_sum": true,
+   "name": null,
+   "source": "recorder",
+   "statistics_unit_of_measurement": "kWh",
+   "unit_class": "energy"
+  }
+ ]
+}
