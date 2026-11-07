@@ -10,13 +10,16 @@
 
   let { days }: Props = $props();
 
-  const peak = $derived(Math.max(0.01, ...days.map((day) => Math.abs(day.savingEur))));
   const height = 42;
   const width = 100;
+  const moneyDays = $derived(
+    days.filter((day): day is SavingsDay & { savingEur: number } => day.savingEur !== null),
+  );
+  const peak = $derived(Math.max(0.01, ...moneyDays.map((day) => Math.abs(day.savingEur))));
   const width1 = $derived(days.length === 0 ? width : width / days.length);
 
-  function barHeight(day: SavingsDay): number {
-    return (Math.abs(day.savingEur) / peak) * (height - 6);
+  function barHeight(savingEur: number): number {
+    return (Math.abs(savingEur) / peak) * (height - 6);
   }
 </script>
 
@@ -32,7 +35,7 @@
       preserveAspectRatio="none"
       class="h-32 w-full"
       role="img"
-      aria-label={`Daily saving, ${days.length} days, peak ${fmtEur(peak)}`}
+      aria-label={`Daily saving, ${moneyDays.length} measured of ${days.length} days, peak ${fmtEur(peak)}`}
     >
       <line
         x1="0"
@@ -43,22 +46,35 @@
         stroke-width="0.3"
       />
       {#each days as day, index (day.day)}
-        {@const bar = barHeight(day)}
-        <rect
-          x={index * width1 + width1 * 0.18}
-          y={height - 3 - bar}
-          width={width1 * 0.64}
-          height={bar}
-          rx="0.6"
-          fill={day.savingEur >= 0 ? 'var(--ui-good)' : 'var(--ui-bad)'}
-          opacity={day.complete ? 0.85 : 0.4}
-        >
-          <title
-            >{day.day} · {fmtEur(day.savingEur)} · {day.complete
-              ? 'complete'
-              : `${day.coverageHours.toFixed(1)} h covered`}</title
+        {#if day.savingEur === null}
+          <rect
+            x={index * width1 + width1 * 0.18}
+            y={height - 4}
+            width={width1 * 0.64}
+            height={2}
+            rx="0.4"
+            fill="var(--ui-line-strong)"
           >
-        </rect>
+            <title>{day.day} · no money · {day.coverageHours.toFixed(1)} h covered</title>
+          </rect>
+        {:else}
+          {@const bar = barHeight(day.savingEur)}
+          <rect
+            x={index * width1 + width1 * 0.18}
+            y={height - 3 - bar}
+            width={width1 * 0.64}
+            height={bar}
+            rx="0.6"
+            fill={day.savingEur >= 0 ? 'var(--ui-good)' : 'var(--ui-bad)'}
+            opacity={day.complete ? 0.85 : 0.4}
+          >
+            <title
+              >{day.day} · {fmtEur(day.savingEur)} · {day.complete
+                ? 'complete'
+                : `${day.coverageHours.toFixed(1)} h covered`}</title
+            >
+          </rect>
+        {/if}
       {/each}
     </svg>
     <div class="flex justify-between text-[9.5px] text-faint">
@@ -67,7 +83,8 @@
       <span>{dayShort(days.at(-1)?.day ?? days[0].day)}</span>
     </div>
     <p class="text-[10px] text-faint">
-      Peak {fmtEur(peak)} · faded bars are partial days (their coverage is shown, never dropped).
+      Peak {fmtEur(peak)} · faded bars are provisional days; a grey stub is a closed day with no money
+      (its coverage is still shown, never dropped).
     </p>
   </div>
 {/if}

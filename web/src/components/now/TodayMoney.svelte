@@ -16,15 +16,16 @@
   let { savings }: Props = $props();
 
   const totals = $derived(savings?.totals ?? null);
-  const hasData = $derived((totals?.days ?? 0) > 0);
   const today = $derived(savings?.days.at(-1) ?? null);
+  const hasMoney = $derived(today?.savingEur !== null && today?.savingEur !== undefined);
+  const hasData = $derived((totals?.days ?? 0) > 0 && hasMoney);
   const tone = $derived(moneyTone(today?.savingEur));
 </script>
 
-{#if !hasData || totals === null}
+{#if !hasData || totals === null || today === null}
   <EmptyNote
-    title="No savings rows yet"
-    detail="Savings are measured from settled slots, never from the plan. The first complete day appears after a full local day is settled."
+    title="No money for today yet"
+    detail={`Savings are measured from settled slots, never from the plan. Today is ${(today?.coverageHours ?? 0).toFixed(1)} h covered; a closed day with a gap keeps its energy and reports no money instead of a fake number.`}
   />
 {:else}
   <div class="space-y-3">
@@ -32,10 +33,10 @@
       <div>
         <p class="text-[10px] uppercase tracking-[0.07em] text-faint">Saved today</p>
         <p class={['num mt-0.5 text-[26px] leading-none font-semibold', TEXT[tone]]}>
-          {fmtEur(today?.savingEur ?? 0)}
+          {fmtEur(today.savingEur)}
         </p>
-        <p class="mt-1 text-[10.5px] text-faint" title={fmtEur6(today?.savingEur)}>
-          vs. {fmtEur(today?.baselineEur ?? 0)} without the battery
+        <p class="mt-1 text-[10.5px] text-faint" title={fmtEur6(today.savingEur)}>
+          vs. {fmtEur(today.baselineEur)} without the battery
         </p>
       </div>
       <Badge tone={today?.complete === true ? 'good' : 'warn'}>

@@ -4,6 +4,7 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import { onMount } from 'svelte';
 
+  import type { SavingsDay } from '../lib/api/types';
   import { fmtEur, round6 } from '../lib/format/money';
   import { dayLong } from '../lib/format/time';
   import { api } from '../lib/state/runtime';
@@ -43,17 +44,41 @@
 
   /** 7 d is not an API period: it is the last seven rows of the month reply, and says so. */
   const week = $derived.by(() => {
-    const rows = month.data?.days.slice(-7) ?? [];
+    const rows = (month.data?.days ?? []).slice(-7);
+    const measured = rows.filter(
+      (row): row is SavingsDay & { savingEur: number; baselineEur: number; actualEur: number } =>
+        row.savingEur !== null && row.baselineEur !== null && row.actualEur !== null,
+    );
+    // The cards say "no data" when nothing was counted, not "€0.00".
     return {
-      saving: rows.length === 0 ? null : round6(rows.reduce((sum, row) => sum + row.savingEur, 0)),
+      saving:
+        measured.length === 0
+          ? null
+          : round6(measured.reduce((sum, row) => sum + row.savingEur, 0)),
       baseline:
-        rows.length === 0 ? null : round6(rows.reduce((sum, row) => sum + row.baselineEur, 0)),
-      actual: rows.length === 0 ? null : round6(rows.reduce((sum, row) => sum + row.actualEur, 0)),
+        measured.length === 0
+          ? null
+          : round6(measured.reduce((sum, row) => sum + row.baselineEur, 0)),
+      actual:
+        measured.length === 0
+          ? null
+          : round6(measured.reduce((sum, row) => sum + row.actualEur, 0)),
       days: rows.length,
-      completeDays: rows.filter((row) => row.complete).length,
-      partial: rows.length > 0 && rows.length < 7,
+      completeDays: measured.filter((row) => row.complete).length,
+      missing: rows.length - measured.length,
+      partial: measured.length < 7,
     };
   });
+
+  /** Closed days with a gap keep their energy but carry no money; they are in no total. */
+  const monthMissing = $derived(
+    (month.data?.days ?? []).filter((day) => day.savingEur === null).length,
+  );
+  const monthCounted = $derived(
+    (month.data?.days ?? []).filter((day) => day.savingEur !== null).length,
+  );
+  const today = $derived(day.data?.days.at(-1) ?? null);
+  const todayCounted = $derived(today?.savingEur === null || today === null ? 0 : 1);
 
   const loading = $derived(day.loading || month.loading || lifetime.loading);
   const failure = $derived(day.error ?? month.error ?? lifetime.error);
@@ -91,9 +116,12 @@
       actual={day.data?.totals.actualEur ?? null}
       days={day.data?.totals.days ?? 0}
       completeDays={day.data?.totals.completeDays ?? 0}
-      note={day.data?.days.at(-1)?.complete === false
-        ? `partial day · ${day.data?.days.at(-1)?.coverageHours.toFixed(1)} h covered`
-        : undefined}
+      countedDays={todayCounted}
+      note={today?.savingEur === null
+        ? `no money yet · ${today?.coverageHours.toFixed(1) ?? '0'} h covered`
+        : today?.complete === false
+          ? `partial day · ${today.coverageHours.toFixed(1)} h covered`
+          : undefined}
     />
     <SavingsCard
       label="Last 7 days"
@@ -102,7 +130,12 @@
       actual={week.actual}
       days={week.days}
       completeDays={week.completeDays}
-      note={week.partial ? 'only part of the window has rows' : 'summed from month rows'}
+      countedDays={week.days - week.missing}
+      note={week.missing > 0
+        ? `${week.missing} day${week.missing === 1 ? '' : 's'} without money excluded`
+        : week.partial
+          ? 'only part of the window has rows'
+          : 'summed from month rows'}
     />
     <SavingsCard
       label="This month"
@@ -111,8 +144,9 @@
       actual={month.data?.totals.actualEur ?? null}
       days={month.data?.totals.days ?? 0}
       completeDays={month.data?.totals.completeDays ?? 0}
+      countedDays={monthCounted}
       note={month.data
-        ? `${dayLong(month.data.fromDay)} → ${dayLong(month.data.toDay)}`
+        ? `${dayLong(month.data.fromDay)} → ${dayLong(month.data.toDay)}${monthMissing > 0 ? ` · ${monthMissing} with no money` : ''}`
         : undefined}
     />
     <SavingsCard
@@ -122,13 +156,22 @@
       actual={lifetime.data?.totals.actualEur ?? null}
       days={lifetime.data?.totals.days ?? 0}
       completeDays={lifetime.data?.totals.completeDays ?? 0}
+      countedDays={lifetime.data?.totals.completeDays ?? 0}
       note={lifetime.data
-        ? `${dayLong(lifetime.data.fromDay)} → ${dayLong(lifetime.data.toDay)}`
+        ? `${dayLong(lifetime.data.fromDay)} → ${dayLong(lifetime.data.toDay)} · complete days only`
         : undefined}
     />
   </div>
 
-  <div class="mt-3 grid gap-3 xl:grid-cols-2">
+  {#if monthMissing > 0}
+    <p class="mt-2 text-[10.5px] leading-relaxed text-muted">
+      {monthMissing} closed day{monthMissing === 1 ? '' : 's'} in this month had a measurement gap: the
+      day keeps its energy and coverage hours but carries <span class="font-mono">null</span> money, so
+      it is in no total. The cards above say so with their day counts.
+    </p>
+  {/if}
+
+  <div class="mt-3 grid items-start gap-3 xl:grid-cols-2">
     <Panel title="Daily saving" subtitle="This month, one bar per settled day">
       {#snippet icon()}<CalendarDays class="size-4 text-good" />{/snippet}
       {#if month.data}
@@ -138,7 +181,7 @@
       {/if}
     </Panel>
 
-    <Panel title="Breakdown" subtitle="Measured energy per category">
+    <Panel title="Breakdown" subtitle="The four money components and what they are made of">
       {#snippet icon()}<PiggyBank class="size-4 text-pv" />{/snippet}
       {#if month.data && month.data.totals.days > 0}
         <SavingsBreakdown totals={month.data.totals} />

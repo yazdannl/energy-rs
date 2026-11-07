@@ -11,13 +11,15 @@
     actual: number | null;
     days: number;
     completeDays: number;
+    /** Days that actually contributed to the money total (`null` days are excluded by the API). */
+    countedDays: number;
     note?: string;
   }
 
-  let { label, saving, baseline, actual, days, completeDays, note }: Props = $props();
+  let { label, saving, baseline, actual, days, completeDays, countedDays, note }: Props = $props();
 
   const tone: Tone = $derived(moneyTone(saving));
-  const hasData = $derived(days > 0 && saving !== null);
+  const hasData = $derived(countedDays > 0 && saving !== null);
 </script>
 
 <div class="card px-3.5 py-3">
