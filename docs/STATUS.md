@@ -1,10 +1,11 @@
 # Status
 
-Phase gates from [PLAN.md](PLAN.md) §11. P0–P3 are done; P4–P10 are open.
+Phase gates from [PLAN.md](PLAN.md) §11. P0–P3 and P0.5 are done; P4–P10 are open.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
 | P0 | Repo scaffold, workspace, CI, add-on skeleton, docs | `cargo build` + `cargo test` green, add-on builds for aarch64 | **done** |
+| P0.5 | Quality gates: lint policy, structure checker, web linting | fmt, clippy `-D warnings`, structure, test, build, web lint/check/build all green | **done** |
 | P1 | `energy-opt` + C core + validation + Rust oracle | differential tests, `-ffp-contract=off`, bench < 50 ms/solve | **done** |
 | P2 | `energy-ha` discovery/stats/subscriptions | recorded-fixture tests, live read-only smoke | **done** |
 | P3 | `energy-price` + settlement + store | formula unit tests vs researched numbers, toggle tests | **done** |
@@ -15,6 +16,31 @@ Phase gates from [PLAN.md](PLAN.md) §11. P0–P3 are done; P4–P10 are open.
 | P8 | `energy-server` API + savings | contract tests, SSE smoke | todo |
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | todo |
+
+## P0.5 notes
+
+Done in `chore/quality-gates`, policy documented in [LINTING.md](LINTING.md):
+
+- **Workspace lints.** Clippy `all` + `pedantic` at deny, `unwrap_used`/`expect_used`/`panic`/
+  `todo` denied, size limits (`too_many_arguments`, `too_many_lines`, `cognitive_complexity`,
+  `large_enum_variant`) denied with thresholds in `clippy.toml` (6 params, 60 lines, 15). The
+  eight deliberate allow reasons are in LINTING.md; every crate opts in with
+  `[lints] workspace = true`. `rustfmt.toml` sets `max_width = 100`.
+- **Structure checker.** `scripts/check_structure.py` (stdlib only) enforces one primary public
+  type per file, 300/500 line files, 60-line functions, 6 parameters, no
+  `utils/helpers/misc/common` modules, 250-line Svelte components named after the component, and
+  prints a file/line/rule table. It is a CI job of its own.
+- **Web.** ESLint 9 flat config (`@eslint/js` + `typescript-eslint` + `eslint-plugin-svelte`,
+  `no-explicit-any` error), Prettier with `prettier-plugin-svelte`, `svelte-check`; `npm run
+  lint|format:check|check|build` are the four web gates.
+- **Retrofit.** `energy-opt` was split by aspect: `error/` (one enum per file), `config/`,
+  `dp/`, `ffi/`, `validate/` (arithmetic, windows, grid, one-step, verdict, path, backward) and
+  `oracle/` (grid, sweep, replay). `tests/common/` became `tests/support/` (split reply/server),
+  and the long parity/oracle tests were split into per-case helpers. Behaviour is unchanged: the
+  full parity, oracle and build-digest suites still pass, and `scripts/extract_core.py --check`
+  still proves `csrc/core_solver.c` is the pinned upstream text.
+- **CI.** Eight jobs: `fmt`, `clippy`, `structure`, `test`, `web-lint`, `web-check`, `web-build`,
+  `build` (release binary after the UI build so `web/dist` is embedded).
 
 ## P0 notes
 

@@ -51,6 +51,7 @@ impl HaSensorFallback {
     }
 
     /// Replace the sensor preference list.
+    #[must_use]
     pub fn with_entities(mut self, entities: Vec<String>) -> Self {
         self.entities = entities;
         self

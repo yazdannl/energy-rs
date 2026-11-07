@@ -55,6 +55,7 @@ impl Slot {
     }
 
     /// Round the money fields to 1e-6 EUR/kWh.
+    #[must_use]
     pub fn money_rounded(self) -> Self {
         Self {
             buy_all_in: round_money(self.buy_all_in),

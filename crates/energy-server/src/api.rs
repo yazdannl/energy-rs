@@ -33,6 +33,9 @@ pub fn router() -> Router {
 
 #[cfg(test)]
 mod tests {
+    // A failed expectation is the test's report: `expect` is the intended API here.
+    #![allow(clippy::expect_used)]
+
     use super::Health;
 
     #[test]

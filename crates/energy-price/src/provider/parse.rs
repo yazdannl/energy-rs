@@ -5,6 +5,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use serde_json::Value;
 
+use super::ParsedSeries;
 use crate::book::query::{local_naive_to_utc, local_year_of};
 use crate::book::{PriceBook, PriceQuery, Slot, SlotSource};
 use crate::error::PriceError;
@@ -24,24 +25,6 @@ pub enum ProviderKind {
     Zonneplan,
     /// Home Assistant sensor forecast.
     Ha,
-}
-
-/// One parsed price before validation.
-#[derive(Debug, Clone, Copy)]
-pub struct RawSlot {
-    /// Slot start instant, UTC epoch seconds.
-    pub t_start: i64,
-    /// EUR/kWh exactly as published (fixed point already divided by 1e7).
-    pub buy_all_in: f64,
-}
-
-/// Parsed entries plus the resolution the payload advertises.
-#[derive(Debug, Clone)]
-pub struct ParsedSeries {
-    /// Entries in payload order (not yet sorted, filtered or validated).
-    pub raw: Vec<RawSlot>,
-    /// Advertised slot duration in seconds (900 or 3600 for electricity).
-    pub step: i64,
 }
 
 /// Raw fixed-point amount (or an already-scaled float) to EUR/kWh.
@@ -104,7 +87,7 @@ pub(crate) fn filter_series(series: ParsedSeries, query: &PriceQuery) -> ParsedS
 
 /// Derive `market` per slot with the contract constants, round to 1e-6 and validate the grid.
 pub(crate) fn build_book(
-    series: ParsedSeries,
+    series: &ParsedSeries,
     provider: ProviderKind,
     contract: &Contract,
 ) -> Result<PriceBook, PriceError> {
@@ -138,5 +121,5 @@ pub fn ingest(
             to: query.to(),
         });
     }
-    build_book(filtered, provider, contract)
+    build_book(&filtered, provider, contract)
 }

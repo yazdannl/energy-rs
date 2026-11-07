@@ -19,6 +19,48 @@ license = "MIT"
 authors = ["Energy RS contributors"]
 repository = "https://github.com/yazdannl/energy-rs"
 
+# Workspace lint policy.  Every crate opts in with `[lints] workspace = true`; see
+# docs/LINTING.md for the rules and for how to justify an exception.
+#
+# Group lints carry `priority = -1` so the named overrides below win.
+[workspace.lints.rust]
+# A denied/ignored return value is the classic silently-dropped error.
+unused_must_use = "deny"
+# `unsafe fn` bodies must keep their own `unsafe` blocks explicit (the FFI shim is the only user).
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+
+# Hard refusals: an optimizer that plans battery writes must not have a reachable panic path.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+
+# Hard refusals: the size limits are enforced here as well as in scripts/check_structure.py.
+too_many_arguments = "deny"
+too_many_lines = "deny"
+cognitive_complexity = "deny"
+large_enum_variant = "deny"
+
+# Justified allowances (each reason is in docs/LINTING.md).
+# Naming style only; domain names read better with the module prefix (`client::Client`).
+module_name_repetitions = "allow"
+# Public items are documented by hand where it matters; not every getter needs a `#[must_use]`.
+must_use_candidate = "allow"
+# Errors are documented in the module docs and typed with thiserror; per-variant prose is noise.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# f64/int conversions are the domain: slot counts, power steps and array indices.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+# Numeric code reuses shapes on purpose (`e_now`/`e_next`, `lo`/`hi`); renaming hurts review.
+similar_names = "allow"
+# Doc comments quote C sources and identifiers that are not Rust items.
+doc_markdown = "allow"
+
 [workspace.dependencies]
 # Internal crates (layered: core -> server, everything below is a leaf).
 energy-battery = { path = "crates/energy-battery" }

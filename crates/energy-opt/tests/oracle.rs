@@ -12,6 +12,18 @@
 //! This is the check the engine will run periodically (`PLAN.md` §6): plan variants and the
 //! periodic full differential are the only places the slow path is allowed.
 
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library, not to the
+// tests that prove it refuses.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
 use std::path::PathBuf;
 
 use energy_opt::validate::{self, Slot};
@@ -148,66 +160,68 @@ fn close(got: f64, expected: f64) -> bool {
 #[test]
 fn the_oracle_agrees_with_the_c_core() {
     for case in cases() {
-        let config = case.config();
-        let row = case.terminal_row(&config);
-        let input = case.input();
-        let solved = match row.as_deref() {
-            Some(row) => solve_with_terminal_row(&input, &config, row),
-            None => solve(&input, &config),
-        }
-        .unwrap_or_else(|error| panic!("case {} failed: {error}", case.name));
-        let expected = oracle::solve(&config, &input, row.as_deref())
-            .unwrap_or_else(|error| panic!("case {} oracle failed: {error}", case.name));
+        compare_case(&case);
+    }
+}
 
-        assert_eq!(solved.iterations, expected.iterations, "{}", case.name);
-        assert_eq!(solved.states, expected.states, "{}", case.name);
-        assert!(
-            close(solved.objective_eur, expected.objective_eur),
-            "{}: objective {} != {}",
-            case.name,
-            solved.objective_eur,
-            expected.objective_eur
-        );
-        assert!(
-            close(solved.cycle_cost_eur, expected.cycle_cost_eur),
-            "{}",
-            case.name
-        );
-        assert!(
-            close(solved.terminal_error_kwh, expected.terminal_error_kwh),
-            "{}",
-            case.name
-        );
-        assert!(
-            close(
-                solved.internal_objective_eur,
-                expected.internal_objective_eur
-            ),
-            "{}",
-            case.name
-        );
-        assert!(
-            close(solved.effective_step_kwh, expected.effective_step_kwh),
-            "{}",
-            case.name
-        );
-        for (index, (got, want)) in solved.grid.iter().zip(&expected.grid).enumerate() {
-            assert!(close(*got, *want), "{}: grid[{index}]", case.name);
-        }
-        assert_eq!(solved.value.len(), expected.value.len(), "{}", case.name);
-        for (index, (got, want)) in solved.value.iter().zip(&expected.value).enumerate() {
-            assert!(close(*got, *want), "{}: value[{index}]", case.name);
-        }
-        for (index, (got, want)) in solved.energies.iter().zip(&expected.energies).enumerate() {
-            assert!(close(*got, *want), "{}: energies[{index}]", case.name);
-        }
-        for (index, (got, want)) in solved.powers.iter().zip(&expected.powers).enumerate() {
-            assert!(close(*got, *want), "{}: powers[{index}]", case.name);
-        }
-        for (index, (got, want)) in solved.windows.iter().zip(&expected.windows).enumerate() {
-            for (a, b) in got.values().iter().zip(want.iter()) {
-                assert!(close(*a, *b), "{}: windows[{index}]", case.name);
-            }
+/// One fixture case: the C core through `solve()` against the brute-force oracle.
+fn compare_case(case: &Case) {
+    let config = case.config();
+    let row = case.terminal_row(&config);
+    let input = case.input();
+    let solved = match row.as_deref() {
+        Some(row) => solve_with_terminal_row(&input, &config, row),
+        None => solve(&input, &config),
+    }
+    .unwrap_or_else(|error| panic!("case {} failed: {error}", case.name));
+    let expected = oracle::solve(&config, &input, row.as_deref())
+        .unwrap_or_else(|error| panic!("case {} oracle failed: {error}", case.name));
+
+    assert_eq!(solved.iterations, expected.iterations, "{}", case.name);
+    assert_eq!(solved.states, expected.states, "{}", case.name);
+    let scalars = [
+        ("objective", solved.objective_eur, expected.objective_eur),
+        ("cycle cost", solved.cycle_cost_eur, expected.cycle_cost_eur),
+        (
+            "terminal error",
+            solved.terminal_error_kwh,
+            expected.terminal_error_kwh,
+        ),
+        (
+            "internal objective",
+            solved.internal_objective_eur,
+            expected.internal_objective_eur,
+        ),
+        (
+            "step",
+            solved.effective_step_kwh,
+            expected.effective_step_kwh,
+        ),
+    ];
+    for (what, got, want) in scalars {
+        assert!(close(got, want), "{}: {what} {got} != {want}", case.name);
+    }
+    compare_series(&solved, &expected, &case.name);
+}
+
+/// Every reported series, cell by cell.
+fn compare_series(solved: &SolveResult, expected: &oracle::OracleResult, name: &str) {
+    for (index, (got, want)) in solved.grid.iter().zip(&expected.grid).enumerate() {
+        assert!(close(*got, *want), "{name}: grid[{index}]");
+    }
+    assert_eq!(solved.value.len(), expected.value.len(), "{name}");
+    for (index, (got, want)) in solved.value.iter().zip(&expected.value).enumerate() {
+        assert!(close(*got, *want), "{name}: value[{index}]");
+    }
+    for (index, (got, want)) in solved.energies.iter().zip(&expected.energies).enumerate() {
+        assert!(close(*got, *want), "{name}: energies[{index}]");
+    }
+    for (index, (got, want)) in solved.powers.iter().zip(&expected.powers).enumerate() {
+        assert!(close(*got, *want), "{name}: powers[{index}]");
+    }
+    for (index, (got, want)) in solved.windows.iter().zip(&expected.windows).enumerate() {
+        for (a, b) in got.values().iter().zip(want.iter()) {
+            assert!(close(*a, *b), "{name}: windows[{index}]");
         }
     }
 }
@@ -244,18 +258,10 @@ fn every_stored_decision_is_the_reference_argmin() {
                     }
                     _ => None,
                 };
-                let (power, _cost) = validate::argmin_at(
-                    &config,
-                    &slot,
-                    energy,
-                    lo,
-                    hi,
-                    dt,
-                    extra,
-                    next_row,
-                    &expected.grid,
-                )
-                .expect("non-empty action set");
+                let context =
+                    validate::SlotContext::new(&config, slot, dt, next_row, &expected.grid);
+                let (power, _cost) = validate::argmin_at(&context, energy, lo, hi, extra)
+                    .expect("non-empty action set");
                 assert_eq!(
                     power,
                     expected.argmin[i * states + k],

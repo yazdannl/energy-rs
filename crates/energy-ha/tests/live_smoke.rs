@@ -1,3 +1,14 @@
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use chrono::{Duration as ChronoDuration, Utc};

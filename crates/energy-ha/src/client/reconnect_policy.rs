@@ -31,10 +31,9 @@ impl ReconnectPolicy {
         }
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.subsec_nanos())
-            .unwrap_or(0);
+            .map_or(0, |elapsed| elapsed.subsec_nanos());
         // 0.8..=1.2 multiplier, no extra dependency.
-        let factor = 0.8 + (nanos % 401) as f64 / 1000.0;
+        let factor = 0.8 + f64::from(nanos % 401) / 1000.0;
         base.mul_f64(factor).min(self.max)
     }
 }

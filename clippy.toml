@@ -1,0 +1,6 @@
+# Thresholds for the size lints denied in Cargo.toml (`[workspace.lints.clippy]`).
+# The numeric limits mirror docs/LINTING.md and scripts/check_structure.py: a function longer
+# than this is a refactor, not a style nit.
+too-many-arguments-threshold = 6
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 15

@@ -39,11 +39,13 @@ impl StatisticsQuery {
         }
     }
 
+    #[must_use]
     pub fn with_types(mut self, types: Vec<StatType>) -> Self {
         self.types = types;
         self
     }
 
+    #[must_use]
     pub fn with_unit(mut self, unit_class: &str, unit: &str) -> Self {
         self.units.insert(unit_class.to_owned(), unit.to_owned());
         self

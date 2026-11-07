@@ -41,12 +41,11 @@ pub fn content_hash(book: &PriceBook) -> String {
             hash = fold(hash, byte);
         }
     }
-    for slot in book.iter() {
-        for value in [
-            slot.t_start as u64,
-            slot.buy_all_in.to_bits(),
-            slot.market.to_bits(),
-        ] {
+    for slot in book {
+        // The hash covers the raw bits of the epoch seconds; the sign of a timestamp is not
+        // meaningful to a price book, and the bits keep the hash stable across a refactor.
+        let start_bits = u64::from_ne_bytes(slot.t_start.to_ne_bytes());
+        for value in [start_bits, slot.buy_all_in.to_bits(), slot.market.to_bits()] {
             for byte in value.to_be_bytes() {
                 hash = fold(hash, byte);
             }
@@ -111,18 +110,15 @@ fn empty_book() -> PriceError {
 pub(crate) fn now_utc() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+        })
 }
 
 /// Rebuild a book with money rounded to the store's 1e-6 resolution, so stored and loaded values
 /// are identical and the content hash is stable.
 pub(crate) fn canonical_book(book: &PriceBook) -> Result<PriceBook, PriceError> {
     PriceBook::new(book.iter().map(|slot| slot.money_rounded()).collect())
-}
-
-/// Map a SQLite failure to the typed store error.
-pub(crate) fn store_error(err: rusqlite::Error) -> PriceError {
-    PriceError::Store(err.to_string())
 }
 
 fn fold(mut state: u128, byte: u8) -> u128 {

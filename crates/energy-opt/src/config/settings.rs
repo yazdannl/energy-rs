@@ -1,12 +1,8 @@
-//! The solver configuration: the 20 required keys, the 3 optional ones, and the PV preference.
-//!
-//! This is the Rust face of the CPython extension's config dict (`_core.c:66-98`,
-//! `parse_config` at `_core.c:586`).  Field names are the dict keys verbatim so a call site can be
-//! compared with the old add-on line for line; the optional keys are `Option`, and their presence
-//! *is* the `has_*` flag the C core reads.
+//! The solver configuration itself.
 
 use std::os::raw::c_long;
 
+use super::{BatterySpec, PvChargePreference};
 use crate::error::ConfigError;
 use crate::ffi::EoCoreParams;
 
@@ -14,28 +10,6 @@ use crate::ffi::EoCoreParams;
 pub const MAX_DIMENSION: i64 = 1_000_000;
 /// The smallest state grid the C core accepts.
 pub const MIN_STATES: i64 = 8;
-
-/// How the objective prices PV energy charged into the pack (`pv_charge_preference`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PvChargePreference {
-    /// The slot's sell price: the export the charge forgoes.
-    #[default]
-    Auto,
-    /// Zero: PV into the pack is free.
-    PreferPv,
-    /// The slot's buy price: PV into the pack is valued at what the house would have paid.
-    AvoidPv,
-}
-
-impl PvChargePreference {
-    pub(crate) fn code(self) -> i32 {
-        match self {
-            PvChargePreference::Auto => 0,
-            PvChargePreference::PreferPv => 1,
-            PvChargePreference::AvoidPv => 2,
-        }
-    }
-}
 
 /// The solver configuration.
 ///
@@ -63,45 +37,58 @@ impl PvChargePreference {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     // ---- battery aggregate (the 6 required physical keys) ----
+    /// Lowest usable stored energy, kWh.
     pub e_min_kwh: f64,
+    /// Highest usable stored energy, kWh.
     pub e_max_kwh: f64,
+    /// Maximum charge power, kW.
     pub p_charge_kw: f64,
+    /// Maximum discharge power, kW.
     pub p_discharge_kw: f64,
+    /// Charge efficiency.
     pub eta_charge: f64,
+    /// Discharge efficiency.
     pub eta_discharge: f64,
     // ---- required state / horizon keys ----
+    /// Stored energy at the start of slot 0, kWh.
     pub start_kwh: f64,
+    /// Nominal slot length, minutes.
     pub slot_minutes: f64,
+    /// Energy step of the state grid, kWh.
     pub soc_step_kwh: f64,
+    /// Power steps of the action set.
     pub power_steps: i64,
+    /// State-grid ceiling.
     pub max_states: i64,
+    /// Sweep work ceiling.
     pub max_iterations: i64,
     // ---- required policy keys ----
+    /// Whether the pack may charge from the grid.
     pub allow_grid_charge: bool,
+    /// Whether export is allowed at all.
     pub allow_export: bool,
+    /// Import ceiling, kW (0 = unlimited).
     pub max_import_kw: f64,
+    /// Export ceiling, kW (0 = unlimited).
     pub max_export_kw: f64,
+    /// Minimum buy/sell spread before grid charging pays, EUR/kWh.
     pub min_spread_eur_per_kwh: f64,
+    /// Wear per kWh delivered, EUR/kWh.
     pub wear_eur_per_kwh: f64,
+    /// Value of stored energy left at the horizon, EUR/kWh.
     pub salvage: f64,
+    /// Penalty per kWh of terminal target error, EUR/kWh.
     pub target_penalty: f64,
     // ---- optional keys (presence is the C core's `has_*` flag) ----
+    /// Terminal SoC target, kWh.
     pub e_target: Option<f64>,
+    /// Refuse any action that exports battery energy.
     pub refuse_battery_export: bool,
+    /// Minimum sell price for export, EUR/kWh.
     pub sell_floor_eur_per_kwh: Option<f64>,
     // ---- enum with a default, not an optional key ----
+    /// How PV energy charged into the pack is priced.
     pub pv_charge_preference: PvChargePreference,
-}
-
-/// The six physical battery-aggregate values every solve needs.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BatterySpec {
-    pub e_min_kwh: f64,
-    pub e_max_kwh: f64,
-    pub p_charge_kw: f64,
-    pub p_discharge_kw: f64,
-    pub eta_charge: f64,
-    pub eta_discharge: f64,
 }
 
 impl Config {
@@ -139,6 +126,13 @@ impl Config {
     /// The config's domain checks.  Transcribed from `parse_config`'s tail (`_core.c:630-658`);
     /// the C core repeats them, so a direct C ABI caller is refused the same way.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.check_finite()?;
+        self.check_dimensions()?;
+        self.check_domain()
+    }
+
+    /// Every number the core reads must be finite, optional keys included.
+    fn check_finite(&self) -> Result<(), ConfigError> {
         for (field, value) in [
             ("e_min_kwh", self.e_min_kwh),
             ("e_max_kwh", self.e_max_kwh),
@@ -160,18 +154,19 @@ impl Config {
                 return Err(ConfigError::NonFinite { field });
             }
         }
-        if let Some(target) = self.e_target
-            && !target.is_finite()
-        {
-            return Err(ConfigError::NonFinite { field: "e_target" });
+        for (field, value) in [
+            ("e_target", self.e_target),
+            ("sell_floor_eur_per_kwh", self.sell_floor_eur_per_kwh),
+        ] {
+            if value.is_some_and(|number| !number.is_finite()) {
+                return Err(ConfigError::NonFinite { field });
+            }
         }
-        if let Some(floor) = self.sell_floor_eur_per_kwh
-            && !floor.is_finite()
-        {
-            return Err(ConfigError::NonFinite {
-                field: "sell_floor_eur_per_kwh",
-            });
-        }
+        Ok(())
+    }
+
+    /// Counts the C core indexes with, inside the ranges it documents.
+    fn check_dimensions(&self) -> Result<(), ConfigError> {
         if self.power_steps < 0 || self.power_steps > MAX_DIMENSION {
             return Err(ConfigError::PowerSteps(self.power_steps));
         }
@@ -181,6 +176,11 @@ impl Config {
         if self.max_iterations < 1 {
             return Err(ConfigError::MaxIterations(self.max_iterations));
         }
+        Ok(())
+    }
+
+    /// The physical and policy coherence checks.
+    fn check_domain(&self) -> Result<(), ConfigError> {
         if self.e_min_kwh > self.e_max_kwh || !(self.e_max_kwh - self.e_min_kwh).is_finite() {
             return Err(ConfigError::EnergyBounds {
                 e_min_kwh: self.e_min_kwh,

@@ -7,6 +7,10 @@ use crate::client::{Connection, HaError};
 
 use super::HistoryResponse;
 
+// The four booleans are the REST body's fields (`minimal_response`, `no_attributes`, ...), not a
+// state machine: `true`/`false` is exactly how Home Assistant accepts them, so an enum would only
+// rename the wire format.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct HistoryQuery {
     pub start_time: String,
@@ -38,7 +42,7 @@ pub async fn history_during_period(
     query: &HistoryQuery,
 ) -> Result<HistoryResponse, HaError> {
     if query.entity_ids.is_empty() {
-        return Ok(Default::default());
+        return Ok(HistoryResponse::default());
     }
     connection
         .call(

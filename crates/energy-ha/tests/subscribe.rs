@@ -1,16 +1,27 @@
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
+mod support;
 
 use std::sync::Arc;
 
-use common::{FakeServer, TOKEN};
 use energy_ha::{
     Config, Connection, EntityDiffEvent, EntityState, EntityStore, EntityUpdate, watch_entities,
 };
 use serde_json::{Value, json};
+use support::{FakeServer, TOKEN};
 
 #[test]
 fn recorded_compressed_frames_apply_to_a_store() {
-    let fixture = common::fixture("subscribe_entities.json");
+    let fixture = support::fixture("subscribe_entities.json");
     let frames = fixture["frames"].as_array().expect("frames");
     let mut store = EntityStore::default();
     let mut updates = Vec::new();
@@ -103,7 +114,7 @@ fn null_state_patch_is_present_not_missing() {
 #[tokio::test]
 async fn compressed_subscription_delivers_snapshot_then_diff() {
     let server = FakeServer::spawn(Arc::new(|_, command, _| match command {
-        "subscribe_entities" => common::Reply::ok(Value::Null)
+        "subscribe_entities" => support::Reply::ok(Value::Null)
             .with_event(json!({
                 "a": {
                     "sensor.flow": {
@@ -116,7 +127,7 @@ async fn compressed_subscription_delivers_snapshot_then_diff() {
             .with_event(json!({
                 "c": {"sensor.flow": {"+": {"s": "2", "lu": 110}}}
             })),
-        _ => common::Reply::fail("unknown_command", "unexpected"),
+        _ => support::Reply::fail("unknown_command", "unexpected"),
     }))
     .await;
     let config = Config::direct(&server.base_url(), TOKEN).expect("config");
@@ -145,8 +156,8 @@ async fn compressed_subscription_delivers_snapshot_then_diff() {
 #[tokio::test]
 async fn falls_back_to_subscribe_events_when_entities_is_unknown() {
     let server = FakeServer::spawn(Arc::new(|_, command, _| match command {
-        "subscribe_entities" => common::Reply::fail("unknown_command", "unknown command"),
-        "subscribe_events" => common::Reply::ok(Value::Null).with_event(json!({
+        "subscribe_entities" => support::Reply::fail("unknown_command", "unknown command"),
+        "subscribe_events" => support::Reply::ok(Value::Null).with_event(json!({
             "event": {
                 "event_type": "state_changed",
                 "data": {
@@ -162,7 +173,7 @@ async fn falls_back_to_subscribe_events_when_entities_is_unknown() {
                 }
             }
         })),
-        _ => common::Reply::fail("unknown_command", "unexpected"),
+        _ => support::Reply::fail("unknown_command", "unexpected"),
     }))
     .await;
     let config = Config::direct(&server.base_url(), TOKEN).expect("config");

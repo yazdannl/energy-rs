@@ -1,10 +1,21 @@
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
 
-use common::result;
+mod support;
+
 use energy_ha::{
     CoreConfig, DeviceRegistryEntry, EnergyPreferences, EnergySource, EntityState, HistoryResponse,
     SolarForecast, StatisticMetadata, StatisticsResponse,
 };
+use support::result;
 
 #[test]
 fn energy_prefs_fixture_parses_grid_and_solar() {
@@ -155,13 +166,13 @@ fn device_registry_fixture_parses() {
 #[test]
 fn rest_config_and_states_fixtures_parse() {
     let config: CoreConfig =
-        serde_json::from_value(common::fixture("core_config.json")).expect("config");
+        serde_json::from_value(support::fixture("core_config.json")).expect("config");
     assert_eq!(config.currency, "EUR");
     assert_eq!(config.time_zone, "Europe/Amsterdam");
     assert!(!config.version.is_empty());
 
     let states: Vec<EntityState> =
-        serde_json::from_value(common::fixture("states.json")).expect("states");
+        serde_json::from_value(support::fixture("states.json")).expect("states");
     assert_eq!(states.len(), 4);
     assert!(states.iter().all(|state| state.last_updated.is_some()));
     assert!(states.iter().all(|state| state.unit().is_some()));

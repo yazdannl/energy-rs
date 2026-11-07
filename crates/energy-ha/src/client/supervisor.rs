@@ -72,6 +72,35 @@ impl Drop for Supervisor {
     }
 }
 
+/// Connect, or `None` when shutdown won the race.
+async fn connect_or_shutdown(
+    config: &Config,
+    shutdown: &mut watch::Receiver<bool>,
+) -> Option<Result<Connection, HaError>> {
+    let connect = Connection::connect(config);
+    tokio::pin!(connect);
+    tokio::select! {
+        _ = shutdown.changed() => None,
+        result = &mut connect => Some(result),
+    }
+}
+
+/// Wait until the connection drops; `true` when shutdown won the race.
+async fn wait_for_close(connection: &Connection, shutdown: &mut watch::Receiver<bool>) -> bool {
+    tokio::select! {
+        () = connection.closed() => false,
+        _ = shutdown.changed() => true,
+    }
+}
+
+/// Sleep one backoff step; `true` when shutdown won the race.
+async fn sleep_or_shutdown(delay: Duration, shutdown: &mut watch::Receiver<bool>) -> bool {
+    tokio::select! {
+        _ = shutdown.changed() => true,
+        () = sleep(delay) => false,
+    }
+}
+
 async fn run(
     config: Config,
     connection_tx: watch::Sender<Option<Arc<Connection>>>,
@@ -79,42 +108,49 @@ async fn run(
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut attempt = 0u32;
-    loop {
-        let _ = state_tx.send(LinkState::Connecting);
-        let connect = Connection::connect(&config);
-        tokio::pin!(connect);
-        let result = tokio::select! {
-            _ = shutdown.changed() => break,
-            result = &mut connect => result,
-        };
-
-        match result {
-            Ok(connection) => {
-                attempt = 0;
-                let connection = Arc::new(connection);
-                let _ = connection_tx.send(Some(Arc::clone(&connection)));
-                let _ = state_tx.send(LinkState::Connected);
-                tokio::select! {
-                    _ = connection.closed() => {}
-                    _ = shutdown.changed() => break,
-                }
-                let _ = connection_tx.send(None);
-                let _ = state_tx.send(LinkState::Disconnected);
-            }
-            Err(error) => {
-                warn!(error = %error, "Home Assistant WebSocket connection failed");
-                let _ = connection_tx.send(None);
-                let _ = state_tx.send(LinkState::Disconnected);
-            }
-        }
-
-        let delay = config.reconnect.delay(attempt);
-        attempt = attempt.saturating_add(1);
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = sleep(delay) => {}
-        }
-    }
+    while !shutdown_loop(
+        &config,
+        &connection_tx,
+        &state_tx,
+        &mut shutdown,
+        &mut attempt,
+    )
+    .await
+    {}
     let _ = connection_tx.send(None);
     let _ = state_tx.send(LinkState::Disconnected);
+}
+
+/// One connect/backoff cycle; `true` means stop supervising.
+async fn shutdown_loop(
+    config: &Config,
+    connection_tx: &watch::Sender<Option<Arc<Connection>>>,
+    state_tx: &watch::Sender<LinkState>,
+    shutdown: &mut watch::Receiver<bool>,
+    attempt: &mut u32,
+) -> bool {
+    let _ = state_tx.send(LinkState::Connecting);
+    match connect_or_shutdown(config, shutdown).await {
+        None => return true,
+        Some(Err(error)) => {
+            warn!(error = %error, "Home Assistant WebSocket connection failed");
+            let _ = connection_tx.send(None);
+            let _ = state_tx.send(LinkState::Disconnected);
+        }
+        Some(Ok(connection)) => {
+            *attempt = 0;
+            let connection = Arc::new(connection);
+            let _ = connection_tx.send(Some(Arc::clone(&connection)));
+            let _ = state_tx.send(LinkState::Connected);
+            let stop = wait_for_close(&connection, shutdown).await;
+            let _ = connection_tx.send(None);
+            let _ = state_tx.send(LinkState::Disconnected);
+            if stop {
+                return true;
+            }
+        }
+    }
+    let delay = config.reconnect.delay(*attempt);
+    *attempt = attempt.saturating_add(1);
+    sleep_or_shutdown(delay, shutdown).await
 }

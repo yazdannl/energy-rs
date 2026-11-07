@@ -18,6 +18,10 @@
 //! `-Wno-unused-function` is belt and braces for the vendored text: the extracted file still
 //! carries the helpers only the CPython entry point used.
 
+// A build script has exactly one way to fail: panic, and let Cargo report the reason.  The
+// `unwrap_used`/`expect_used`/`panic` policy is for the shipped binary, not for `build.rs`.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::path::{Path, PathBuf};
 
 #[path = "src/sha256.rs"]

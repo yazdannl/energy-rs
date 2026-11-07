@@ -1,14 +1,25 @@
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here.  The workspace policy (no panics in shipped code) applies to the library.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint
+)]
+
+mod support;
 
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
-use common::{FakeServer, TOKEN};
 use energy_ha::{
     Config, Connection, Granularity, StatRow, StatisticsResponse, parse_slots, slot_series,
     slot_series_15min,
 };
 use serde_json::json;
+use support::{FakeServer, TOKEN};
 
 fn at(seconds: i64) -> DateTime<Utc> {
     DateTime::from_timestamp(seconds, 0).expect("timestamp")
@@ -78,7 +89,7 @@ fn quarter_hour_requires_all_three_buckets() {
 #[test]
 fn recorded_five_minute_fixture_parses_without_zero_fill() {
     let response: StatisticsResponse =
-        serde_json::from_value(common::result("statistics_5minute.json")).expect("stats");
+        serde_json::from_value(support::result("statistics_5minute.json")).expect("stats");
     let (_, rows) = response
         .iter()
         .find(|(_, rows)| {
@@ -102,7 +113,7 @@ fn recorded_five_minute_fixture_parses_without_zero_fill() {
 #[test]
 fn recorded_hourly_fixture_parses() {
     let response: StatisticsResponse =
-        serde_json::from_value(common::result("statistics_hourly.json")).expect("stats");
+        serde_json::from_value(support::result("statistics_hourly.json")).expect("stats");
     let (_, rows) = response
         .iter()
         .find(|(_, rows)| rows.len() == 47)
@@ -121,13 +132,13 @@ async fn slot_series_requests_a_warm_up_and_sums_fifteen_minutes() {
     let capture = Arc::clone(&captured);
     let server = FakeServer::spawn(Arc::new(move |_, command, request| {
         if command != "recorder/statistics_during_period" {
-            return common::Reply::fail("unknown_command", "unexpected command");
+            return support::Reply::fail("unknown_command", "unexpected command");
         }
         capture.lock().expect("capture").push(request.clone());
         let start = request["start_time"].as_str().expect("start");
         let parsed = DateTime::parse_from_rfc3339(start).expect("timestamp");
         let start_ms = parsed.timestamp_millis();
-        common::Reply::ok(json!({
+        support::Reply::ok(json!({
             "sensor.grid": [
                 {"start": start_ms, "end": start_ms + 300_000, "change": 99_999.0},
                 {"start": start_ms + 300_000, "end": start_ms + 600_000, "change": 0.5},
@@ -158,7 +169,7 @@ async fn slot_series_requests_a_warm_up_and_sums_fifteen_minutes() {
 
 #[tokio::test]
 async fn slot_series_is_empty_for_an_inverted_range() {
-    let server = FakeServer::spawn(Arc::new(|_, _, _| common::Reply::ok(json!({})))).await;
+    let server = FakeServer::spawn(Arc::new(|_, _, _| support::Reply::ok(json!({})))).await;
     let config = Config::direct(&server.base_url(), TOKEN).expect("config");
     let connection = Connection::connect(&config).await.expect("connect");
     let from = at(1_800_000_000);

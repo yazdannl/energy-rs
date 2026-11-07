@@ -1,11 +1,23 @@
 //! The annual saldering budget and the Zonnebonus counters: what moves them, what resets them and
 //! which exports are refused a bonus (prices.md §3.2, §3.3).
 
-mod common;
+// Test code: a failed assertion is the report, so `unwrap`/`expect`/`panic!` are the intended
+// API here, and fixture timestamps/money read better verbatim than with digit separators.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::assert_is_empty,
+    clippy::float_cmp,
+    clippy::manual_midpoint,
+    clippy::unreadable_literal
+)]
 
-use common::{contract, slot_at};
+mod support;
+
 use energy_price::Contract;
 use energy_price::settlement::{BonusRules, ExportSource, Saldering, Settlement};
+use support::{contract, slot_at};
 
 const BUY: f64 = 0.20;
 /// Feed-in without the Zonnebonus for the fixture slot (`market + 0.02`).
@@ -16,7 +28,7 @@ fn close(actual: f64, expected: f64) -> bool {
 }
 
 fn settlement(today: &str, import_kwh: f64) -> Settlement {
-    let mut settlement = Settlement::on(contract(), common::date(today));
+    let mut settlement = Settlement::on(contract(), support::date(today));
     settlement.set_import_ytd(2026, import_kwh);
     settlement
 }
@@ -90,7 +102,7 @@ fn an_import_reading_starts_a_new_year_and_a_new_budget() {
 #[test]
 fn without_a_budget_or_import_the_export_is_never_netted() {
     // No budget configured: the 2026 regime cannot credit 1:1, so it pays the feed-in price.
-    let settlement = Settlement::on(contract(), common::date("2026-11-20"));
+    let settlement = Settlement::on(contract(), support::date("2026-11-20"));
     let slot = slot_at("2026-11-20T12:00:00+01:00", BUY);
     assert!(!settlement.saldering_active(&slot));
     assert_eq!(settlement.budget_remaining(&slot), 0.0);
@@ -108,7 +120,7 @@ fn without_a_budget_or_import_the_export_is_never_netted() {
 #[test]
 fn a_non_positive_market_price_earns_no_bonus() {
     // market = -0.0255: `market + fee` is negative, so the daylight PV guard refuses the bonus.
-    let settlement = Settlement::on(contract(), common::date("2027-06-01"));
+    let settlement = Settlement::on(contract(), support::date("2027-06-01"));
     let slot = slot_at("2027-06-01T13:00:00+02:00", 0.10);
     assert!(settlement.feed_in_post(&slot, ExportSource::Pv) < 0.0);
     assert_eq!(settlement.export_price(&slot, ExportSource::Pv), 0.0);
@@ -116,7 +128,7 @@ fn a_non_positive_market_price_earns_no_bonus() {
 
 #[test]
 fn the_bonus_needs_daylight_pv_and_budget_left_under_the_cap() {
-    let mut settlement = Settlement::on(contract(), common::date("2027-06-01"));
+    let mut settlement = Settlement::on(contract(), support::date("2027-06-01"));
     let midday = slot_at("2027-06-01T13:00:00+02:00", BUY);
     let night = slot_at("2027-06-01T03:00:00+02:00", BUY);
     let feed_in = settlement.feed_in_post(&midday, ExportSource::Battery);
@@ -157,7 +169,7 @@ fn the_bonus_needs_daylight_pv_and_budget_left_under_the_cap() {
 
 #[test]
 fn settlement_advances_the_bonus_counter_by_the_un_netted_export() {
-    let mut settlement = Settlement::on(contract(), common::date("2026-11-20"));
+    let mut settlement = Settlement::on(contract(), support::date("2026-11-20"));
     settlement.set_import_ytd(2026, 2.0);
     let slot = slot_at("2026-11-20T12:00:00+01:00", BUY);
     settlement.settle(&slot, 5.0, ExportSource::Pv);
@@ -180,7 +192,7 @@ fn settlement_advances_the_bonus_counter_by_the_un_netted_export() {
 
 #[test]
 fn the_bonus_counter_starts_over_in_a_new_year() {
-    let mut settlement = Settlement::on(contract(), common::date("2026-12-31"));
+    let mut settlement = Settlement::on(contract(), support::date("2026-12-31"));
     settlement.set_bonus_ytd_kwh(2026, 7_000.0);
     // Settling a 2027 slot moves the annual counter forward instead of carrying 7 000 kWh into it.
     let new_year = slot_at("2027-01-05T13:00:00+01:00", BUY);
@@ -206,7 +218,7 @@ fn the_bonus_counter_starts_over_in_a_new_year() {
 fn a_contract_without_a_bonus_never_multiplies_the_feed_in() {
     let mut contract: Contract = contract();
     contract.bonus = BonusRules::none();
-    let settlement = Settlement::on(contract, common::date("2027-06-01"));
+    let settlement = Settlement::on(contract, support::date("2027-06-01"));
     let midday = slot_at("2027-06-01T13:00:00+02:00", BUY);
     assert!(close(
         settlement.export_price(&midday, ExportSource::Pv),
