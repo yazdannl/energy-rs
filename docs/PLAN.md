@@ -198,3 +198,28 @@ P1 ∥ P2 after P0; P4 ∥ P5 ∥ P3 after P2/P1 land; P9 starts when the P8 con
 
 Standing rules: one worktree per task, merge to `main`, green gates before merge, push every merge,
 no pushes/deploys without explicit instruction, no secrets in code or logs.
+
+---
+
+## 12. Code quality policy (enforced in CI)
+
+**Structure** (`scripts/check_structure.py`, hard failure):
+- One primary public type (`struct`/`enum`/`trait`) per `.rs` file; impl blocks live with their type.
+- Domain folders: `src/<domain>/<type>.rs` + `mod.rs` re-exports. No flat `src/` dumping ground.
+- No `utils.rs`, `helpers.rs`, `misc.rs`, `common.rs` grab-bags.
+- Max 300 lines per file (500 under `tests/`), max 60 lines per function body, max 6 parameters.
+- One Svelte component per `.svelte` file, file named after the component; max 250 lines per component.
+- CSrc (`crates/*/csrc/`) is vendored from upstream and exempt, including the extraction script guards.
+
+**Rust lints** (`[workspace.lints]`, `-D warnings`): rust `unsafe_op_in_unsafe_fn`, `unused_lifetimes`,
+`missing_debug_implementations`; clippy `all` + `pedantic` (noisy pedantic lints explicitly allowed),
+`unwrap_used`/`expect_used`/`panic`/`todo` denied outside tests, `too_many_arguments`,
+`too_many_lines`, `cognitive_complexity`, `large_enum_variant`, `struct_excessive_bools`.
+`rustfmt` with `max_width = 100`, `edition = 2024`.
+
+**Web lints**: ESLint 9 flat config + `typescript-eslint` + `eslint-plugin-svelte`, Prettier check,
+`svelte-check` with zero errors, `no-explicit-any` denied, max-lines per component.
+
+**CI jobs**: `fmt`, `clippy -D warnings`, `structure`, `test`, `build`, `web-lint`, `web-build`, `web-check`.
+A task that cannot meet the policy must state the exception explicitly in its reply; silent violations
+fail the merge.
