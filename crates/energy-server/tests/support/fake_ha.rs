@@ -71,10 +71,23 @@ impl Drop for FakeHa {
 
 fn router() -> Router {
     Router::new()
+        .route("/api/config", get(core_config))
         .route("/api/states", get(states))
         .route("/api/states/{entity}", get(state))
         .route("/api/websocket", get(socket))
         .with_state(Arc::new(()))
+}
+
+/// `GET /api/config`: a plausible Core, enough for the doctor's transport row.
+async fn core_config() -> Json<Value> {
+    Json(json!({
+        "version": "2026.10.0",
+        "time_zone": "Europe/Amsterdam",
+        "currency": "EUR",
+        "country": "NL",
+        "language": "nl",
+        "state": "RUNNING",
+    }))
 }
 
 async fn states() -> Json<Value> {
@@ -82,6 +95,7 @@ async fn states() -> Json<Value> {
         entity(GRID_POWER, "-450", "W"),
         entity(SOLAR_POWER, "1200", "W"),
         entity(BATTERY_POWER, "0", "W"),
+        entity(BATTERY_SOC, "55", "%"),
     ]))
 }
 
@@ -102,12 +116,13 @@ fn entity(id: &str, state: &str, unit: &str) -> Value {
 }
 
 fn state_json(id: &str, state: &str, unit: &str) -> Value {
+    let now = stamp(Utc::now().timestamp());
     json!({
         "entity_id": id,
         "state": state,
         "attributes": {"unit_of_measurement": unit},
-        "last_changed": "2026-01-01T00:00:00+00:00",
-        "last_updated": "2026-01-01T00:00:00+00:00",
+        "last_changed": now,
+        "last_updated": now,
     })
 }
 
@@ -205,6 +220,9 @@ fn answer(request: &Value) -> Value {
         Some("recorder/statistics_during_period") => {
             json!({"id": id, "type": "result", "success": true, "result": statistics(request)})
         }
+        Some("recorder/get_statistics_metadata") => {
+            json!({"id": id, "type": "result", "success": true, "result": metadata(request)})
+        }
         _ => json!({"id": id, "type": "result", "success": false,
                     "error": {"code": "not_found", "message": "unknown command"}}),
     }
@@ -277,12 +295,42 @@ fn statistics(request: &Value) -> Value {
                 "start": at,
                 "end": at + step,
                 "change": change(entity, at, step),
+                "mean": if entity.contains("soc") { 55.0 } else { 0.0 },
             }));
             at += step;
         }
         result.insert(entity.to_owned(), Value::Array(rows));
     }
     Value::Object(result)
+}
+
+/// `recorder/get_statistics_metadata`: the units the doctor's stats rows read.
+fn metadata(request: &Value) -> Value {
+    let ids = request
+        .get("statistic_ids")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Value::Array(
+        ids.iter()
+            .filter_map(Value::as_str)
+            .map(|id| {
+                let (unit, class) = if id.contains("soc") {
+                    ("%", "battery")
+                } else {
+                    ("kWh", "energy")
+                };
+                json!({
+                    "statistic_id": id,
+                    "display_unit_of_measurement": unit,
+                    "statistics_unit_of_measurement": unit,
+                    "unit_class": class,
+                    "has_sum": !id.contains("soc"),
+                    "has_mean": id.contains("soc"),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// A synthetic, always-positive counter change in kWh for one slot.

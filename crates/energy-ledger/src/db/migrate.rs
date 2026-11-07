@@ -74,6 +74,18 @@ pub(crate) fn current_version(conn: &Connection) -> Result<i64, LedgerError> {
         .map_err(|_| LedgerError::Invalid(format!("meta.schema_version is {text:?}, not a number")))
 }
 
+/// Refuse a file this binary cannot read, without migrating it.
+pub(crate) fn verify(conn: &Connection) -> Result<i64, LedgerError> {
+    let current = current_version(conn)?;
+    if current > SCHEMA_VERSION {
+        return Err(LedgerError::SchemaTooNew {
+            found: current,
+            supported: SCHEMA_VERSION,
+        });
+    }
+    Ok(current)
+}
+
 fn apply(conn: &mut Connection, migration: &Migration, now: i64) -> Result<(), LedgerError> {
     let tx = conn.transaction()?;
     tx.execute_batch(migration.sql)

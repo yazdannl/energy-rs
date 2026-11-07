@@ -82,7 +82,43 @@ Everything the UI shows comes from one `EngineSnapshot` published after every ti
 A fault is cleared by the engine/loops, never by the reader. The SSE `state` event carries the same
 object.
 
-## 4. Troubleshooting
+## 4. Read-only diagnostics (before `auto`)
+
+The binary also accepts two subcommands that validate an install without touching anything. Both use
+the same options file/environment as the add-on, print no token and never write to Home Assistant or
+a battery:
+
+```bash
+docker exec addon_energy_rs energy-server doctor
+docker exec addon_energy_rs energy-server plan-once --json
+```
+
+`doctor` exits `0` when every check passed, `1` for warnings only and `2` for at least one failure;
+it prints one aligned row per check plus `next steps` for failures:
+
+```
+PASS    ha transport                      direct token, HA 2026.10.0, time zone Europe/Amsterdam, currency EUR
+PASS    stats grid_import 5min/24h        100.0% (288/288), unit kWh (energy), warm-up row ok
+PASS    battery C04A000000000001          solarFlow800Plus, SN match, packs AB2000 1.92 kWh, ...
+PASS    prices coverage                   covers ... (144 slots, 36.2 h ahead); next publication expected 13:00 CET
+WARN    verdict                           would hold: no battery move in this slot (reserve_hold), ...
+```
+
+The rows cover the HA transport and token kind, the energy dashboard (`energy/get_prefs`), statistics
+coverage at 5-minute/24 h and hourly/30 d for every source (including warm-up-row risk and missing
+units), the live grid/PV/load balance with staleness, the price publication/coverage/derivation, each
+battery's report (reachable, SN match, product, pack labels, `chargeMaxLimit`/`inverseMaxPower`, SoC,
+power, echo age, wedge state), the ledger (path, schema, row counts, last tick/plan age, retention
+headroom) and a **would plan / would hold** verdict for this moment with the reason.
+
+`plan-once` solves one plan through the real `LivePlanSource` and prints the 15-minute timeline
+(`slot, buy, feed-in, pv, load, battery W, soc, reason`) with the summary and any degraded or refusal
+reason; it exits `2` when the plan is refused and never persists the plan or changes the mode.
+`--json` is for scripting, `--verbose` adds timings only, and `--data-dir` points at a non-default
+`/data` folder. Every row and the limits of a read-only check are documented in
+[DOCTOR.md](DOCTOR.md).
+
+## 5. Troubleshooting
 
 **No dashboard.** `site.configured: false`, plan refused with `site_not_configured`. Configure the
 Home Assistant Energy dashboard (Settings → Dashboards → Energy) with at least grid import/export,

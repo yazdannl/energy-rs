@@ -48,6 +48,14 @@ file: migrations are additive and each table name is owned by exactly one crate.
 * `settings` / `settings_history` — current value per key and the append-only history used for
   as-of reads. Setting the same value again only moves `updated_at`.
 
+## Read-only access
+
+`Ledger::open_read_only(path)` opens an existing file with `PRAGMA query_only = ON`: no creation, no
+migration, no trim, no pack registration. It refuses a missing file and a schema newer than the
+binary. `LedgerStats::read(path)` builds on it for the doctor: schema version, file size, per-table
+row counts and the newest measurement/plan/dispatch/event timestamp. The price store has the same
+`SqlitePriceRepository::open_read_only` entry point, so a diagnostic never moves a file forward.
+
 ## Migrations
 
 Forward-only, numbered, in code (`db/migrations/vN.rs`), applied inside one transaction each and

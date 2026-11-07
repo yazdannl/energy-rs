@@ -23,6 +23,7 @@ use crate::retention::{RetentionPolicy, RetentionReport};
 use crate::savings::Savings;
 use crate::session::Sessions;
 use crate::settings::Settings;
+use crate::stats::LedgerStats;
 
 /// The ledger database: a single WAL connection under a mutex.
 ///
@@ -62,6 +63,40 @@ impl Ledger {
     /// A ledger at `path` with the default timeout and retention.
     pub fn open_at(path: impl AsRef<Path>) -> Result<Self, LedgerError> {
         Self::open(&LedgerConfig::at(path.as_ref().to_path_buf()))
+    }
+
+    /// Open an existing ledger for reading only: no file creation, no migration, no writes.
+    ///
+    /// The connection is put in `query_only` mode, so a diagnostic command cannot migrate, trim or
+    /// register a pack. A file that is missing or carries a newer schema is refused.
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, LedgerError> {
+        let path = path.as_ref().to_path_buf();
+        if !path.exists() {
+            return Err(LedgerError::Open {
+                path: path.display().to_string(),
+                reason: "file does not exist".to_owned(),
+            });
+        }
+        let conn = Connection::open(&path).map_err(|err| LedgerError::Open {
+            path: path.display().to_string(),
+            reason: err.to_string(),
+        })?;
+        conn.busy_timeout(Duration::from_millis(5_000))?;
+        conn.pragma_update(None, "query_only", true)?;
+        migrate::verify(&conn)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            path,
+            retention: RetentionPolicy::default(),
+        })
+    }
+
+    /// Row counts and freshness, read through this handle without writing.
+    pub fn stats(&self) -> Result<LedgerStats, LedgerError> {
+        let conn = self.lock()?;
+        let mut stats = LedgerStats::read_connection(&conn)?;
+        stats.size_bytes = std::fs::metadata(&self.path).map_or(0, |meta| meta.len());
+        Ok(stats)
     }
 
     pub fn path(&self) -> &Path {

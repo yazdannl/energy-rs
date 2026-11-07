@@ -19,6 +19,7 @@ pub mod api;
 pub mod app;
 pub mod assets;
 pub mod bootstrap;
+pub mod diag;
 pub mod engine_handles;
 pub mod service;
 pub mod service_options;
