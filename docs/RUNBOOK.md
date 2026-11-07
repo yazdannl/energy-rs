@@ -64,6 +64,40 @@ ledger (`control.mode`), so a restart resumes it. Leaving `auto` neutralises the
 drove; entering `auto` never replays a stale plan (the first tick after a mode change holds until a
 fresh plan exists).
 
+### Safety invariants
+
+These hold for every tick, including the ticks that fail. They are enforced in `crates/energy-core`
+and pinned by the tests in `crates/energy-core/tests/`.
+
+* **One gate for every hardware operation.** No command reaches a device except through the engine's
+  gated sink, which checks authority, control generation and durable ownership, in that order.
+  `advisory` and `dry_run` write nothing at all -- a hold is a write too -- so a `dry_run` restart never
+  neutralises what a previous `auto` run left behind: those packs stay latched and are neutralised the
+  moment control enters `auto`. Leaving `auto` fences the generation and holds every latched pack
+  *while still in `auto`*.
+* **A superseded command never reaches a device.** A tick captures a token (mode + generation) before
+  it reads anything; an emergency hold, a shutdown or a mode change bumps the generation first, so a
+  command queued by an overtaken tick is refused immediately before the transport write.
+* **Ownership is durable before the write.** A non-zero setpoint is persisted into the live-write latch
+  (`control.live_writes`) *before* the transport call, and a journal failure means the command is not
+  sent. Only a verified hold clears an entry, and the latch is persisted before the in-memory entry is
+  dropped, so a bookkeeping failure never loses track of a pack that was driven.
+* **The final command vector is what the limits bound.** The allocation clamp runs before the per-pack
+  ladder, so a second fleet-level pass validates the summed vector -- overrides, forced emergency
+  charges and ramp bounds included -- against the fleet power caps and the site import/export
+  ceilings, counting the measured power of the packs the tick does not touch.
+* **The watchdog needs successful progress.** Progress is marked after successful reads, writes and
+  tick steps, never at tick start; a failed tick journals the cause and best-effort holds the packs the
+  process owns. Stall detection compares the epoch and a monotonic anchor, so neither a long tick nor a
+  backwards wall clock hides a stall.
+* **Nothing is forgotten.** A pack that vanished from the read, or reports itself unavailable, is held
+  and stays latched until a device confirms; a hold that fails for one pack never stops the others.
+* **Unknown state means no setpoint.** With neither stored energy nor SoC, a pack gets at most the
+  neutral hold (`state_missing`), in both directions.
+* **A corrupt latch is a recovery error.** It is never replaced by an empty list: the stored value is
+  preserved, the engine keeps running `dry_run` and refuses `auto` until an operator reconciles it
+  (`Engine::reconcile_latch`).
+
 ## 3. Reading `/api/v1/state`
 
 Everything the UI shows comes from one `EngineSnapshot` published after every tick:

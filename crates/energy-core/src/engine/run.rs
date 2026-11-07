@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use energy_ledger::EventLevel;
 
 use crate::engine::control::Engine;
 use crate::engine::error::EngineError;
@@ -72,29 +71,21 @@ impl Engine {
         }
     }
 
-    /// One tick, with its failure journalled instead of ending the loop.
+    /// One tick, with its failure boundary instead of ending the loop.
+    ///
+    /// A failed tick journals the cause and attempts holds for the packs this process owns; it never
+    /// marks progress, so a loop that keeps failing still reaches the watchdog.
     async fn tick_or_log(&self) {
         let now = Utc::now().timestamp();
         if let Err(error) = self.tick_once(now).await {
-            self.journal_tick_failure(&error);
+            tracing::error!("tick failed: {error}");
+            self.tick_failed(now, &error).await;
         }
     }
 
     /// Trigger a graceful shutdown hold without a signal (the server's `/stop` and the tests).
     pub async fn stop(&self, now: i64, reason: &str) -> Result<(), EngineError> {
         self.shutdown(now, reason).await
-    }
-
-    /// Record a failed tick; the loop keeps running.
-    fn journal_tick_failure(&self, error: &EngineError) {
-        let at = Utc::now().timestamp();
-        let written = self.event(
-            at,
-            EventLevel::Error,
-            "engine.tick_failed",
-            error.to_string(),
-        );
-        tracing::error!("tick failed: {error} (journalled: {written:?})");
     }
 
     /// The guard loop: watchdog, boot-recovery retry and, later, the maintenance publisher.

@@ -13,13 +13,17 @@
 //! The engine never blocks a tick on its own lock: I/O happens before and after, and the state
 //! mutex is only taken for the synchronous parts.
 
+mod boot;
 mod commands;
 mod config;
 mod control;
 mod error;
+mod failure;
 mod faults;
+mod guarded_sink;
 mod latched_write;
 mod live_latch;
+mod live_write_journal;
 mod persist;
 mod plan_source;
 mod run;
@@ -28,14 +32,19 @@ mod state;
 mod supervise;
 mod tick;
 mod watchdog;
+mod write_gate;
+mod write_intent;
 
 pub use config::EngineConfig;
 pub use control::Engine;
 pub use error::EngineError;
+pub use guarded_sink::GuardedSink;
 pub use latched_write::LatchedWrite;
 pub use live_latch::LiveLatch;
 pub use plan_source::PlanSource;
 pub use watchdog::Watchdog;
+pub use write_gate::WriteGate;
+pub use write_intent::WriteIntent;
 
 use chrono::{DateTime, Utc};
 

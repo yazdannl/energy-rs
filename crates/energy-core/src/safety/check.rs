@@ -4,6 +4,7 @@ use energy_battery::protection::CellLatch;
 
 use crate::plan::PackSpec;
 use crate::safety::CommandRequest;
+use crate::safety::EPS_W;
 use crate::safety::Reason;
 use crate::safety::SafetyLimits;
 use crate::safety::decision::SafetyDecision;
@@ -30,7 +31,9 @@ pub fn check(
     if request.measured.stale {
         return block(request, Reason::StaleState);
     }
-    let energy = energy_kwh(request, pack, limits);
+    let Some(energy) = energy_kwh(request, pack) else {
+        return unknown_state(request);
+    };
     Ladder::new(request, pack, limits, energy, latch).run()
 }
 
@@ -46,24 +49,36 @@ fn block(request: &CommandRequest, reason: Reason) -> SafetyDecision {
     SafetyDecision::blocked(request.requested_w, 0.0, 0.0, vec![reason])
 }
 
-/// Prefer measured energy, then SoC × capacity, then the pack floor.
+/// A pack with no trustworthy state gets no setpoint.
 ///
-/// The floor fallback is the safe direction (the old add-on's rule): an unknown pack may still
-/// charge, and the SoC floor gives it no discharge headroom. It is not a zero-fill: zero would
-/// pretend the pack is empty and allow a charge it cannot hold.
-fn energy_kwh(request: &CommandRequest, pack: &PackSpec, limits: &SafetyLimits) -> f64 {
+/// Neither a charge nor a discharge can be justified when both the stored energy and the SoC are
+/// unknown: charging may overfill a full pack and discharging may empty one. The old fallback to the
+/// pack floor invented charge headroom, so it is gone; only the neutral hold is allowed, and the row
+/// says `state_missing` so the operator sees why.
+fn unknown_state(request: &CommandRequest) -> SafetyDecision {
+    if request.requested_w.abs() <= EPS_W {
+        return SafetyDecision::allowed(
+            request.requested_w,
+            0.0,
+            0.0,
+            0.0,
+            vec![Reason::StateMissing],
+        );
+    }
+    block(request, Reason::StateMissing)
+}
+
+/// Prefer measured energy, then SoC × capacity; `None` when neither is trustworthy.
+fn energy_kwh(request: &CommandRequest, pack: &PackSpec) -> Option<f64> {
     if let Some(energy) = request.measured.energy_kwh
         && energy.is_finite()
         && energy >= 0.0
     {
-        return energy;
+        return Some(energy);
     }
     request
         .measured
         .soc_pct
         .filter(|soc| soc.is_finite() && *soc >= 0.0)
-        .map_or_else(
-            || pack.e_min_kwh(limits.reserve_soc_pct),
-            |soc| pack.energy_kwh(soc),
-        )
+        .map(|soc| pack.energy_kwh(soc))
 }

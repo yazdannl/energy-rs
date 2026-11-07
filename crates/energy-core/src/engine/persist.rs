@@ -27,7 +27,7 @@ impl Engine {
 
     /// Store a plan header plus its 120 slots.
     pub(crate) fn store_plan(&self, plan: &Plan) -> Result<i64, EngineError> {
-        let mode = self.lock()?.mode;
+        let mode = self.gate.mode();
         let header = StoredPlan::new(
             plan.generated_at,
             mode.slug(),

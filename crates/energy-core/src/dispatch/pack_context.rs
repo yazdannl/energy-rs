@@ -4,7 +4,7 @@ use energy_battery::protection::CellLatch;
 use energy_ledger::plan::PlanSlot;
 
 use crate::dispatch::{
-    ManualOverride, MeterReading, OverrideAction, OverrideSource, Overrides, PackReading, Progress,
+    ManualOverride, MeterReading, OverrideAction, OverrideSource, Overrides, PackReading,
 };
 use crate::safety::{Authority, Measured, Reason, SafetyDecision, SafetyLimits};
 
@@ -19,7 +19,6 @@ pub(crate) struct PackContext<'a> {
     pub(crate) fleet_power_w: f64,
     pub(crate) latches: &'a [CellLatch],
     pub(crate) overrides: &'a Overrides,
-    pub(crate) progress: Option<&'a dyn Progress>,
     /// The fleet-level grid check could not be evaluated; every pack holds, fail-closed.
     pub(crate) grid_hold: bool,
 }

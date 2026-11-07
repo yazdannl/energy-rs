@@ -43,7 +43,6 @@ impl Engine {
         let Ok(state) = self.lock() else {
             return EngineSnapshot::default();
         };
-        let mode = state.mode;
         let plan = state.plan.clone();
         let plan_id = state.plan_id;
         let overrides: Vec<ManualOverride> = state
@@ -55,6 +54,7 @@ impl Engine {
         let last_tick = state.watchdog.last_progress();
         drop(state);
 
+        let mode = self.gate.mode();
         let packs = self.pack_snapshots(view, now, &overrides);
         let plan_snapshot = plan.as_ref().map(|plan| plan_snapshot(plan, plan_id));
         let faults = faults::derive(now, plan.as_ref(), view, meter, self.runtime.as_deref());
@@ -82,8 +82,8 @@ impl Engine {
         let Ok(state) = self.lock() else {
             return;
         };
-        let mode = state.mode;
         drop(state);
+        let mode = self.gate.mode();
         let view = FleetView::default();
         let meter = MeterReading::default();
         publisher.publish(EngineSnapshot {
@@ -114,7 +114,7 @@ impl Engine {
         let Ok(state) = self.lock() else {
             return;
         };
-        snapshot.mode = state.mode;
+        snapshot.mode = self.gate.mode();
         snapshot.packs = patch_overrides(snapshot.packs, &state.overrides, now);
         drop(state);
         publisher.publish(snapshot);

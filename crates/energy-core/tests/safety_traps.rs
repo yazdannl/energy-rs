@@ -154,9 +154,34 @@ fn a_missing_grid_meter_and_base_fails_closed() {
     let mut limits = limits();
     limits.max_grid_import_w = 1000.0;
     limits.max_grid_export_w = 1000.0;
-    let decision = check(&request("a", 500.0, NOW), &pack, &limits, None);
+    let mut req = request("a", 500.0, NOW);
+    req.measured.energy_kwh = Some(2.0);
+    let decision = check(&req, &pack, &limits, None);
     assert!(decision.blocked);
     assert!(decision.has(Reason::GridTelemetryMissing));
+}
+
+#[test]
+fn an_unknown_state_blocks_a_charge_and_a_discharge() {
+    let pack = spec("a", 4.0, 1000.0);
+    // Neither stored energy nor SoC: the pack floor must not invent charge headroom.
+    for requested in [500.0, -500.0] {
+        let decision = check(&request("a", requested, NOW), &pack, &limits(), None);
+        assert!(decision.blocked, "{requested} W was allowed with no state");
+        assert_eq!(decision.allowed_w, 0.0);
+        assert!(decision.has(Reason::StateMissing), "{:?}", decision.reasons);
+        assert!(!decision.writes());
+    }
+}
+
+#[test]
+fn a_neutral_hold_is_allowed_with_an_unknown_state() {
+    let pack = spec("a", 4.0, 1000.0);
+    let decision = check(&request("a", 0.0, NOW), &pack, &limits(), None);
+    assert!(!decision.blocked);
+    assert_eq!(decision.allowed_w, 0.0);
+    assert!(decision.has(Reason::StateMissing));
+    assert!(!decision.writes());
 }
 
 #[test]

@@ -1,19 +1,21 @@
-//! The tick: read, allocate, clamp, command and report.
+//! The tick: read, allocate, plan every pack, validate the vector, then command.
 
-use energy_battery::protection::CellLatch;
-use energy_ledger::plan::PlanSlot;
-
-use crate::allocation::Allocation;
-use crate::dispatch::pack_context::{PackContext, measured, reason_for, requested_watts};
+use crate::dispatch::grid_telemetry;
+use crate::dispatch::pack_context::{measured, reason_for, requested_watts};
 use crate::dispatch::{
-    CommandSink, FaultGuard, HOLD_DEADBAND_W, PackReading, PackReport, SinkError, TickInput,
-    TickOutcome, fleet_grid, grid_telemetry, slot_power,
+    CommandSink, FaultGuard, HOLD_DEADBAND_W, PackReading, PackReport, Planned, Progress,
+    SinkError, TickFrame, TickInput, TickOutcome, advance, allocate, decide, fleet_clamp,
+    slot_power,
 };
-use crate::plan::PackState;
 use crate::safety::Reason;
-use crate::safety::{Authority, CommandRequest, SafetyDecision, SafetyLimits, check};
+use crate::safety::{CommandRequest, SafetyLimits};
 
 /// Turns a plan and a fleet read into per-pack commands.
+///
+/// A tick has three phases: *plan* (pure: the split, the ladder and the shadow answer for every
+/// pack), *validate* (pure: the summed vector against the fleet power caps and the site ceiling) and
+/// *send*. Nothing reaches a device before the whole vector has been validated, so a later pack can
+/// never invalidate the bound an earlier one was checked against.
 ///
 /// The dispatcher owns exactly one piece of mutable state: the per-pack fault backoff. Everything
 /// else (authority, the plan, the latches, the overrides) is handed in per tick, so the engine can
@@ -68,45 +70,58 @@ impl Dispatcher {
     /// Run one tick.
     pub async fn tick(&self, input: &TickInput<'_>, sink: &dyn CommandSink) -> TickOutcome {
         self.faults.prune(input.now);
+        let limits = self.limits_for(input);
+        let frame = Self::frame(input, &limits);
+        let mut plans: Vec<Planned> = input
+            .fleet
+            .packs
+            .iter()
+            .map(|reading| self.plan_pack(&frame, reading))
+            .collect();
+        let fleet_limit = fleet_clamp::apply(&mut plans, &frame);
+        let mut outcome = TickOutcome::new(input.now, input.mode);
+        outcome.stale_input = frame.stale;
+        outcome.plan_power_w = frame.plan_power_w;
+        outcome.target_w = frame.target_w;
+        outcome.grid_limit = frame.grid_limit;
+        outcome.fleet_clamp = fleet_limit;
+        for plan in plans {
+            outcome.packs.push(self.send_plan(&frame, plan, sink).await);
+        }
+        outcome
+    }
+
+    /// The per-tick values every pack shares: slot, split, grid base and ceilings.
+    fn frame<'a>(input: &'a TickInput<'a>, limits: &'a SafetyLimits) -> TickFrame<'a> {
         let slot = input.plan.and_then(|plan| plan.slot_at(input.now)).cloned();
         let stale = input.stale || slot.is_none();
-        let plan_power = if stale {
+        let plan_power_w = if stale {
             None
         } else {
             input.plan.and_then(|plan| slot_power(plan, input.now))
         };
-        let limits = self.limits_for(input);
-        let target = plan_power.unwrap_or(0.0);
-        let (allocation, grid_limit) = allocate(input, &limits, target, slot.as_ref());
+        let target_w = plan_power_w.unwrap_or(0.0);
+        let (allocation, grid_limit) = allocate(input, limits, target_w, slot.as_ref());
         let grid_hold = grid_limit == Some(Reason::GridTelemetryMissing);
-        let context = PackContext {
+        let grid_base = grid_telemetry::base(input, slot.as_ref(), limits);
+        TickFrame {
             now: input.now,
             mode: input.mode,
-            stale,
-            slot: slot.as_ref(),
-            limits: &limits,
             meter: input.meter,
             fleet_power_w: input.fleet.power_w(),
             latches: input.latches,
             overrides: input.overrides,
             progress: input.progress,
+            limits,
+            slot,
+            stale,
+            allocation,
+            grid_base,
+            grid_limit,
+            plan_power_w,
+            target_w,
             grid_hold,
-        };
-        let mut outcome = TickOutcome::new(input.now, input.mode);
-        outcome.stale_input = stale;
-        outcome.plan_power_w = plan_power;
-        outcome.target_w = target;
-        outcome.grid_limit = grid_limit;
-        for reading in &input.fleet.packs {
-            let allocated = if stale {
-                0.0
-            } else {
-                allocation.watts_for(reading.pack_id()).unwrap_or(0.0)
-            };
-            let report = self.pack_tick(&context, reading, allocated, sink).await;
-            outcome.packs.push(report);
         }
-        outcome
     }
 
     /// The operator's bounds with this tick's mode, fleet and sell floor folded in.
@@ -118,56 +133,90 @@ impl Dispatcher {
         limits
     }
 
-    /// One pack: request, ladder, send, report.
-    async fn pack_tick(
-        &self,
-        context: &PackContext<'_>,
-        reading: &PackReading,
-        allocated_w: f64,
-        sink: &dyn CommandSink,
-    ) -> PackReport {
+    /// One pack, decided: request, ladder, shadow answer. No I/O.
+    fn plan_pack(&self, frame: &TickFrame<'_>, reading: &PackReading) -> Planned {
+        let context = frame.context();
         let pack_id = reading.pack_id();
         let latch = context
             .latches
             .iter()
             .find(|latch| latch.pack_id == pack_id);
         let overridden = context.overrides.active(pack_id, context.now);
-        let requested = requested_watts(context, overridden, allocated_w);
+        let allocated = if context.stale {
+            0.0
+        } else {
+            frame.allocation.watts_for(pack_id).unwrap_or(0.0)
+        };
+        let requested = requested_watts(&context, overridden, allocated);
         let request = CommandRequest::new(
             pack_id,
             requested,
             context.slot.cloned(),
             context.now,
-            measured(context, reading),
+            measured(&context, reading),
         );
-        let decision = decide(context, &request, reading, latch, false);
-        let intended = decide(context, &request, reading, latch, true);
+        let decision = decide(&context, &request, reading, latch, false);
+        let intended = decide(&context, &request, reading, latch, true);
         let backoff = self.faults.blocking(pack_id, context.now);
-        let sent = if context.mode.may_write() && !backoff && reading.available {
-            self.send(context, pack_id, decision.allowed_w, sink).await
+        let vector = reading.available && !backoff;
+        Planned {
+            pack_id: pack_id.to_owned(),
+            ledger_id: reading.ledger_id,
+            measured_w: reading.power_w,
+            requested_w: requested,
+            command_w: if context.mode.may_write() {
+                decision.allowed_w
+            } else {
+                intended.allowed_w
+            },
+            reason: reason_for(&context, &decision, overridden, backoff),
+            intended_reason: intended.primary(),
+            note: crate::dispatch::pack_context::note_for(overridden),
+            vector,
+            send: vector && context.mode.may_write(),
+        }
+    }
+
+    /// One pack, sent: the validated command, its receipt and its report.
+    async fn send_plan(
+        &self,
+        frame: &TickFrame<'_>,
+        plan: Planned,
+        sink: &dyn CommandSink,
+    ) -> PackReport {
+        let sent = if plan.send {
+            self.send(
+                frame.progress,
+                frame.now,
+                &plan.pack_id,
+                plan.command_w,
+                sink,
+            )
+            .await
         } else {
             Sent::none()
         };
         PackReport {
-            pack_id: pack_id.to_owned(),
-            ledger_id: reading.ledger_id,
-            requested_w: requested,
-            intended_w: intended.allowed_w,
+            pack_id: plan.pack_id,
+            ledger_id: plan.ledger_id,
+            requested_w: plan.requested_w,
+            intended_w: plan.command_w,
             applied_w: sent.applied_w,
-            reason: reason_for(context, &decision, overridden, backoff),
-            intended_reason: intended.primary(),
+            reason: plan.reason,
+            intended_reason: plan.intended_reason,
             written: sent.written,
             verified: sent.verified,
             fail_safe: sent.fail_safe,
             error: sent.error,
-            note: crate::dispatch::pack_context::note_for(overridden),
+            note: plan.note,
         }
     }
 
     /// Write one pack, with the one-shot fail-safe hold when it fails.
     async fn send(
         &self,
-        context: &PackContext<'_>,
+        progress: Option<&dyn Progress>,
+        now: i64,
         pack_id: &str,
         watts: f64,
         sink: &dyn CommandSink,
@@ -177,9 +226,7 @@ impl Dispatcher {
         } else {
             sink.write(pack_id, watts).await
         };
-        if let Some(progress) = context.progress {
-            progress.mark(context.now);
-        }
+        advance(progress, now);
         match result {
             Ok(receipt) => Sent {
                 written: true,
@@ -188,19 +235,26 @@ impl Dispatcher {
                 fail_safe: false,
                 error: None,
             },
-            Err(error) => self.fail_safe(context, pack_id, &error, sink).await,
+            // The gate withdrew the command (mode change, emergency hold) before it was written.
+            // Nothing reached the device, so there is no fault to back off from either.
+            Err(error @ SinkError::Fenced { .. }) => Sent {
+                error: Some(error.to_string()),
+                ..Sent::none()
+            },
+            Err(error) => self.fail_safe(progress, now, pack_id, &error, sink).await,
         }
     }
 
     /// One real hold after a fault, then back off (survey §7 trap 10).
     async fn fail_safe(
         &self,
-        context: &PackContext<'_>,
+        progress: Option<&dyn Progress>,
+        now: i64,
         pack_id: &str,
         error: &SinkError,
         sink: &dyn CommandSink,
     ) -> Sent {
-        self.faults.arm(pack_id, context.now);
+        self.faults.arm(pack_id, now);
         let cause = error.to_string();
         if !self.failsafe_on_error {
             return Sent {
@@ -209,78 +263,20 @@ impl Dispatcher {
             };
         }
         match sink.hold(pack_id).await {
-            Ok(receipt) => Sent {
-                written: true,
-                verified: receipt.verified,
-                applied_w: receipt.applied_w,
-                fail_safe: true,
-                error: Some(format!("{cause}; fail-safe hold")),
-            },
+            Ok(receipt) => {
+                advance(progress, now);
+                Sent {
+                    written: true,
+                    verified: receipt.verified,
+                    applied_w: receipt.applied_w,
+                    fail_safe: true,
+                    error: Some(format!("{cause}; fail-safe hold")),
+                }
+            }
             Err(hold_error) => Sent {
                 error: Some(format!("{cause}; fail-safe hold failed: {hold_error}")),
                 ..Sent::none()
             },
         }
     }
-}
-
-/// Split the target and bound the sum by the site's grid ceilings.
-fn allocate(
-    input: &TickInput<'_>,
-    limits: &SafetyLimits,
-    target: f64,
-    slot: Option<&PlanSlot>,
-) -> (Allocation, Option<Reason>) {
-    let states: Vec<PackState> = input
-        .fleet
-        .packs
-        .iter()
-        .filter(|pack| pack.usable())
-        .filter_map(PackReading::state)
-        .collect();
-    let blocked = crate::dispatch::pack_context::blocked_discharge(input.latches);
-    let hours = limits.tick_seconds.max(1.0) / 3600.0;
-    let mut allocation =
-        Allocation::split(target, &states, limits.reserve_soc_pct, hours, &blocked);
-    let base = grid_telemetry::base(input, slot, limits);
-    let limit = fleet_grid::clamp(&mut allocation, base.as_ref(), limits);
-    (allocation, limit)
-}
-
-/// The ladder's answer, or the fail-closed hold when the fleet grid check could not run.
-fn decide(
-    context: &PackContext<'_>,
-    request: &CommandRequest,
-    reading: &PackReading,
-    latch: Option<&CellLatch>,
-    shadow: bool,
-) -> SafetyDecision {
-    if context.grid_hold {
-        return SafetyDecision::blocked(
-            request.requested_w,
-            0.0,
-            0.0,
-            vec![Reason::GridTelemetryMissing],
-        );
-    }
-    if shadow {
-        intended(context, request, reading, latch)
-    } else {
-        check(request, &reading.spec, context.limits, latch)
-    }
-}
-
-/// The ladder's answer for `auto`; in a writing-disabled mode, the shadow of it.
-fn intended(
-    context: &PackContext<'_>,
-    request: &CommandRequest,
-    reading: &PackReading,
-    latch: Option<&CellLatch>,
-) -> SafetyDecision {
-    if context.mode.may_write() {
-        return check(request, &reading.spec, context.limits, latch);
-    }
-    let mut shadow = context.limits.clone();
-    shadow.mode = Authority::Auto;
-    check(request, &reading.spec, &shadow, latch)
 }

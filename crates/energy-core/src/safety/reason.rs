@@ -59,6 +59,11 @@ pub enum Reason {
     BootHold,
     /// The shutdown/release hold written when control ends.
     Shutdown,
+    /// A tick failed (read, wiring or bookkeeping); the packs we own are held best-effort.
+    TickFailed,
+    /// An owned pack stopped reporting (missing or unavailable); it is held best-effort and stays
+    /// latched until the device confirms.
+    OrphanHold,
 }
 
 impl Reason {
@@ -90,6 +95,8 @@ impl Reason {
             Self::MaintenanceHold => "maintenance_hold",
             Self::BootHold => "boot_hold",
             Self::Shutdown => "shutdown_hold",
+            Self::TickFailed => "tick_failed",
+            Self::OrphanHold => "orphan_hold",
         }
     }
 }
