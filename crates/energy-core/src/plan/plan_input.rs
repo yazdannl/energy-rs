@@ -2,7 +2,7 @@
 
 use energy_price::{PriceBook, Settlement};
 
-use crate::plan::{PackState, Plan, PlanError, assemble};
+use crate::plan::{HORIZON_SLOTS, PackState, Plan, PlanError, assemble};
 
 /// A plan request under construction.
 ///
@@ -18,14 +18,22 @@ pub struct PlanInput {
     pub packs: Vec<PackState>,
     /// The validated price book; gaps are already refused at ingest.
     pub prices: PriceBook,
+    /// Slots this plan covers, at most [`HORIZON_SLOTS`].
+    ///
+    /// The horizon is shortened (never forward-filled) when tomorrow's prices are not published
+    /// yet, so the solver only ever sees prices that really exist. Everything else (forecasts)
+    /// must match this length exactly.
+    pub horizon_slots: usize,
     /// The settlement that prices feed-in and the sell floor.
     pub settlement: Settlement,
-    /// PV forecast, kW per slot, exactly 120 values.
+    /// PV forecast, kW per slot, exactly `horizon_slots` values.
     pub pv_kw: Vec<f64>,
-    /// Load forecast, kW per slot, exactly 120 values.
+    /// Load forecast, kW per slot, exactly `horizon_slots` values.
     pub load_kw: Vec<f64>,
     /// When the forecasts were captured, UTC epoch seconds.
     pub forecast_as_of: Option<i64>,
+    /// Why the forecast is degraded (a fallback was used), `None` when it is fresh.
+    pub forecast_note: Option<String>,
     /// Per-pack reserve floor, percent.
     pub reserve_soc_pct: f64,
     /// Wear cost per kWh delivered, EUR/kWh.
@@ -47,10 +55,12 @@ impl PlanInput {
             now,
             packs,
             prices,
+            horizon_slots: HORIZON_SLOTS,
             settlement,
             pv_kw: Vec::new(),
             load_kw: Vec::new(),
             forecast_as_of: None,
+            forecast_note: None,
             reserve_soc_pct: 0.0,
             wear_eur_per_kwh: 0.0,
             terminal_target_pct: None,
@@ -66,6 +76,20 @@ impl PlanInput {
         self.pv_kw = pv_kw;
         self.load_kw = load_kw;
         self.forecast_as_of = Some(as_of);
+        self
+    }
+
+    /// Shorten the horizon to `slots` quarter-hours (1..=[`HORIZON_SLOTS`]).
+    #[must_use]
+    pub fn with_horizon_slots(mut self, slots: usize) -> Self {
+        self.horizon_slots = slots;
+        self
+    }
+
+    /// Mark the forecasts as degraded, with the reason the fallback was used.
+    #[must_use]
+    pub fn with_forecast_note(mut self, note: impl Into<String>) -> Self {
+        self.forecast_note = Some(note.into());
         self
     }
 

@@ -70,6 +70,7 @@ pub fn plan(now: i64, power_kw: f64, soc_kwh: f64) -> Plan {
         objective_eur: 0.0,
         sell_floor: Some(0.05),
         summary: summary(),
+        degraded: None,
         slots,
     }
 }

@@ -89,9 +89,62 @@ pub enum PlanError {
         /// Highest usable energy.
         e_max_kwh: f64,
     },
+    /// The requested horizon is not a usable number of slots.
+    #[error("horizon of {slots} slots is outside 1..=120")]
+    HorizonSlots {
+        /// Slots requested.
+        slots: usize,
+    },
+    /// The price publication is too old to plan against.
+    #[error("price book is stale: {age_s}s old, limit {limit_s}s")]
+    StalePrices {
+        /// Age at plan time.
+        age_s: i64,
+        /// Allowed age.
+        limit_s: i64,
+    },
+    /// The price book does not cover enough of the horizon to plan anything.
+    #[error("prices cover {slots} slot(s); at least {minimum} are needed")]
+    PriceCoverage {
+        /// Slots the book covers from now.
+        slots: usize,
+        /// Minimum the planner needs.
+        minimum: usize,
+    },
+    /// A measured statistics series has a hole; it is never zero-filled.
+    #[error("statistics {series} have a gap at {t_start}")]
+    StatsGap {
+        /// Which series.
+        series: &'static str,
+        /// First missing slot start.
+        t_start: i64,
+    },
+    /// A statistics series the plan needs is not configured.
+    #[error("statistics {series} are not configured")]
+    StatsMissing {
+        /// Which series.
+        series: &'static str,
+    },
+    /// The energy dashboard is not configured, so there is no measured base at all.
+    #[error("the Home Assistant energy dashboard is not configured")]
+    SiteNotConfigured,
+    /// Neither a fresh forecast nor enough measured history exists to build one.
+    #[error("no forecast for {name}: {reason}")]
+    ForecastUnavailable {
+        /// Which series.
+        name: &'static str,
+        /// Why the fallback could not be built.
+        reason: String,
+    },
     /// The price layer refused a slot or the book.
     #[error(transparent)]
     Price(#[from] PriceError),
+    /// The upstream read (Home Assistant, statistics) failed.
+    #[error("plan supply read failed: {reason}")]
+    Supply {
+        /// Human-readable cause.
+        reason: String,
+    },
     /// The optimizer refused the scenario.
     #[error(transparent)]
     Solve(#[from] SolveError),

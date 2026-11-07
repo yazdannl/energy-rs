@@ -3,7 +3,9 @@
 use energy_battery::protection::CellLatch;
 use energy_ledger::plan::PlanSlot;
 
-use crate::dispatch::{ManualOverride, MeterReading, Overrides, PackReading, Progress};
+use crate::dispatch::{
+    ManualOverride, MeterReading, OverrideAction, OverrideSource, Overrides, PackReading, Progress,
+};
 use crate::safety::{Authority, Measured, Reason, SafetyDecision, SafetyLimits};
 
 /// The per-tick inputs every pack shares.
@@ -18,6 +20,8 @@ pub(crate) struct PackContext<'a> {
     pub(crate) latches: &'a [CellLatch],
     pub(crate) overrides: &'a Overrides,
     pub(crate) progress: Option<&'a dyn Progress>,
+    /// The fleet-level grid check could not be evaluated; every pack holds, fail-closed.
+    pub(crate) grid_hold: bool,
 }
 
 /// The measurements one command is judged against.
@@ -65,15 +69,37 @@ pub(crate) fn requested_watts(
 pub(crate) fn reason_for(
     context: &PackContext<'_>,
     decision: &SafetyDecision,
-    overridden: bool,
+    overridden: Option<&ManualOverride>,
     backoff: bool,
 ) -> Reason {
     if backoff {
         return Reason::FaultBackoff;
     }
+    let maintenance_hold = overridden.is_some_and(|entry| {
+        entry.source == OverrideSource::Maintenance && entry.action == OverrideAction::Hold
+    });
     match decision.primary() {
-        Reason::Ok if overridden => Reason::ManualOverride,
+        Reason::Ok if maintenance_hold => Reason::MaintenanceHold,
+        Reason::Ok if overridden.is_some() => Reason::ManualOverride,
         Reason::Ok if context.stale => Reason::StaleInput,
         other => other,
+    }
+}
+
+/// The human note that belongs in the dispatch log for this pack's override.
+pub(crate) fn note_for(overridden: Option<&ManualOverride>) -> Option<String> {
+    let entry = overridden?;
+    if entry.source != OverrideSource::Maintenance {
+        return None;
+    }
+    match entry.action {
+        OverrideAction::Hold | OverrideAction::Off => Some(
+            "full-charge maintenance: neutral hold at the top of the charge; the packs draw a \
+             small balance current while the BMS equalises, so the setpoint is 0 W, not an exit hold"
+                .to_owned(),
+        ),
+        OverrideAction::Charge { .. } => {
+            Some("full-charge maintenance: charging to the top balanced target".to_owned())
+        }
     }
 }

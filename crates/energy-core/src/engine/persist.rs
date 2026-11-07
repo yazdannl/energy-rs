@@ -42,11 +42,12 @@ impl Engine {
             EventLevel::Info,
             "plan.generated",
             format!(
-                "{} slots from {} (feasible {}, saved {:.3} EUR)",
+                "{} slots from {} (feasible {}, saved {:.3} EUR, forecast {})",
                 plan.slots.len(),
                 plan.horizon_start,
                 plan.feasible,
-                plan.summary.saved_eur
+                plan.summary.saved_eur,
+                plan.degraded.as_deref().unwrap_or("fresh")
             ),
         )?;
         Ok(())
@@ -95,6 +96,9 @@ impl Engine {
             report.reason.as_str(),
             mode.slug(),
         );
+        if let Some(note) = &report.note {
+            entry = entry.with_note(note.clone());
+        }
         if report.verified {
             entry = entry.verified(report.applied_w);
         } else if let Some(error) = &report.error {

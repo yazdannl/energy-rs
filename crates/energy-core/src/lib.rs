@@ -27,6 +27,7 @@ pub mod dispatch;
 pub mod engine;
 pub mod mode;
 pub mod plan;
+pub mod plan_source;
 pub mod replan;
 pub mod safety;
 pub mod stream;

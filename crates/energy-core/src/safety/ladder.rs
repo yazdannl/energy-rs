@@ -157,15 +157,17 @@ impl<'a> Ladder<'a> {
             .request
             .plan_slot
             .as_ref()
-            .map(|slot| slot.load_kw - slot.pv_kw);
+            .map(|slot| slot.load_kw - slot.pv_kw)
+            .filter(|value| value.is_finite());
         let measured = self
             .request
             .measured
             .grid_w
-            .map(|watts| watts / 1000.0 - self.request.measured.fleet_power_w / 1000.0);
+            .map(|watts| watts / 1000.0 - self.request.measured.fleet_power_w / 1000.0)
+            .filter(|value| value.is_finite());
         let forecast = plan_base.or(
             match (self.request.measured.load_kw, self.request.measured.pv_kw) {
-                (Some(load), Some(pv)) => Some(load - pv),
+                (Some(load), Some(pv)) if load.is_finite() && pv.is_finite() => Some(load - pv),
                 _ => None,
             },
         );

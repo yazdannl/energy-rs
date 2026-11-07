@@ -160,7 +160,8 @@ fn a_dispatch_entry_round_trips_verified_and_failed() {
     let verified =
         DispatchEntry::new(100, Some(pack), 800.0, 800.0, "charge", "auto").verified(795.0);
     let failed = DispatchEntry::new(200, Some(pack), -500.0, 0.0, "discharge", "auto")
-        .failed("serial mismatch");
+        .failed("serial mismatch")
+        .with_note("balance current during the maintenance hold");
     let verified_id = dispatch.insert(&verified).unwrap();
     let failed_id = dispatch.insert(&failed).unwrap();
     assert!(verified_id < failed_id);
@@ -171,6 +172,10 @@ fn a_dispatch_entry_round_trips_verified_and_failed() {
     assert_eq!(rows[0].error, None);
     assert!(!rows[1].verified);
     assert_eq!(rows[1].error.as_deref(), Some("serial mismatch"));
+    assert_eq!(
+        rows[1].note.as_deref(),
+        Some("balance current during the maintenance hold")
+    );
 }
 
 #[test]

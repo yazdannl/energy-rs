@@ -51,6 +51,32 @@ Done in `feat/api` (nothing pushed), contract in [API.md](API.md):
   3 SSE (first event, heartbeat, plan event), plus the core snapshot unit tests. `scripts/api_smoke.sh`
   passes against a locally started binary (all routes 200, plan 404 before the first plan, SSE state
   event, redaction).
+## P8c notes (plan source, packs, grid)
+
+Done in `feat/plan-source` (energy-core only; `energy-server` wiring is still open). Gates green.
+
+- **Plan source.** `energy-core::plan_source` fills the engine's `PlanSource` seam: a `PlanSupply`
+  read (real adapter `HaPlanSupply` over `energy/get_prefs`, 15-minute `change` statistics and
+  `energy-price` publications), a validated `MeasuredHistory`, and `LivePlanSource` assembly into
+  `PlanInput` + `energy-opt`. HA reads: grid import/export, solar energy and every configured
+  battery charge/discharge statistic; load is the dashboard balance, never a device sum.
+- **Edge cases.** Missing tomorrow prices shorten the horizon to the contiguous published slots
+  (`PlanInput::horizon_slots`, 1..=120, minimum 4) -- never forward-filled; a price publication
+  older than `price_max_age_s` (6 h) is `StalePrices`; a statistics hole is `StatsGap` (typed, never
+  zero); no/stale/short forecast falls back to a same-clock-slot EWMA over 48 h of history and sets
+  `Plan.degraded`; the sell floor stays the horizon-minimum `marginal_export`.
+- **Packs.** `dispatch::PackCatalog` registers one ledger pack per zenSDK device (identity = device
+  SN, capacity from its own `packData`, `AB2000` = 1.92 kWh) and reads that pack's own learning
+  profile for capacity/eta; `BatteryFleet` now registers through it. The fleet aggregate remains
+  only the grid/plan scenario. No summed hub capacity anywhere.
+- **Grid.** The fleet-level check now runs on the measured meter corrected back to battery-idle
+  (`grid_w - fleet_power_w`), conservative against the forecast; a stale fleet read or missing base
+  with a site cap configured fails closed (`grid_telemetry_missing`) and holds every pack. The
+  per-pack ladder ignores non-finite bases instead of treating them as unbounded.
+- **Maintenance.** The neutral hold stays (no `acMode`), now logged as `maintenance_hold` with a
+  balance-current note in `dispatch_log.note` (ledger migration v3, `SCHEMA_VERSION` 3).
+- **Cleanup.** `energy-opt` bench asserts the < 50 ms budget only in release; journal events are
+  trimmed to the newest 5 000 (`RetentionPolicy.events_kept`, current local day untouched).
 
 ## P10 notes (packaging)
 

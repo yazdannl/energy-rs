@@ -3,9 +3,19 @@
 use crate::plan::{HORIZON_SLOTS, PlanError, PlanInput};
 
 pub(crate) fn validate(input: &PlanInput) -> Result<(), PlanError> {
+    check_horizon(input)?;
     check_packs(input)?;
     check_forecasts(input)?;
     check_target(input)
+}
+
+fn check_horizon(input: &PlanInput) -> Result<(), PlanError> {
+    if input.horizon_slots == 0 || input.horizon_slots > HORIZON_SLOTS {
+        return Err(PlanError::HorizonSlots {
+            slots: input.horizon_slots,
+        });
+    }
+    Ok(())
 }
 
 fn check_packs(input: &PlanInput) -> Result<(), PlanError> {
@@ -44,15 +54,15 @@ fn check_forecasts(input: &PlanInput) -> Result<(), PlanError> {
             limit_s: limit,
         });
     }
-    check_series("pv_kw", &input.pv_kw)?;
-    check_series("load_kw", &input.load_kw)
+    check_series("pv_kw", &input.pv_kw, input.horizon_slots)?;
+    check_series("load_kw", &input.load_kw, input.horizon_slots)
 }
 
-fn check_series(name: &'static str, series: &[f64]) -> Result<(), PlanError> {
-    if series.len() != HORIZON_SLOTS {
+fn check_series(name: &'static str, series: &[f64], expected: usize) -> Result<(), PlanError> {
+    if series.len() != expected {
         return Err(PlanError::ForecastLength {
             name,
-            expected: HORIZON_SLOTS,
+            expected,
             got: series.len(),
         });
     }

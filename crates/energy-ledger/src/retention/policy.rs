@@ -1,7 +1,8 @@
 //! How much history the ledger keeps.
 //!
 //! Defaults are the PLAN.md retention: 30 days of 1-minute rows, 1 year of 5-minute rows, the
-//! newest 200 plans and 20 000 dispatch rows. Sessions, events and daily savings have no age limit.
+//! newest 200 plans, 20 000 dispatch rows and 5 000 journal events. Sessions and daily savings have
+//! no age limit.
 
 /// Retention limits for the trim job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,6 +11,8 @@ pub struct RetentionPolicy {
     pub five_minute_days: i64,
     pub plans_kept: i64,
     pub dispatch_kept: i64,
+    /// Journal rows kept beyond the current local day.
+    pub events_kept: i64,
 }
 
 impl Default for RetentionPolicy {
@@ -19,6 +22,7 @@ impl Default for RetentionPolicy {
             five_minute_days: 365,
             plans_kept: 200,
             dispatch_kept: 20_000,
+            events_kept: 5_000,
         }
     }
 }
@@ -35,6 +39,14 @@ impl RetentionPolicy {
             five_minute_days,
             plans_kept,
             dispatch_kept,
+            events_kept: 5_000,
         }
+    }
+
+    /// Keep the newest `events_kept` journal rows beyond the current local day.
+    #[must_use]
+    pub fn with_events_kept(mut self, events_kept: i64) -> Self {
+        self.events_kept = events_kept;
+        self
     }
 }

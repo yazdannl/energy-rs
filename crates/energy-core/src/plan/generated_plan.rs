@@ -25,6 +25,9 @@ pub struct Plan {
     pub sell_floor: Option<f64>,
     /// Money and energy totals.
     pub summary: PlanSummary,
+    /// Why the forecasts were degraded (an EWMA/fallback series was planned with), `None` when the
+    /// provider forecasts were fresh.
+    pub degraded: Option<String>,
     /// The 15-minute timeline.
     pub slots: Vec<PlanSlot>,
 }

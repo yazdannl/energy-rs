@@ -28,7 +28,8 @@
 //! # Retention
 //!
 //! 1-minute rows for 30 days, 5-minute rows for 1 year, savings daily rows forever, plans trimmed
-//! to the newest 200 and dispatch rows to the newest 20 000. Sessions are kept: capacity learning
+//! to the newest 200, dispatch rows to the newest 20 000 and journal events to the newest 5 000.
+//! Sessions are kept: capacity learning
 //! weights the last sessions most but needs a long tail to stay honest. A trim never deletes a row
 //! whose timestamp falls inside the current local day, and the 5-minute rollup never replaces a
 //! populated bucket with an empty one recomputed after 1-minute retention.
