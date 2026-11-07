@@ -7,6 +7,8 @@
     clippy::panic,
     clippy::float_cmp,
     clippy::items_after_statements,
+    // Fixture indices are single- or double-digit (hour offsets), never near i64::MAX.
+    clippy::cast_possible_wrap,
     // Test fixtures build a JSON literal at the call site and hand it over; copying it to satisfy
     // pedantic's by-reference rule would obscure the test.
     clippy::needless_pass_by_value,
@@ -19,6 +21,10 @@ use std::sync::Mutex;
 use energy_battery::{BatteryError, BoxFuture, DeviceIo, Report, WriteAck, WriteRequest};
 use serde_json::{Value, json};
 use tokio::time::Instant;
+
+pub mod latch_store;
+pub mod learning;
+pub mod learning_store;
 
 /// Device serial used by the fixtures.
 pub const SN: &str = "EOC1NLN9N4XXXXXX";

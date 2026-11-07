@@ -92,13 +92,15 @@ control/     Command, ControlLimits + clamp, Pacer, echo verify, wedge/restart w
 discovery/   mDNS browse, hostname pattern, DiscoveryRegistry (merge + dedupe)
 fleet/       FleetClient (staggered polls, cache, weighted SoC, fan-out), snapshots/outcomes
 fake/        in-process device on 127.0.0.1:0: echo, dropped writes <1.3 s, wedge, 401/400/413
-learning/    (P6) capacity and round-trip efficiency from sessions
-protection/  (P6) latching cell guard, full-charge maintenance
+learning/    capacity from AC per SoC point + round trip from closed cycles, recency-weighted,
+             MAD-trimmed, banded to ±25 % of the label and capped at the reported capacity
+protection/  latching low-cell guard (cutoff/resume/stale, persisted), weekly + manual full charge
+             in local Europe/Amsterdam time, DST-safe
 ```
 
 ## Tests
 
-`cargo test -p energy-battery` — 72 tests, no hardware:
+`cargo test -p energy-battery` — 122 tests, no hardware:
 
 * report parsing (both envelopes, every conversion, unknown keys, capacity labels, pack sums);
 * exact JSON payloads for charge/discharge/hold/trim, the 512-byte cap and ack validation;
@@ -107,6 +109,11 @@ protection/  (P6) latching cell guard, full-charge maintenance
   hold-without-`acMode`, wedge, restart and its back-off;
 * discovery hostname parsing and registry merge/dedupe;
 * fleet aggregation, staggered polling, dead-device partial failure and fan-out outcomes;
+* learning: exact capacity/round-trip recovery from synthetic sessions, recency dominance, MAD
+  rejection, band and reported-capacity clamps, refusals, kept-previous on thin data, profile
+  persistence;
+* protection: the full latch matrix (cutoff/resume/stale/missing/reboot), the emergency power
+  minimum, full-charge hold/release, idempotency, run expiry and both DST transitions;
 * the fake device end to end over real HTTP: charge, discharge, hold, dropped writes, wedge, and the
   400/401/413 mappings.
 
