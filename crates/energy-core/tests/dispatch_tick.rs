@@ -208,3 +208,108 @@ async fn a_stale_plan_holds_instead_of_repeating_the_last_setpoint() {
     assert_eq!(report.reason, Reason::StaleInput);
     assert_eq!(report.applied_w, 0.0);
 }
+
+/// The measured meter is corrected back to the battery-idle base before the grid bound.
+#[tokio::test]
+async fn the_fleet_grid_check_uses_the_corrected_measured_base() {
+    let mut plan = plan(NOW, 0.8, 1.92);
+    for slot in &mut plan.slots {
+        slot.load_kw = 0.0;
+        slot.pv_kw = 0.0;
+    }
+    let mut fixture = Fixture::with_plan(plan, overrides_none());
+    let mut first = pack("SN-A", 50.0);
+    first.power_w = 250.0;
+    let mut second = pack("SN-B", 50.0);
+    second.power_w = 250.0;
+    fixture.fleet = FleetView::new(vec![first, second]);
+    // 1200 W import while the packs already charge at 500 W -> idle base 700 W, 300 W headroom.
+    fixture.meter = MeterReading::grid(1200.0);
+    let sink = FakeSink::new();
+    let dispatcher = dispatcher(SafetyLimits {
+        max_grid_import_w: 1000.0,
+        ..SafetyLimits::default()
+    });
+
+    let outcome = fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    assert_eq!(outcome.grid_limit, Some(Reason::GridImportLimit));
+    let total: f64 = outcome.packs.iter().map(|pack| pack.intended_w).sum();
+    assert!((total - 300.0).abs() < 5.0, "fleet total {total}");
+}
+
+/// With a site cap configured and no usable telemetry, the fleet check holds everything.
+#[tokio::test]
+async fn missing_grid_telemetry_fails_the_fleet_check_closed() {
+    let mut plan = plan(NOW, 0.8, 1.92);
+    for slot in &mut plan.slots {
+        slot.load_kw = f64::NAN;
+        slot.pv_kw = f64::NAN;
+    }
+    let fixture = Fixture::with_plan(plan, overrides_none());
+    let sink = FakeSink::new();
+    let dispatcher = dispatcher(SafetyLimits {
+        max_grid_import_w: 1000.0,
+        ..SafetyLimits::default()
+    });
+
+    let outcome = fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    assert_eq!(outcome.grid_limit, Some(Reason::GridTelemetryMissing));
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.intended_w, 0.0);
+    assert_eq!(report.reason, Reason::GridTelemetryMissing);
+    assert!(sink.writes().is_empty(), "nothing may be written");
+}
+
+/// A stale fleet reading makes the corrected base unusable, so the site check fails closed.
+#[tokio::test]
+async fn a_stale_fleet_reading_fails_the_fleet_check_closed() {
+    let mut plan = plan(NOW, 0.8, 1.92);
+    for slot in &mut plan.slots {
+        slot.load_kw = 0.0;
+        slot.pv_kw = 0.0;
+    }
+    let mut fixture = Fixture::with_plan(plan, overrides_none());
+    let mut stale = pack("SN-A", 50.0);
+    stale.stale = true;
+    fixture.fleet = FleetView::new(vec![stale, pack("SN-B", 50.0)]);
+    fixture.meter = MeterReading::grid(1200.0);
+    let sink = FakeSink::new();
+    let dispatcher = dispatcher(SafetyLimits {
+        max_grid_import_w: 1000.0,
+        ..SafetyLimits::default()
+    });
+
+    let outcome = fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    assert_eq!(outcome.grid_limit, Some(Reason::GridTelemetryMissing));
+    assert!(sink.writes().is_empty(), "nothing may be written");
+}
+
+/// A maintenance hold keeps the neutral setpoint and says why in the log.
+#[tokio::test]
+async fn a_maintenance_hold_carries_the_balance_current_note() {
+    let plan = plan(NOW, 0.8, 0.96);
+    let overrides = Overrides::new(vec![ManualOverride::maintenance(
+        "SN-A",
+        OverrideAction::Hold,
+        NOW + 60,
+    )]);
+    let fixture = Fixture::with_plan(plan, overrides);
+    let sink = FakeSink::new();
+    let dispatcher = dispatcher(SafetyLimits::default());
+
+    let outcome = fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.reason, Reason::MaintenanceHold);
+    assert_eq!(report.requested_w, 0.0);
+    assert_eq!(sink.holds(), 1, "a neutral hold, not an acMode write");
+    let note = report.note.as_deref().expect("note");
+    assert!(note.contains("balance current"), "note {note}");
+}

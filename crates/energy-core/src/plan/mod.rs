@@ -1,6 +1,7 @@
 //! Plan generation: assemble the fleet scenario, solve it and keep the refusal typed.
 //!
-//! One plan is a 120-slot, 15-minute timeline. The builder refuses a scenario with missing price
+//! One plan is a 15-minute timeline of at most 120 slots (shorter when tomorrow's prices are not
+//! published yet; it is never forward-filled). The builder refuses a scenario with missing price
 //! coverage or stale forecasts; it never zero-fills a gap (`PLAN.md` §3, §6, survey §7 trap 4).
 //! The solver stays [`energy_opt`]; the money stays [`energy_price::Settlement`].
 

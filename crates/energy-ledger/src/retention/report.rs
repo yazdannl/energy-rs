@@ -9,6 +9,7 @@ pub struct RetentionReport {
     pub plans: usize,
     pub plan_slots: usize,
     pub dispatch_log: usize,
+    pub events: usize,
 }
 
 impl RetentionReport {
@@ -18,5 +19,6 @@ impl RetentionReport {
             + self.plans
             + self.plan_slots
             + self.dispatch_log
+            + self.events
     }
 }

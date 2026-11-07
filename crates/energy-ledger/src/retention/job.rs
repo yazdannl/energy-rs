@@ -1,5 +1,5 @@
-//! The trim job: age-based for measurements, count-based for plans and dispatch, never touching
-//! the current local day.
+//! The trim job: age-based for measurements, count-based for plans, dispatch and the journal, never
+//! touching the current local day.
 //!
 //! Everything runs in one transaction, so a reader never sees plans deleted before their slots.
 //! Deletion cut-offs are `now - days` clamped to before the start of the current `Europe/Amsterdam`
@@ -41,6 +41,13 @@ pub(crate) fn run(
          )",
         params![day_start, policy.dispatch_kept.max(0)],
     )?;
+    let events = tx.execute(
+        "DELETE FROM events
+         WHERE ts < ?1 AND id NOT IN (
+             SELECT id FROM events ORDER BY ts DESC, id DESC LIMIT ?2
+         )",
+        params![day_start, policy.events_kept.max(0)],
+    )?;
     tx.commit()?;
     Ok(RetentionReport {
         measurements_1m,
@@ -48,6 +55,7 @@ pub(crate) fn run(
         plans,
         plan_slots,
         dispatch_log,
+        events,
     })
 }
 

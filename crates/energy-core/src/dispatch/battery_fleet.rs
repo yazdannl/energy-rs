@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use energy_battery::fleet::DeviceSnapshot;
 use energy_battery::fleet::FleetClient;
-use energy_battery::learning::DEFAULT_ROUND_TRIP;
 use energy_battery::report::Report;
 use energy_battery::transport::DeviceIo;
 use tokio::time::Instant;
 
+use crate::dispatch::pack_catalog::PackCatalog;
 use crate::dispatch::{BoxFuture, DeviceFleet, FleetError, FleetView, PackReading};
-use crate::plan::PackSpec;
 
 /// AC ceiling assumed when a device reports none, W.
 const DEFAULT_MAX_W: f64 = 800.0;
@@ -20,21 +19,30 @@ const DEFAULT_MIN_SOC_PCT: f64 = 10.0;
 /// A [`DeviceFleet`] over the fleet client.
 ///
 /// Every reading is derived from the device's own report: the capacity label, the live charge and
-/// discharge maxima and the reported SoC. Nothing is guessed from a model table. The device sign
-/// convention (positive discharging) is flipped once here, so the rest of the engine uses one
-/// convention: positive watts charge the pack.
+/// discharge maxima and the reported SoC, refined only by that pack's own learning profile (never a
+/// model table and never the fleet's summed capacity). The device sign convention (positive
+/// discharging) is flipped once here, so the rest of the engine uses one convention: positive watts
+/// charge the pack.
 pub struct BatteryFleet<T: DeviceIo> {
     client: Arc<FleetClient<T>>,
+    catalog: Arc<PackCatalog>,
     stale_after_s: f64,
 }
 
 impl<T: DeviceIo> BatteryFleet<T> {
-    /// A port over the fleet client, with the reading-age bound that marks a pack stale.
-    pub fn new(client: Arc<FleetClient<T>>, stale_after_s: f64) -> Self {
+    /// A port over the fleet client, with the catalog that registers one pack per device and the
+    /// reading-age bound that marks a pack stale.
+    pub fn new(client: Arc<FleetClient<T>>, catalog: Arc<PackCatalog>, stale_after_s: f64) -> Self {
         Self {
             client,
+            catalog,
             stale_after_s,
         }
+    }
+
+    /// The per-device catalog (SN ↔ ledger id and per-pack learning).
+    pub fn catalog(&self) -> &Arc<PackCatalog> {
+        &self.catalog
     }
 
     /// One device as a pack reading, as seen at `now`.
@@ -44,8 +52,8 @@ impl<T: DeviceIo> BatteryFleet<T> {
             .map_or(f64::INFINITY, |age| age.as_secs_f64());
         let observed_at = now.saturating_sub(age_of(age_s));
         match device.report.as_ref() {
-            Some(report) => self.mapped(device, report, observed_at, age_s),
-            None => missing(device, now),
+            Some(report) => self.mapped(device, report, observed_at, age_s, now),
+            None => self.missing(device, now),
         }
     }
 
@@ -55,21 +63,25 @@ impl<T: DeviceIo> BatteryFleet<T> {
         report: &Report,
         observed_at: i64,
         age_s: f64,
+        now: i64,
     ) -> PackReading {
-        let capacity_kwh = report.total_capacity_kwh().unwrap_or(0.0);
+        // The device's own `packData` labels, never a fleet/hub sum: one device is one ledger pack.
+        let label_capacity_kwh = report.total_capacity_kwh().unwrap_or(0.0);
+        let charge_w = limit(report.properties.charge_max_w);
+        let discharge_w = limit(report.properties.inverse_max_w);
+        let ledger_id =
+            self.catalog
+                .register(&device.sn, label_capacity_kwh, charge_w, discharge_w, now);
+        let mut spec = self
+            .catalog
+            .spec(&device.sn, label_capacity_kwh, charge_w, discharge_w);
+        spec.min_soc_pct = min_soc(report);
+        spec.max_soc_pct = 100.0;
+        let capacity_kwh = spec.capacity_kwh;
         let soc_pct = report.soc_pct();
         PackReading {
-            ledger_id: None,
-            spec: PackSpec {
-                pack_id: device.sn.clone(),
-                capacity_kwh,
-                min_soc_pct: min_soc(report),
-                max_soc_pct: 100.0,
-                max_charge_w: limit(report.properties.charge_max_w),
-                max_discharge_w: limit(report.properties.inverse_max_w),
-                eta_charge: DEFAULT_ROUND_TRIP.sqrt(),
-                eta_discharge: DEFAULT_ROUND_TRIP.sqrt(),
-            },
+            ledger_id,
+            spec,
             soc_pct: Some(soc_pct),
             energy_kwh: (capacity_kwh > 0.0).then(|| capacity_kwh * soc_pct / 100.0),
             power_w: -(report.ac_power_w() as f64),
@@ -79,29 +91,23 @@ impl<T: DeviceIo> BatteryFleet<T> {
             stale: age_s > self.stale_after_s,
         }
     }
-}
 
-/// A device that has never answered: unusable, but still listed so it is logged and held.
-fn missing(device: &DeviceSnapshot, now: i64) -> PackReading {
-    PackReading {
-        ledger_id: None,
-        spec: PackSpec {
-            pack_id: device.sn.clone(),
-            capacity_kwh: 0.0,
-            min_soc_pct: DEFAULT_MIN_SOC_PCT,
-            max_soc_pct: 100.0,
-            max_charge_w: DEFAULT_MAX_W,
-            max_discharge_w: DEFAULT_MAX_W,
-            eta_charge: DEFAULT_ROUND_TRIP.sqrt(),
-            eta_discharge: DEFAULT_ROUND_TRIP.sqrt(),
-        },
-        soc_pct: None,
-        energy_kwh: None,
-        power_w: 0.0,
-        min_cell_v: None,
-        observed_at: now,
-        available: false,
-        stale: true,
+    /// A device that has never answered: unusable, but still listed so it is logged and held.
+    fn missing(&self, device: &DeviceSnapshot, now: i64) -> PackReading {
+        let spec = self
+            .catalog
+            .spec(&device.sn, 0.0, DEFAULT_MAX_W, DEFAULT_MAX_W);
+        PackReading {
+            ledger_id: self.catalog.ledger_id(&device.sn),
+            spec,
+            soc_pct: None,
+            energy_kwh: None,
+            power_w: 0.0,
+            min_cell_v: None,
+            observed_at: now,
+            available: false,
+            stale: true,
+        }
     }
 }
 

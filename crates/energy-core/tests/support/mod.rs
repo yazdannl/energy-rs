@@ -106,6 +106,7 @@ pub fn plan(generated_at: i64, slot_soc_kwh: f64) -> Plan {
         objective_eur: 0.0,
         sell_floor: None,
         summary: summary(),
+        degraded: None,
         slots: vec![slot],
     }
 }

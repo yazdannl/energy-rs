@@ -1,4 +1,10 @@
 //! The weekly full-charge maintenance window, turned into expiring overrides.
+//!
+//! The hold is deliberately a **neutral** hold (both limits 0, never `acMode`): at the top of the
+//! charge the BMS still draws a small balance current to equalise the cells, and switching the
+//! inverter off (`acMode`) would abandon that. The dispatch log therefore records
+//! `maintenance_hold` plus a balance-current note, so a 0 W setpoint during the window is
+//! explained instead of looking like a failed charge.
 
 use energy_battery::protection::full_charge::{
     FullChargeAction, FullChargeScheduler, TOLERANCE_PCT,

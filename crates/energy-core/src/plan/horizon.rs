@@ -2,7 +2,7 @@
 
 use energy_price::Slot;
 
-use crate::plan::{HORIZON_SLOTS, PlanError, PlanInput, SLOT_SECONDS};
+use crate::plan::{PlanError, PlanInput, SLOT_SECONDS};
 
 /// The horizon's price slots, starting with the one containing `now`.
 pub(crate) fn slots(input: &PlanInput) -> Result<Vec<Slot>, PlanError> {
@@ -18,9 +18,9 @@ pub(crate) fn slots(input: &PlanInput) -> Result<Vec<Slot>, PlanError> {
         });
     }
     let start = first.t_start;
-    let mut slots = Vec::with_capacity(HORIZON_SLOTS);
-    for index in 0..HORIZON_SLOTS {
-        // HORIZON_SLOTS is 120, far inside i64.
+    let mut slots = Vec::with_capacity(input.horizon_slots);
+    for index in 0..input.horizon_slots {
+        // At most 120 slots, far inside i64.
         #[allow(clippy::cast_possible_wrap)]
         let offset = index as i64;
         let t_start = start + offset * SLOT_SECONDS;

@@ -7,7 +7,8 @@ use rusqlite::{Connection, params};
 use crate::dispatch::DispatchEntry;
 use crate::error::LedgerError;
 
-const COLUMNS: &str = "id, ts, pack_id, requested_w, applied_w, reason, mode, verified, error";
+const COLUMNS: &str =
+    "id, ts, pack_id, requested_w, applied_w, reason, mode, verified, error, note";
 
 /// Repository for the `dispatch_log` table.
 pub struct DispatchLog<'a> {
@@ -23,8 +24,8 @@ impl<'a> DispatchLog<'a> {
     pub fn insert(&self, entry: &DispatchEntry) -> Result<i64, LedgerError> {
         self.conn.execute(
             "INSERT INTO dispatch_log
-                (ts, pack_id, requested_w, applied_w, reason, mode, verified, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                (ts, pack_id, requested_w, applied_w, reason, mode, verified, error, note)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 entry.ts,
                 entry.pack_id,
@@ -34,6 +35,7 @@ impl<'a> DispatchLog<'a> {
                 entry.mode,
                 entry.verified,
                 entry.error,
+                entry.note,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())

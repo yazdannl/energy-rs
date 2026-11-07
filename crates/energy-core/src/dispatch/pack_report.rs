@@ -32,4 +32,7 @@ pub struct PackReport {
     pub fail_safe: bool,
     /// The transport/echo error, when there was one.
     pub error: Option<String>,
+    /// Why this row is what it is, in words the dispatch log can show (maintenance, balance
+    /// current); `None` when the reason slug is the whole story.
+    pub note: Option<String>,
 }

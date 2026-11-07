@@ -19,6 +19,11 @@ pub(crate) fn resolve(
     known: &mut BTreeMap<String, i64>,
 ) -> Result<(), LedgerError> {
     for reading in &mut view.packs {
+        // The real fleet adapter registers one pack per device itself; this only covers ports
+        // (tests, alternate fleets) that hand in readings without a ledger id.
+        if reading.ledger_id.is_some() {
+            continue;
+        }
         if let Some(id) = known.get(reading.pack_id()) {
             reading.ledger_id = Some(*id);
             continue;

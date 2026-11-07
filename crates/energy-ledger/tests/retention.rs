@@ -213,3 +213,37 @@ fn sessions_and_daily_savings_are_kept_forever() {
         1.0
     );
 }
+
+#[test]
+fn events_are_trimmed_to_the_newest_kept_rows_but_today_is_never_touched() {
+    let db = TempDatabase::new();
+    let ledger = db.ledger_with(RetentionPolicy::default().with_events_kept(5));
+    {
+        let journal = ledger.events().unwrap();
+        for index in 0..5 {
+            journal
+                .insert(&energy_ledger::Event::new(
+                    NOW - DAY - index,
+                    energy_ledger::EventLevel::Info,
+                    "test.old",
+                    "old",
+                ))
+                .unwrap();
+        }
+        for index in 0..3 {
+            journal
+                .insert(&energy_ledger::Event::new(
+                    NOW - index,
+                    energy_ledger::EventLevel::Info,
+                    "test.today",
+                    "today",
+                ))
+                .unwrap();
+        }
+    }
+    let report = ledger.run_retention(NOW).unwrap();
+    assert_eq!(report.events, 3, "eight rows, the newest five kept");
+    let remaining = ledger.events().unwrap().range(0, NOW + 1).unwrap();
+    assert_eq!(remaining.len(), 5, "two old plus every today row");
+    assert!(remaining.iter().any(|event| event.kind == "test.today"));
+}

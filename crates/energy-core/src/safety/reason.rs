@@ -50,8 +50,11 @@ pub enum Reason {
     FaultBackoff,
     /// The watchdog saw no loop progress for three ticks and held the pack.
     WatchdogHold,
-    /// An operator override (or a full-charge maintenance window) set this setpoint.
+    /// An operator override set this setpoint.
     ManualOverride,
+    /// The full-charge maintenance window holds this pack at neutral; the log carries the
+    /// balance-current note.
+    MaintenanceHold,
     /// Boot neutralisation of a setpoint a previous run left behind.
     BootHold,
     /// The shutdown/release hold written when control ends.
@@ -84,6 +87,7 @@ impl Reason {
             Self::FaultBackoff => "fault_backoff",
             Self::WatchdogHold => "watchdog_hold",
             Self::ManualOverride => "manual_override",
+            Self::MaintenanceHold => "maintenance_hold",
             Self::BootHold => "boot_hold",
             Self::Shutdown => "shutdown_hold",
         }

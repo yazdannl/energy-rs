@@ -7,8 +7,9 @@ use crate::replan::Changes;
 
 /// The plan builder's seam.
 ///
-/// The real implementation assembles prices, forecasts and measurements and calls
-/// [`PlanInput::plan`](crate::plan::PlanInput::plan); tests return a fixed plan or a typed refusal.
+/// The real implementation is [`LivePlanSource`](crate::plan_source::LivePlanSource), assembled
+/// from `energy-ha` statistics and `energy-price` publications; tests return a fixed plan or a
+/// typed refusal.
 /// `changes` reports upstream refreshes so the replan trigger can invalidate a stored plan without
 /// re-reading every input on every tick.
 pub trait PlanSource: Send + Sync {

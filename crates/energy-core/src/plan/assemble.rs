@@ -7,9 +7,7 @@ use crate::plan::aggregate;
 use crate::plan::config;
 use crate::plan::summary;
 use crate::plan::timeline;
-use crate::plan::{
-    HORIZON_SLOTS, Plan, PlanError, PlanInput, SLOT_MINUTES, SLOT_SECONDS, checks, horizon,
-};
+use crate::plan::{Plan, PlanError, PlanInput, SLOT_MINUTES, SLOT_SECONDS, checks, horizon};
 
 pub(crate) fn build(input: &PlanInput) -> Result<Plan, PlanError> {
     checks::validate(input)?;
@@ -38,6 +36,7 @@ pub(crate) fn build(input: &PlanInput) -> Result<Plan, PlanError> {
         objective_eur: solved.objective_eur,
         sell_floor: Some(floor),
         summary,
+        degraded: input.forecast_note.clone(),
         slots: rows,
     })
 }
@@ -47,9 +46,10 @@ fn solve(
     slots: &[Slot],
     config: &energy_opt::Config,
 ) -> Result<energy_opt::SolveResult, PlanError> {
-    if slots.len() != HORIZON_SLOTS {
-        return Err(PlanError::PriceGap {
-            t_start: slots.last().map_or(input.now, Slot::t_end),
+    if slots.len() != input.horizon_slots {
+        return Err(PlanError::SolveShape {
+            expected: input.horizon_slots,
+            got: slots.len(),
         });
     }
     let buy: Vec<f64> = slots.iter().map(|slot| slot.buy_all_in).collect();

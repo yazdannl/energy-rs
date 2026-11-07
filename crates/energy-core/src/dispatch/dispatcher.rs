@@ -7,7 +7,7 @@ use crate::allocation::Allocation;
 use crate::dispatch::pack_context::{PackContext, measured, reason_for, requested_watts};
 use crate::dispatch::{
     CommandSink, FaultGuard, HOLD_DEADBAND_W, PackReading, PackReport, SinkError, TickInput,
-    TickOutcome, fleet_grid, slot_power,
+    TickOutcome, fleet_grid, grid_telemetry, slot_power,
 };
 use crate::plan::PackState;
 use crate::safety::Reason;
@@ -78,6 +78,7 @@ impl Dispatcher {
         let limits = self.limits_for(input);
         let target = plan_power.unwrap_or(0.0);
         let (allocation, grid_limit) = allocate(input, &limits, target, slot.as_ref());
+        let grid_hold = grid_limit == Some(Reason::GridTelemetryMissing);
         let context = PackContext {
             now: input.now,
             mode: input.mode,
@@ -89,6 +90,7 @@ impl Dispatcher {
             latches: input.latches,
             overrides: input.overrides,
             progress: input.progress,
+            grid_hold,
         };
         let mut outcome = TickOutcome::new(input.now, input.mode);
         outcome.stale_input = stale;
@@ -138,8 +140,8 @@ impl Dispatcher {
             context.now,
             measured(context, reading),
         );
-        let decision = check(&request, &reading.spec, context.limits, latch);
-        let intended = intended(context, &request, reading, latch);
+        let decision = decide(context, &request, reading, latch, false);
+        let intended = decide(context, &request, reading, latch, true);
         let backoff = self.faults.blocking(pack_id, context.now);
         let sent = if context.mode.may_write() && !backoff && reading.available {
             self.send(context, pack_id, decision.allowed_w, sink).await
@@ -152,12 +154,13 @@ impl Dispatcher {
             requested_w: requested,
             intended_w: intended.allowed_w,
             applied_w: sent.applied_w,
-            reason: reason_for(context, &decision, overridden.is_some(), backoff),
+            reason: reason_for(context, &decision, overridden, backoff),
             intended_reason: intended.primary(),
             written: sent.written,
             verified: sent.verified,
             fail_safe: sent.fail_safe,
             error: sent.error,
+            note: crate::dispatch::pack_context::note_for(overridden),
         }
     }
 
@@ -239,11 +242,32 @@ fn allocate(
     let hours = limits.tick_seconds.max(1.0) / 3600.0;
     let mut allocation =
         Allocation::split(target, &states, limits.reserve_soc_pct, hours, &blocked);
-    let base = slot
-        .map(|slot| slot.load_kw - slot.pv_kw)
-        .or_else(|| input.meter.base_kw());
-    let limit = fleet_grid::clamp(&mut allocation, base, limits);
+    let base = grid_telemetry::base(input, slot, limits);
+    let limit = fleet_grid::clamp(&mut allocation, base.as_ref(), limits);
     (allocation, limit)
+}
+
+/// The ladder's answer, or the fail-closed hold when the fleet grid check could not run.
+fn decide(
+    context: &PackContext<'_>,
+    request: &CommandRequest,
+    reading: &PackReading,
+    latch: Option<&CellLatch>,
+    shadow: bool,
+) -> SafetyDecision {
+    if context.grid_hold {
+        return SafetyDecision::blocked(
+            request.requested_w,
+            0.0,
+            0.0,
+            vec![Reason::GridTelemetryMissing],
+        );
+    }
+    if shadow {
+        intended(context, request, reading, latch)
+    } else {
+        check(request, &reading.spec, context.limits, latch)
+    }
 }
 
 /// The ladder's answer for `auto`; in a writing-disabled mode, the shadow of it.

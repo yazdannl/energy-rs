@@ -17,6 +17,8 @@ pub struct DispatchEntry {
     pub mode: String,
     pub verified: bool,
     pub error: Option<String>,
+    /// Free-form note for the operator (why a maintenance hold happened, the balance current).
+    pub note: Option<String>,
 }
 
 impl DispatchEntry {
@@ -38,6 +40,7 @@ impl DispatchEntry {
             mode: mode.into(),
             verified: false,
             error: None,
+            note: None,
         }
     }
 
@@ -46,6 +49,12 @@ impl DispatchEntry {
         self.applied_w = applied_w;
         self.verified = true;
         self.error = None;
+        self
+    }
+
+    #[must_use]
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
         self
     }
 
@@ -68,6 +77,7 @@ impl DispatchEntry {
             mode: row.get(6)?,
             verified: verified != 0,
             error: row.get(8)?,
+            note: row.get(9)?,
         })
     }
 }
