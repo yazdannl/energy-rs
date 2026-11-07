@@ -10,10 +10,11 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
-    "lucide-svelte": "^1.0.1",
+    "@lucide/svelte": "^1.70.0",
     "svelte": "^5.57.3",
     "uplot": "^1.6.32"
   },
@@ -31,6 +32,7 @@
     "tailwindcss": "^4.3.5",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vite": "^8.3.6"
+    "vite": "^8.3.6",
+    "vitest": "^4.1.12"
   }
 }

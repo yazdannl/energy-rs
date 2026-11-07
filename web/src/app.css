@@ -1,7 +1,65 @@
 @import 'tailwindcss';
 
+/* Semantic tokens. Dark is the default; the light palette is used only when the OS asks for it. */
+@theme inline {
+  --color-base: var(--ui-base);
+  --color-panel: var(--ui-panel);
+  --color-panel-soft: var(--ui-panel-soft);
+  --color-line: var(--ui-line);
+  --color-line-strong: var(--ui-line-strong);
+  --color-ink: var(--ui-ink);
+  --color-muted: var(--ui-muted);
+  --color-faint: var(--ui-faint);
+  --color-pv: var(--ui-pv);
+  --color-grid: var(--ui-grid);
+  --color-batt: var(--ui-batt);
+  --color-load: var(--ui-load);
+  --color-good: var(--ui-good);
+  --color-warn: var(--ui-warn);
+  --color-bad: var(--ui-bad);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 :root {
   color-scheme: dark;
+  --ui-base: #04070d;
+  --ui-panel: #0a0f18;
+  --ui-panel-soft: #0e1520;
+  --ui-line: #1c2739;
+  --ui-line-strong: #2a3a52;
+  --ui-ink: #e7eef9;
+  --ui-muted: #94a3b8;
+  --ui-faint: #64748b;
+  --ui-pv: #f5c451;
+  --ui-grid: #8b8cf7;
+  --ui-batt: #38bdf8;
+  --ui-load: #34d399;
+  --ui-good: #34d399;
+  --ui-warn: #fbbf24;
+  --ui-bad: #fb7185;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --ui-base: #f4f7fb;
+    --ui-panel: #ffffff;
+    --ui-panel-soft: #f7f9fc;
+    --ui-line: #e2e8f0;
+    --ui-line-strong: #cbd5e1;
+    --ui-ink: #0b1526;
+    --ui-muted: #4b5768;
+    --ui-faint: #5f6d84;
+    --ui-pv: #a16207;
+    --ui-grid: #5b5bd6;
+    --ui-batt: #0369a1;
+    --ui-load: #047857;
+    --ui-good: #047857;
+    --ui-warn: #b45309;
+    --ui-bad: #be123c;
+  }
 }
 
 html,
@@ -11,28 +69,103 @@ body {
 }
 
 body {
-  background-color: #020617;
-  color: #f1f5f9;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    'Helvetica Neue',
-    Arial,
-    sans-serif;
+  background-color: var(--ui-base);
+  color: var(--ui-ink);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* The UI is dark-first and animated subtly; honour the OS setting for anything that moves. */
+/* A calm ambient wash; no image, no font, no network. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      60rem 30rem at 15% -10%,
+      color-mix(in oklab, var(--ui-batt) 12%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      50rem 26rem at 95% 0%,
+      color-mix(in oklab, var(--ui-pv) 9%, transparent),
+      transparent 70%
+    );
+  z-index: -1;
+}
+
+@layer components {
+  .card {
+    background-color: color-mix(in oklab, var(--ui-panel) 92%, transparent);
+    border: 1px solid var(--ui-line);
+    border-radius: 0.9rem;
+    backdrop-filter: blur(6px);
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hairline {
+    border-color: var(--ui-line);
+  }
+}
+
+/* Directional flow: a dashed stroke that travels towards the consumer. */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -26;
+  }
+}
+
+.flow-line {
+  stroke-dasharray: 4 9;
+  animation: flow-dash 1.2s linear infinite;
+}
+
+@keyframes soft-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+.live-dot {
+  animation: soft-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 0.28s ease-out both;
+}
+
+/* Respect the OS setting: nothing moves, nothing blinks. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    animation: none !important;
+    transition: none !important;
     scroll-behavior: auto !important;
+  }
+
+  .flow-line {
+    stroke-dasharray: none;
   }
 }
