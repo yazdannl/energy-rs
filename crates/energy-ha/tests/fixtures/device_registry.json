@@ -1,0 +1,162 @@
+{
+ "type": "config/device_registry/list",
+ "success": true,
+ "result": [
+  {
+   "area_id": "00000000-0000-4000-8000-999999999999",
+   "configuration_url": null,
+   "config_entries": [
+    "00000000-0000-4000-8000-999999999999"
+   ],
+   "config_entries_subentries": {
+    "01EXAMPLE00000000000000030": [
+     null
+    ]
+   },
+   "config_entry_id": "00000000-0000-4000-8000-999999999999",
+   "config_subentry_id": null,
+   "connections": [],
+   "created_at": 1753339707.586904,
+   "disabled_by": null,
+   "entry_type": null,
+   "hw_version": null,
+   "id": "00000000-0000-4000-8000-999999999999",
+   "identifiers": [
+    [
+     "example",
+     "example_1"
+    ]
+   ],
+   "labels": [],
+   "manufacturer": "Example Corp",
+   "model": "Model X",
+   "model_id": null,
+   "modified_at": 1755464140.292851,
+   "name_by_user": null,
+   "name": "Example 478",
+   "next_name_part": "area",
+   "parent_device_id": null,
+   "primary_config_entry": "00000000-0000-4000-8000-999999999999",
+   "serial_number": "SERIAL0014",
+   "sw_version": "1.0",
+   "via_device_id": null
+  },
+  {
+   "area_id": null,
+   "configuration_url": null,
+   "config_entries": [
+    "00000000-0000-4000-8000-999999999999"
+   ],
+   "config_entries_subentries": {
+    "01EXAMPLE00000000000000023": [
+     null
+    ]
+   },
+   "config_entry_id": "00000000-0000-4000-8000-999999999999",
+   "config_subentry_id": null,
+   "connections": [],
+   "created_at": 1762523237.807963,
+   "disabled_by": null,
+   "entry_type": null,
+   "hw_version": "1.0",
+   "id": "00000000-0000-4000-8000-999999999999",
+   "identifiers": [
+    [
+     "example",
+     "example_1"
+    ]
+   ],
+   "labels": [],
+   "manufacturer": "Example Corp",
+   "model": "Model X",
+   "model_id": "model_x",
+   "modified_at": 1791025961.463196,
+   "name_by_user": null,
+   "name": "Example 483",
+   "next_name_part": null,
+   "parent_device_id": null,
+   "primary_config_entry": "00000000-0000-4000-8000-999999999999",
+   "serial_number": null,
+   "sw_version": "1.0",
+   "via_device_id": "00000000-0000-4000-8000-999999999999"
+  },
+  {
+   "area_id": "00000000-0000-4000-8000-999999999999",
+   "configuration_url": "http://example.invalid",
+   "config_entries": [
+    "00000000-0000-4000-8000-999999999999"
+   ],
+   "config_entries_subentries": {
+    "01EXAMPLE00000000000000006": [
+     null
+    ]
+   },
+   "config_entry_id": "00000000-0000-4000-8000-999999999999",
+   "config_subentry_id": null,
+   "connections": [
+    [
+     "mac",
+     "00:00:00:00:00:01"
+    ]
+   ],
+   "created_at": 0,
+   "disabled_by": "config_entry",
+   "entry_type": null,
+   "hw_version": null,
+   "id": "00000000-0000-4000-8000-999999999999",
+   "identifiers": [],
+   "labels": [],
+   "manufacturer": "Example Corp",
+   "model": "Model X",
+   "model_id": null,
+   "modified_at": 1726551837.603879,
+   "name_by_user": null,
+   "name": "Example 482",
+   "next_name_part": "area",
+   "parent_device_id": null,
+   "primary_config_entry": "00000000-0000-4000-8000-999999999999",
+   "serial_number": null,
+   "sw_version": "1.0",
+   "via_device_id": null
+  },
+  {
+   "area_id": null,
+   "configuration_url": null,
+   "config_entries": [
+    "00000000-0000-4000-8000-999999999999"
+   ],
+   "config_entries_subentries": {
+    "01EXAMPLE00000000000000001": [
+     null
+    ]
+   },
+   "config_entry_id": "00000000-0000-4000-8000-999999999999",
+   "config_subentry_id": null,
+   "connections": [],
+   "created_at": 0,
+   "disabled_by": null,
+   "entry_type": "service",
+   "hw_version": null,
+   "id": "00000000-0000-4000-8000-999999999999",
+   "identifiers": [
+    [
+     "example",
+     "example_1"
+    ]
+   ],
+   "labels": [],
+   "manufacturer": null,
+   "model": null,
+   "model_id": null,
+   "modified_at": 0,
+   "name_by_user": null,
+   "name": "Example 552",
+   "next_name_part": null,
+   "parent_device_id": null,
+   "primary_config_entry": "00000000-0000-4000-8000-999999999999",
+   "serial_number": null,
+   "sw_version": null,
+   "via_device_id": null
+  }
+ ]
+}

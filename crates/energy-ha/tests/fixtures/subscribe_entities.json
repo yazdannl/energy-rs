@@ -1,0 +1,202 @@
+{
+ "provenance": "re-encoded from hassio ws observe-entities (real subscribe_entities data)",
+ "frames": [
+  {
+   "a": {
+    "sensor.example_440": {
+     "s": "1043.8",
+     "a": {
+      "state_class": "measurement",
+      "raw_w": 1043.8,
+      "grid_w": 3409,
+      "pv_w": 568.8,
+      "battery_w": 2934,
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "icon": "mdi:home-lightning-bolt",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000967",
+     "lc": 1794041778.152767,
+     "lu": 1794041778.152767
+    },
+    "sensor.example_867": {
+     "s": "1.5601",
+     "a": {
+      "state_class": "measurement",
+      "unit_of_measurement": "A",
+      "device_class": "current",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000966",
+     "lc": 1794041778.1504138,
+     "lu": 1794041778.1504138
+    },
+    "sensor.example_861": {
+     "s": "228.0",
+     "a": {
+      "state_class": "measurement",
+      "unit_of_measurement": "V",
+      "device_class": "voltage",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000964",
+     "lc": 1794041778.1505876,
+     "lu": 1794041778.1505876
+    },
+    "sensor.example_869": {
+     "s": "370.1",
+     "a": {
+      "state_class": "measurement",
+      "unit_of_measurement": "V",
+      "device_class": "voltage",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000968",
+     "lc": 1794041778.1510339,
+     "lu": 1794041778.1510339
+    },
+    "sensor.example_858": {
+     "s": "568.8",
+     "a": {
+      "state_class": "measurement",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000967",
+     "lc": 1794041778.151165,
+     "lu": 1794041778.151165
+    },
+    "sensor.example_868": {
+     "s": "577.4",
+     "a": {
+      "state_class": "measurement",
+      "unit_of_measurement": "W",
+      "device_class": "power",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000971",
+     "lc": 1794041778.1530542,
+     "lu": 1794041778.1530542
+    },
+    "sensor.example_856": {
+     "s": "50.031",
+     "a": {
+      "state_class": "measurement",
+      "unit_of_measurement": "Hz",
+      "device_class": "frequency",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000973",
+     "lc": 1794041778.1532352,
+     "lu": 1794041778.1532352
+    },
+    "sensor.example_859": {
+     "s": "590.5",
+     "a": {
+      "state_class": "measurement",
+      "unit_of_measurement": "VA",
+      "device_class": "apparent_power",
+      "friendly_name": "Example name"
+     },
+     "c": "01EXAMPLE00000000000000969",
+     "lc": 1794041778.1533763,
+     "lu": 1794041778.1533763
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_867": {
+     "+": {
+      "s": "1.5612",
+      "lc": 1794041779.1392825,
+      "c": "01EXAMPLE00000000000000975"
+     }
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_861": {
+     "+": {
+      "s": "227.8",
+      "lc": 1794041779.1395814,
+      "c": "01EXAMPLE00000000000000976"
+     }
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_869": {
+     "+": {
+      "s": "370.4",
+      "lc": 1794041779.140081,
+      "c": "01EXAMPLE00000000000000978"
+     }
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_858": {
+     "+": {
+      "s": "569.6",
+      "lc": 1794041779.14025,
+      "c": "01EXAMPLE00000000000000977"
+     }
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_440": {
+     "+": {
+      "s": "1044.6",
+      "lc": 1794041779.1418312,
+      "c": "01EXAMPLE00000000000000977",
+      "a": {
+       "raw_w": 1044.6,
+       "pv_w": 569.6
+      }
+     }
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_868": {
+     "+": {
+      "s": "578.3",
+      "lc": 1794041779.1421273,
+      "c": "01EXAMPLE00000000000000981"
+     }
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_856": {
+     "+": {
+      "s": "50.032",
+      "lc": 1794041779.1423168,
+      "c": "01EXAMPLE00000000000000979"
+     }
+    }
+   }
+  },
+  {
+   "c": {
+    "sensor.example_859": {
+     "+": {
+      "s": "591.1",
+      "lc": 1794041779.1424913,
+      "c": "01EXAMPLE00000000000000980"
+     }
+    }
+   }
+  }
+ ]
+}

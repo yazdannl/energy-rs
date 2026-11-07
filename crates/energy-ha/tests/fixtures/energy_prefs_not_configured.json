@@ -1,0 +1,8 @@
+{
+ "type": "energy/get_prefs",
+ "success": false,
+ "error": {
+  "code": "not_found",
+  "message": "No prefs"
+ }
+}

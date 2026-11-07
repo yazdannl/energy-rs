@@ -1,0 +1,77 @@
+{
+ "type": "energy/get_prefs",
+ "result": {
+  "energy_sources": [
+   {
+    "type": "gas",
+    "stat_energy_from": "sensor.example_1009",
+    "stat_cost": null,
+    "entity_energy_price": null,
+    "number_energy_price": null
+   },
+   {
+    "type": "grid",
+    "stat_energy_from": "sensor.example_1005",
+    "stat_energy_to": "sensor.example_1007",
+    "stat_cost": null,
+    "stat_compensation": null,
+    "entity_energy_price": "sensor.example_1001",
+    "number_energy_price": null,
+    "entity_energy_price_export": "sensor.example_1001",
+    "number_energy_price_export": null,
+    "cost_adjustment_day": 0,
+    "power_config": {
+     "stat_rate_from": "sensor.example_211",
+     "stat_rate_to": "sensor.example_214"
+    },
+    "stat_rate": "sensor.example_275"
+   },
+   {
+    "type": "solar",
+    "stat_energy_from": "sensor.example_855",
+    "stat_rate": "sensor.example_858",
+    "name": "Example 545",
+    "config_entry_solar_forecast": [
+     "01EXAMPLE00000000000000049",
+     "01EXAMPLE00000000000000050"
+    ]
+   },
+   {
+    "type": "battery",
+    "stat_energy_from": "sensor.example_513",
+    "stat_energy_to": "sensor.example_512",
+    "stat_soc": "sensor.example_527",
+    "capacity": 2.06
+   },
+   {
+    "type": "battery",
+    "stat_energy_from": "sensor.example_653",
+    "stat_energy_to": "sensor.example_652",
+    "stat_soc": "sensor.example_667",
+    "capacity": 2.06
+   },
+   {
+    "type": "battery",
+    "stat_energy_from": "sensor.example_743",
+    "stat_energy_to": "sensor.example_742",
+    "stat_soc": "sensor.example_757",
+    "capacity": 2.06
+   },
+   {
+    "type": "battery",
+    "stat_energy_from": "sensor.example_222",
+    "stat_energy_to": "sensor.example_221",
+    "stat_soc": "sensor.example_236",
+    "capacity": 2.06
+   }
+  ],
+  "device_consumption": [
+   {
+    "stat_consumption": "sensor.example_451",
+    "stat_rate": "sensor.example_205",
+    "name": "Example 488"
+   }
+  ],
+  "device_consumption_water": []
+ }
+}
