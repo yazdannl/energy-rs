@@ -42,6 +42,20 @@ pub enum Reason {
     CellVoltageGuard,
     /// The cell-voltage latch forces an emergency charge.
     CellVoltageEmergencyCharge,
+    /// The plan is missing, expired or too old; the tick holds instead of keeping a setpoint.
+    StaleInput,
+    /// A device write failed (transport, echo or mode fault).
+    DriverError,
+    /// A device is backing off after a fault, so the tick sends it nothing.
+    FaultBackoff,
+    /// The watchdog saw no loop progress for three ticks and held the pack.
+    WatchdogHold,
+    /// An operator override (or a full-charge maintenance window) set this setpoint.
+    ManualOverride,
+    /// Boot neutralisation of a setpoint a previous run left behind.
+    BootHold,
+    /// The shutdown/release hold written when control ends.
+    Shutdown,
 }
 
 impl Reason {
@@ -65,6 +79,13 @@ impl Reason {
             Self::SellFloor => "sell_floor",
             Self::CellVoltageGuard => "cell_voltage_guard",
             Self::CellVoltageEmergencyCharge => "cell_voltage_emergency_charge",
+            Self::StaleInput => "stale_input",
+            Self::DriverError => "driver_error",
+            Self::FaultBackoff => "fault_backoff",
+            Self::WatchdogHold => "watchdog_hold",
+            Self::ManualOverride => "manual_override",
+            Self::BootHold => "boot_hold",
+            Self::Shutdown => "shutdown_hold",
         }
     }
 }

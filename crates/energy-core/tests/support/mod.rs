@@ -1,6 +1,9 @@
-//! Shared fixtures for the P8a integration tests.
+//! Shared fixtures for the integration tests.
 
 #![allow(dead_code)]
+
+pub mod fakes;
+pub mod harness;
 
 use chrono::NaiveDate;
 use energy_core::plan::{PackSpec, PackState, Plan, PlanSummary};

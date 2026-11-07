@@ -66,4 +66,13 @@ impl SafetyDecision {
     pub fn has(&self, reason: Reason) -> bool {
         self.reasons.contains(&reason)
     }
+
+    /// The most explanatory reason: the first bound that moved the value, or [`Reason::Ok`].
+    pub fn primary(&self) -> Reason {
+        self.reasons
+            .iter()
+            .copied()
+            .find(|reason| *reason != Reason::Ok)
+            .unwrap_or(Reason::Ok)
+    }
 }

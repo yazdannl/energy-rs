@@ -1,0 +1,177 @@
+//! Journal and ledger writes: plans, dispatch rows, live-write latch and events.
+
+use energy_ledger::plan::{Plan as StoredPlan, PlanSlot};
+use energy_ledger::{DispatchEntry, Event, EventLevel};
+
+use crate::dispatch::PackReport;
+use crate::engine::LATCH_TOLERANCE_W;
+use crate::engine::control::Engine;
+use crate::engine::error::EngineError;
+use crate::engine::live_latch::LiveLatch;
+use crate::plan::Plan;
+use crate::safety::Authority;
+
+impl Engine {
+    /// Append one journal event.
+    pub(crate) fn event(
+        &self,
+        at: i64,
+        level: EventLevel,
+        kind: &str,
+        message: impl Into<String>,
+    ) -> Result<(), EngineError> {
+        let event = Event::new(at, level, kind, message);
+        self.ledger.events()?.insert(&event)?;
+        Ok(())
+    }
+
+    /// Store a plan header plus its 120 slots.
+    pub(crate) fn store_plan(&self, plan: &Plan) -> Result<(), EngineError> {
+        let mode = self.lock()?.mode;
+        let header = StoredPlan::new(
+            plan.generated_at,
+            mode.slug(),
+            plan.horizon_start,
+            plan.horizon_end,
+            plan.summary.to_json(),
+        );
+        let slots: Vec<PlanSlot> = plan.slots.clone();
+        self.ledger.plans()?.insert(&header, &slots)?;
+        self.event(
+            plan.generated_at,
+            EventLevel::Info,
+            "plan.generated",
+            format!(
+                "{} slots from {} (feasible {}, saved {:.3} EUR)",
+                plan.slots.len(),
+                plan.horizon_start,
+                plan.feasible,
+                plan.summary.saved_eur
+            ),
+        )?;
+        Ok(())
+    }
+
+    /// Persist one tick's dispatch rows and fold it into the live-write latch.
+    pub(crate) fn record(
+        &self,
+        outcome: &crate::dispatch::TickOutcome,
+        now: i64,
+    ) -> Result<(), EngineError> {
+        let mut state = self.lock()?;
+        for report in &outcome.packs {
+            self.insert_dispatch(report, outcome.mode, now)?;
+            if note_latch(&mut state.latch, report, now) {
+                state.latch_dirty = true;
+            }
+            if let Some(error) = &report.error {
+                self.event(
+                    now,
+                    EventLevel::Warn,
+                    "dispatch.fault",
+                    format!("{}: {error}", report.pack_id),
+                )?;
+            }
+        }
+        if state.latch_dirty {
+            state.latch.save(&self.ledger, now)?;
+            state.latch_dirty = false;
+        }
+        Ok(())
+    }
+
+    /// One dispatch-log row.
+    fn insert_dispatch(
+        &self,
+        report: &PackReport,
+        mode: Authority,
+        now: i64,
+    ) -> Result<(), EngineError> {
+        let mut entry = DispatchEntry::new(
+            now,
+            report.ledger_id,
+            report.requested_w,
+            report.applied_w,
+            report.reason.as_str(),
+            mode.slug(),
+        );
+        if report.verified {
+            entry = entry.verified(report.applied_w);
+        } else if let Some(error) = &report.error {
+            entry = entry.failed(error.clone());
+        } else if !report.written {
+            entry = entry.failed(format!(
+                "not sent; intended {:.0} W ({})",
+                report.intended_w,
+                report.intended_reason.as_str()
+            ));
+        }
+        self.ledger.dispatch()?.insert(&entry)?;
+        Ok(())
+    }
+
+    /// Log a stale/expired plan, at most once every five minutes.
+    pub(crate) fn log_stale(
+        &self,
+        now: i64,
+        reason: crate::replan::ReplanReason,
+    ) -> Result<(), EngineError> {
+        let mut state = self.lock()?;
+        if throttle(state.last_stale_log, now, 300) {
+            state.last_stale_log = Some(now);
+            drop(state);
+            self.event(
+                now,
+                EventLevel::Warn,
+                "dispatch.stale",
+                format!("plan not executed ({}): holding all packs", reason.as_str()),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Log a refused solve, at most once every five minutes.
+    pub(crate) fn log_refusal(&self, now: i64, reason: &str) {
+        let Ok(mut state) = self.lock() else {
+            return;
+        };
+        if !throttle(state.last_refusal_log, now, 300) {
+            return;
+        }
+        state.last_refusal_log = Some(now);
+        drop(state);
+        if let Err(error) = self.event(now, EventLevel::Warn, "plan.refused", reason.to_owned()) {
+            tracing::warn!(%error, "plan refusal could not be journalled");
+        }
+    }
+}
+
+/// Fold one pack's outcome into the latch; returns whether it changed.
+///
+/// A dry-run or blocked row never latches. A verified neutral command clears; everything else that
+/// reached a device with a non-zero setpoint latches, verified or not, because the device may be
+/// executing it.
+fn note_latch(latch: &mut LiveLatch, report: &PackReport, now: i64) -> bool {
+    if !report.written {
+        return false;
+    }
+    let watts = if report.fail_safe {
+        0.0
+    } else if report.verified {
+        report.applied_w
+    } else {
+        report.intended_w
+    };
+    if report.verified && watts.abs() <= LATCH_TOLERANCE_W {
+        return latch.clear(&report.pack_id);
+    }
+    if watts.abs() > LATCH_TOLERANCE_W {
+        return latch.record(&report.pack_id, watts, now);
+    }
+    false
+}
+
+/// Whether a throttled log may fire again.
+fn throttle(last: Option<i64>, now: i64, every_s: i64) -> bool {
+    last.is_none_or(|at| now.saturating_sub(at) >= every_s)
+}
