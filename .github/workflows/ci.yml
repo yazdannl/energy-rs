@@ -133,4 +133,56 @@ jobs:
           npm ci
           npm run build
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --locked
+
+  # The version is stamped in Cargo.toml, Cargo.lock and energy_rs/config.yaml, and a release tag is
+  # the fourth copy. Drift breaks `cargo build --locked` in the image and makes the Supervisor pull an
+  # image tag that was never published.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Version lockstep
+        run: scripts/bump_version.sh --check
+
+  # The Supervisor builds an add-on with the folder holding config.yaml as the context, one level
+  # below the workspace. scripts/stage_addon.sh produces that self-contained folder; this job proves
+  # it still contains every input the Dockerfile copies and that the manifest keys the add-on needs
+  # are still there. The real image build runs in .github/workflows/release.yml and locally in
+  # scripts/build_addon_local.sh.
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build UI
+        working-directory: web
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          npm ci
+          npm run build
+      - name: Stage the add-on folder
+        run: scripts/stage_addon.sh build/energy_rs
+      - name: Manifest contract
+        run: |
+          set -euo pipefail
+          manifest=energy_rs/config.yaml
+          grep -q '^image: "ghcr.io/yazdannl/energy-rs-{arch}"' "$manifest"
+          grep -q '^ingress_port: 8099$' "$manifest"
+          grep -q '^watchdog: "http://\[HOST\]:\[PORT:8099\]/api/v1/health"$' "$manifest"
+          grep -q '^homeassistant_api: true$' "$manifest"
+          grep -q '^backup: cold$' "$manifest"
+          grep -q '^  - data:rw$' "$manifest"
+          grep -q '^  - aarch64$' "$manifest"
+          grep -q '^  - amd64$' "$manifest"
+          grep -q '^  mode: list(advisory|dry_run|auto)$' "$manifest"
+          # A staged folder must not pin an image tag: the Supervisor would pull it instead of building.
+          ! grep -q '^image:' build/energy_rs/config.yaml
+          test -f build/energy_rs/DOCS.md
