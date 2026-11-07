@@ -28,4 +28,20 @@ pub enum SinkError {
         /// The typed controller fault.
         fault: Box<ControlFault>,
     },
+    /// The command was queued under a control generation that has since been superseded (an
+    /// emergency hold or a mode change), so it must not reach the device.
+    #[error("pack {pack_id}: superseded by a mode change or an emergency hold")]
+    Fenced {
+        /// The pack the command was meant for.
+        pack_id: String,
+    },
+    /// The write intent could not be persisted, so no command was sent: without a durable record of
+    /// ownership a crash would leave an untracked setpoint on the device.
+    #[error("pack {pack_id}: ownership could not be recorded ({reason}); nothing was sent")]
+    NotOwned {
+        /// The pack the command was meant for.
+        pack_id: String,
+        /// Why the journal refused the intent.
+        reason: String,
+    },
 }

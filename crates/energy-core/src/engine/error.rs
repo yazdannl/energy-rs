@@ -23,4 +23,30 @@ pub enum EngineError {
     /// The wiring (measurements, sessions, learning, protection) failed.
     #[error(transparent)]
     Wiring(#[from] crate::wiring::WiringError),
+    /// One or more holds failed, after every target was still attempted. The packs that could not be
+    /// neutralised keep their latch entry: ownership is never dropped by a bookkeeping failure.
+    #[error("hold failed for {failed} pack(s): {detail}")]
+    Holds {
+        /// How many holds could not be completed.
+        failed: usize,
+        /// One `pack: cause` line per failure.
+        detail: String,
+    },
+    /// The persisted live-write latch could not be parsed, so what a previous run left on the
+    /// hardware is unknown. The raw value is left untouched in the ledger (`control.live_writes`)
+    /// and `auto` control is refused until an operator reconciles it.
+    #[error(
+        "the persisted live-write latch is unreadable ({bytes} bytes); \
+         auto control is refused until it is reconciled"
+    )]
+    LatchCorrupt {
+        /// Size of the stored value, so the log can identify the row without echoing it.
+        bytes: usize,
+    },
+    /// The live-write latch could not be serialised, so nothing was written over the stored value.
+    #[error("the live-write latch could not be serialised: {reason}")]
+    LatchWrite {
+        /// Serialiser cause.
+        reason: String,
+    },
 }

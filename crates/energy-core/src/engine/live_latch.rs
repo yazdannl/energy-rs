@@ -39,18 +39,21 @@ impl LiveLatch {
     }
 
     /// Load the latch from the ledger, every entry marked as a boot setpoint.
+    ///
+    /// A value that does not parse, or an entry that cannot name a pack, is a recovery error, never
+    /// an empty latch: an empty latch would silently forget the packs a previous run left live and
+    /// the next boot would neutralise nothing. The stored value is left untouched so an operator (or
+    /// `doctor`) can still read it, and `auto` control stays refused until it is reconciled.
     pub fn load(ledger: &Ledger) -> Result<Self, EngineError> {
         let Some(raw) = ledger.settings()?.get(LIVE_LATCH_KEY)? else {
             return Ok(Self::new());
         };
-        let stored: Stored = serde_json::from_str(&raw).unwrap_or(Stored {
-            batteries: Vec::new(),
-            updated_at: 0,
-        });
+        let stored: Stored = serde_json::from_str(&raw)
+            .map_err(|_| EngineError::LatchCorrupt { bytes: raw.len() })?;
         let mut entries = BTreeMap::new();
         for entry in stored.batteries {
             if entry.pack_id.is_empty() || !entry.power_w.is_finite() {
-                continue;
+                return Err(EngineError::LatchCorrupt { bytes: raw.len() });
             }
             entries.insert(
                 entry.pack_id.clone(),
@@ -66,6 +69,9 @@ impl LiveLatch {
     }
 
     /// Persist the latch (an empty latch writes an empty list, never deletes the key).
+    ///
+    /// A serialisation failure is an error: writing an empty list instead would erase the packs a
+    /// previous run left live.
     pub fn save(&self, ledger: &Ledger, now: i64) -> Result<(), EngineError> {
         let stored = Stored {
             batteries: self
@@ -79,8 +85,9 @@ impl LiveLatch {
                 .collect(),
             updated_at: now,
         };
-        let json =
-            serde_json::to_string(&stored).unwrap_or_else(|_| "{\"batteries\":[]}".to_owned());
+        let json = serde_json::to_string(&stored).map_err(|error| EngineError::LatchWrite {
+            reason: error.to_string(),
+        })?;
         ledger.settings()?.set(LIVE_LATCH_KEY, &json, now)?;
         Ok(())
     }

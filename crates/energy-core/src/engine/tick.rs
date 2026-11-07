@@ -21,13 +21,19 @@ pub(crate) struct Prepared {
 
 impl Engine {
     /// Read, replan, dispatch and record exactly one tick.
+    ///
+    /// Progress is marked only after a step *succeeded*: a tick that fails in its first read never
+    /// reaches a mark, so repeating failures still reach the watchdog's failure boundary instead of
+    /// looking like work. The generation captured here fences every write of the tick: a hold or a
+    /// mode change that lands mid-tick makes the remaining commands no-ops.
     pub async fn tick_once(&self, now: i64) -> Result<TickOutcome, EngineError> {
-        self.mark(now)?;
+        let token = self.gate.token();
         let mut view = self.fleet.view(now).await?;
         self.mark(now)?;
         let meter = self.meter.reading().await;
         self.mark(now)?;
         self.wire(now, &mut view)?;
+        self.mark(now)?;
         let hold = self.maybe_replan(now, &view).await?;
         let prepared = self.prepare(now, &view, hold)?;
         let input = TickInput {
@@ -41,9 +47,12 @@ impl Engine {
             stale: prepared.stale,
             progress: Some(self),
         };
-        let outcome = self.dispatcher.tick(&input, self.sink.as_ref()).await;
+        let sink = self.guarded(token, now);
+        let outcome = self.dispatcher.tick(&input, &sink).await;
         self.mark(now)?;
         self.record(&outcome, now)?;
+        // Packs we own but could not command this tick are held before the tick is called done.
+        self.reconcile(now, &outcome).await?;
         self.publish_tick(now, &view, &meter);
         Ok(outcome)
     }
@@ -117,8 +126,9 @@ impl Engine {
         );
         entries.extend(state.overrides.iter().cloned());
         let stale = hold || state.plan.is_none();
+        let mode = self.gate.mode();
         Ok(Prepared {
-            mode: state.mode,
+            mode,
             plan: state.plan.clone(),
             stale,
             overrides: Overrides::new(entries),

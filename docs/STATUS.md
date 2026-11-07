@@ -1,8 +1,8 @@
 # Status
 
 Phase gates from [PLAN.md](PLAN.md) §11. P0–P8 and P12 are done; P9 (the real UI) and the live P10
-rollout are open. The runtime assembly (P12) is what makes the add-on actually run end to end; its
-notes are the first section below.
+rollout are open. The runtime assembly (P12) is what makes the add-on actually run end to end. The
+newest notes come first below.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
@@ -20,6 +20,43 @@ notes are the first section below.
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | **partial**: packaging, image and release pipeline done; nothing published, installed or shadowed yet |
 | P12 | Runtime assembly: bootstrap, engine/API bridge, load profile, lifecycle | end-to-end boot test with fake HA + fake devices, graceful stop | **done** |
 | P13 | Savings accounting: measured counterfactual, split, rollups, catch-up | accounting/rollup tests, `docs/SAVINGS.md` | **done** |
+| P15 | Control-layer hardening from the independent safety review (`crates/energy-core`) | one regression test per finding, `docs/RUNBOOK.md` §2 safety invariants | **done** |
+
+## P15 notes (control-layer safety review)
+
+The independent safety review of the control layer reported ten findings in `crates/energy-core`;
+all ten were real and are fixed, each with a regression test that fails on the previous code:
+
+- **Authority (H1).** Every hardware command -- a tick's setpoint and every hold (boot, watchdog,
+  shutdown, release, tick failure, orphan recovery) -- now leaves through one `GuardedSink`, which
+  checks `WriteGate` authority, the control generation and durable ownership in that order.
+  `advisory`/`dry_run` write nothing at all, holds included. The mode itself lives in the gate, not in
+  the state mutex, so a decision and a write cannot disagree. Leaving `auto` fences the generation and
+  holds the latched packs while still in `auto`.
+- **Fleet limits (H2).** The tick is now plan -> validate -> send. A second, fleet-level pass
+  (`dispatch/fleet_clamp.rs`) bounds the *final* vector against the fleet power caps and the site
+  ceilings, counting the measured power of packs the tick does not touch, so an override, a forced
+  emergency charge or a ramp can no longer lift four 700 W commands over a 1000 W allocation.
+- **Crash ownership (H3).** The setpoint is persisted into the live-write latch before the transport
+  call (`LiveWriteJournal`); a journal that refuses means the command is not sent, and an ambiguous
+  outcome keeps the entry.
+- **Failed ticks (H4).** Progress is marked only after successful work, and `Engine::tick_failed`
+  journals the cause and best-effort holds the packs the process owns, so repeated failures still
+  reach the watchdog.
+- **Fencing (H5).** `WriteGate` packs mode and generation into one atomic word; an emergency hold or a
+  mode change bumps it first and every transport write re-checks it, so a resumed tick cannot send a
+  stale setpoint after the hold.
+- **Progress clock (H6).** The watchdog judges elapsed time on a monotonic anchor refreshed at each
+  progress point, alongside the epoch, so a long tick and a backwards wall clock both behave.
+- **Lost packs (H7).** After each tick the engine reconciles its latch: a pack that vanished from the
+  read or reports itself unavailable is held best-effort and stays latched until a device confirms.
+- **Unknown state (H8).** `safety::check` no longer invents charge headroom from the pack floor: with
+  neither stored energy nor SoC, only the neutral hold is allowed (`state_missing`), in both directions.
+- **Bookkeeping (H14).** `hold_all` attempts every target and returns the failures aggregated; a failed
+  hold keeps its latch entry and the latch is persisted before the in-memory clear.
+- **Corrupt latch (H15).** `LiveLatch::load` returns an explicit recovery error instead of an empty
+  latch, preserves the stored value, and boot then runs `dry_run` and refuses `auto` until
+  `Engine::reconcile_latch` accepts the loss.
 
 ## P12 notes (runtime assembly)
 

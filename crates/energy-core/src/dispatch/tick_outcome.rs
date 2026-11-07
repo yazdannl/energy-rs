@@ -18,6 +18,8 @@ pub struct TickOutcome {
     pub target_w: f64,
     /// The fleet-level grid bound, when it bit.
     pub grid_limit: Option<Reason>,
+    /// The final-vector bound (fleet power cap or site ceiling) when it had to reduce the commands.
+    pub fleet_clamp: Option<Reason>,
     /// One row per pack, in fleet order.
     pub packs: Vec<PackReport>,
 }
@@ -32,6 +34,7 @@ impl TickOutcome {
             plan_power_w: None,
             target_w: 0.0,
             grid_limit: None,
+            fleet_clamp: None,
             packs: Vec::new(),
         }
     }

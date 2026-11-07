@@ -49,15 +49,30 @@ pub fn build_on(
     packs: Vec<energy_core::dispatch::PackReading>,
     plan: Plan,
 ) -> Harness {
+    build_config(
+        EngineConfig {
+            mode,
+            ..EngineConfig::default()
+        },
+        ledger,
+        packs,
+        plan,
+    )
+}
+
+/// A harness with an explicit configuration (a shorter tick interval, other ceilings, ...).
+pub fn build_config(
+    config: EngineConfig,
+    ledger: Arc<Ledger>,
+    packs: Vec<energy_core::dispatch::PackReading>,
+    plan: Plan,
+) -> Harness {
     let fleet = Arc::new(FakeFleet::new(packs));
     let meter = Arc::new(FakeMeter::default());
     let sink = Arc::new(FakeSink::new());
     let source = Arc::new(FakeSource::new(plan));
     let engine = Arc::new(Engine::new(
-        EngineConfig {
-            mode,
-            ..EngineConfig::default()
-        },
+        config,
         fleet.clone(),
         meter.clone(),
         source.clone(),

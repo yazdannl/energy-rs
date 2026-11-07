@@ -1,119 +1,25 @@
-//! Boot neutralisation, the watchdog hold, release and shutdown.
+//! The guard step: the watchdog hold, release, shutdown and the hold primitive.
 
 use energy_ledger::{DispatchEntry, EventLevel};
 
+use crate::dispatch::{CommandSink, SinkError};
 use crate::engine::control::Engine;
 use crate::engine::error::EngineError;
-use crate::engine::live_latch::LiveLatch;
 use crate::safety::Reason;
 
 impl Engine {
-    /// Load the persisted mode and latch, restore the protection state and neutralise boot setpoints.
-    ///
-    /// Only packs in the live-write latch are touched: a fresh install has no latch, so boot writes
-    /// nothing at all (survey §7 trap 2).
-    pub async fn boot(&self, now: i64) -> Result<(), EngineError> {
-        let mode = self.boot_mode(now)?;
-        let latch = LiveLatch::load(&self.ledger)?;
-        let (boot_count, mode_before) = {
-            let mut state = self.lock()?;
-            let before = state.mode;
-            state.mode = mode;
-            state.booted = true;
-            state.latch = latch;
-            state.watchdog.mark(now);
-            (state.latch.boot_entries().count(), before)
-        };
-        self.restore_cells(now).await?;
-        self.event(
-            now,
-            EventLevel::Info,
-            "engine.boot",
-            format!(
-                "mode {} (was {}), {boot_count} setpoint(s) from a previous run",
-                mode.slug(),
-                mode_before.slug()
-            ),
-        )?;
-        self.retry_boot_latches(now).await?;
-        self.publish_boot(now);
-        Ok(())
-    }
-
-    /// The stored mode, seeding it from the configured default on the very first boot.
-    fn boot_mode(&self, now: i64) -> Result<crate::safety::Authority, EngineError> {
-        let stored = self.ledger.settings()?.get(crate::mode::MODE_KEY)?;
-        if stored.is_some() {
-            return Ok(crate::mode::load(&self.ledger)?);
-        }
-        crate::mode::save(&self.ledger, self.config.mode, now)?;
-        Ok(self.config.mode)
-    }
-
-    /// Restore the persisted per-pack cell latches for every pack in the fleet.
-    async fn restore_cells(&self, now: i64) -> Result<(), EngineError> {
-        let view = self.fleet.view(now).await?;
-        let mut restored = 0;
-        {
-            let mut state = self.lock()?;
-            for pack in &view.packs {
-                match state.cells.restore(&self.cell_store, pack.pack_id()) {
-                    Ok(true) => restored += 1,
-                    Ok(false) => {}
-                    Err(error) => {
-                        tracing::warn!(pack = pack.pack_id(), %error, "cell latch restore failed");
-                    }
-                }
-            }
-        }
-        if restored > 0 {
-            self.event(
-                now,
-                EventLevel::Info,
-                "protection.restored",
-                format!("{restored} cell-voltage latch(es) restored"),
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Neutralise the packs a previous run left live; safe to call repeatedly until the latch is empty.
-    async fn retry_boot_latches(&self, now: i64) -> Result<(), EngineError> {
-        let pending: Vec<String> = {
-            let state = self.lock()?;
-            state
-                .latch
-                .boot_entries()
-                .map(|entry| entry.pack_id.clone())
-                .collect()
-        };
-        if pending.is_empty() {
-            return Ok(());
-        }
-        let held = self.hold_all(now, Reason::BootHold, Some(&pending)).await?;
-        self.event(
-            now,
-            EventLevel::Warn,
-            "boot.recovered",
-            format!(
-                "{}/{held} setpoint(s) neutralised",
-                pending.len(),
-                held = held.len()
-            ),
-        )?;
-        Ok(())
-    }
-
     /// One guard step: hold everything if the loop stopped making progress, then retry boot recovery.
+    ///
+    /// The generation is fenced *before* the hold, so a tick that is still in flight can no longer
+    /// write the setpoint this hold supersedes.
     pub async fn supervise(&self, now: i64) -> Result<bool, EngineError> {
-        let (stalled, mode) = {
-            let state = self.lock()?;
-            (state.watchdog.stalled(now), state.mode)
-        };
+        let stalled = self.lock()?.watchdog.stalled(now);
+        let mode = self.gate.mode();
         let mut held = false;
         if stalled {
             self.lock()?.watchdog.mark(now);
             if mode.may_write() {
+                self.gate.fence();
                 self.hold_all(now, Reason::WatchdogHold, None).await?;
                 held = true;
             }
@@ -138,45 +44,59 @@ impl Engine {
 
     /// Neutralise what we left running because control is ending.
     ///
-    /// In `auto` every pack is held; outside it only the packs in the live-write latch are, which is
-    /// exactly "hardware we drove". Nothing else is ever written on the way out.
+    /// In `auto` every pack is held. Outside `auto` nothing at all is written -- not even a hold --
+    /// so the latch is kept and boot recovery owns those packs from then on.
     pub async fn shutdown(&self, now: i64, reason: &str) -> Result<(), EngineError> {
-        let (mode, pending) = {
-            let state = self.lock()?;
-            (state.mode, state.latch.pack_ids())
-        };
+        let mode = self.gate.mode();
+        let pending = self.lock()?.latch.pack_ids().len();
+        self.gate.fence();
         let held = if mode.may_write() {
             self.hold_all(now, Reason::Shutdown, None).await?
-        } else if pending.is_empty() {
-            Vec::new()
         } else {
-            self.hold_all(now, Reason::Shutdown, Some(&pending)).await?
+            Vec::new()
+        };
+        let detail = if mode.may_write() {
+            format!("{} pack(s) held", held.len())
+        } else {
+            format!(
+                "nothing written in {} mode, {pending} latched pack(s) kept",
+                mode.slug()
+            )
         };
         self.event(
             now,
             EventLevel::Info,
             "engine.shutdown",
-            format!(
-                "{reason}: {}/{n} pack(s) held",
-                held.len(),
-                n = pending.len()
-            ),
+            format!("{reason}: {detail}"),
         )?;
         Ok(())
     }
 
     /// Neutralise the latched packs before leaving `auto` (mode change, dry-run flip).
+    ///
+    /// Called while the engine is still in `auto`, so the holds are admitted; a hold that fails keeps
+    /// its latch entry and does not block the mode change -- stopping the writes matters more.
     pub(crate) async fn release(&self, now: i64) -> Result<(), EngineError> {
         let pending = self.lock()?.latch.pack_ids();
         if pending.is_empty() {
             return Ok(());
         }
-        self.hold_all(now, Reason::Shutdown, Some(&pending)).await?;
+        if let Err(error) = self.hold_all(now, Reason::Shutdown, Some(&pending)).await {
+            self.event(
+                now,
+                EventLevel::Error,
+                "hold.failed",
+                format!("release: {error}"),
+            )?;
+        }
         Ok(())
     }
 
     /// Hold every pack (or just `only`), recording each attempt and clearing verified holds.
-    async fn hold_all(
+    ///
+    /// Every target is attempted even when bookkeeping fails for one of them; the failures are
+    /// returned together, and the packs they concern keep their latch entry.
+    pub(crate) async fn hold_all(
         &self,
         now: i64,
         reason: Reason,
@@ -184,12 +104,21 @@ impl Engine {
     ) -> Result<Vec<String>, EngineError> {
         let ids = self.hold_targets(only)?;
         let mut held = Vec::new();
+        let mut failures = Vec::new();
         for (pack_id, ledger_id) in ids {
-            if self.hold_one(&pack_id, ledger_id, now, reason).await? {
-                held.push(pack_id);
+            match self.hold_one(&pack_id, ledger_id, now, reason).await {
+                Ok(true) => held.push(pack_id),
+                Ok(false) => {}
+                Err(error) => failures.push(format!("{pack_id}: {error}")),
             }
         }
-        Ok(held)
+        if failures.is_empty() {
+            return Ok(held);
+        }
+        Err(EngineError::Holds {
+            failed: failures.len(),
+            detail: failures.join("; "),
+        })
     }
 
     /// Who a hold targets: an explicit list, or every known pack plus anything still latched.
@@ -214,7 +143,7 @@ impl Engine {
         Ok(ids.iter().map(|pack_id| (pack_id.clone(), None)).collect())
     }
 
-    /// One real hold; a verified echo clears the pack's latch.
+    /// One real hold through the gate; a verified echo clears the pack's latch.
     async fn hold_one(
         &self,
         pack_id: &str,
@@ -222,14 +151,12 @@ impl Engine {
         now: i64,
         reason: Reason,
     ) -> Result<bool, EngineError> {
-        match self.sink.hold(pack_id).await {
+        let token = self.gate.token();
+        match self.guarded(token, now).hold(pack_id).await {
             Ok(receipt) => {
-                let mut state = self.lock()?;
                 if receipt.verified {
-                    state.latch.clear(pack_id);
+                    self.clear_owned(pack_id, now)?;
                 }
-                state.latch.save(&self.ledger, now)?;
-                drop(state);
                 let entry = DispatchEntry::new(
                     now,
                     ledger_id,
@@ -246,6 +173,8 @@ impl Engine {
                 self.ledger.dispatch()?.insert(&entry)?;
                 Ok(true)
             }
+            // Authority or generation withdrew the command: nothing was sent and ownership stays.
+            Err(SinkError::Fenced { .. }) => Ok(false),
             Err(error) => {
                 self.event(
                     now,
@@ -256,5 +185,21 @@ impl Engine {
                 Ok(false)
             }
         }
+    }
+
+    /// Drop a pack's ownership durably, and only after a verified hold.
+    ///
+    /// The new latch is persisted first and committed in memory only when the write succeeded, so a
+    /// ledger failure can never lose track of a pack that was actually driven.
+    fn clear_owned(&self, pack_id: &str, now: i64) -> Result<(), EngineError> {
+        let mut state = self.lock()?;
+        if state.latch.get(pack_id).is_none() {
+            return Ok(());
+        }
+        let mut next = state.latch.clone();
+        next.clear(pack_id);
+        next.save(&self.ledger, now)?;
+        state.latch = next;
+        Ok(())
     }
 }

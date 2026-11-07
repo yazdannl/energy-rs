@@ -12,11 +12,14 @@ use crate::dispatch::{
 };
 use crate::engine::config::EngineConfig;
 use crate::engine::error::EngineError;
+use crate::engine::guarded_sink::GuardedSink;
 use crate::engine::instant;
 use crate::engine::live_latch::LiveLatch;
+use crate::engine::live_write_journal::LiveWriteJournal;
 use crate::engine::plan_source::PlanSource;
 use crate::engine::state::EngineState;
 use crate::engine::watchdog::Watchdog;
+use crate::engine::write_gate::WriteGate;
 use crate::plan::Plan;
 use crate::replan::ReplanTrigger;
 use crate::safety::{Authority, RAMP_LIMIT_W, SafetyLimits};
@@ -29,6 +32,11 @@ use crate::wiring::learning_store::LedgerLearningStore;
 /// One instance owns the plan, the live-write latch, the protection state and the override set, and
 /// is the only thing that calls the [`CommandSink`]. The ports are trait objects so the engine can
 /// be assembled from the real adapters in `energy-server` or from fakes in a test.
+///
+/// Every command -- a tick's setpoint and a hold alike -- leaves through a
+/// [`GuardedSink`], so authority, the control generation and the durable write intent are enforced
+/// in exactly one place. The mode itself lives in the [`WriteGate`], not in the state mutex, so a
+/// decision cannot be made under one mode and written under another.
 pub struct Engine {
     pub(crate) config: EngineConfig,
     pub(crate) fleet: Arc<dyn DeviceFleet>,
@@ -42,7 +50,9 @@ pub struct Engine {
     pub(crate) learning_store: LedgerLearningStore,
     pub(crate) publisher: Option<Arc<dyn SnapshotPublisher>>,
     pub(crate) runtime: Option<Arc<dyn RuntimeView>>,
-    pub(crate) state: Mutex<EngineState>,
+    pub(crate) gate: Arc<WriteGate>,
+    pub(crate) journal: Arc<dyn crate::engine::WriteIntent>,
+    pub(crate) state: Arc<Mutex<EngineState>>,
 }
 
 impl Engine {
@@ -67,8 +77,8 @@ impl Engine {
             ..ReplanTrigger::default()
         };
         let state = EngineState {
-            mode: config.mode,
             booted: false,
+            latch_corrupt: None,
             plan: None,
             plan_id: None,
             latch: LiveLatch::new(),
@@ -86,6 +96,12 @@ impl Engine {
             last_refusal_log: None,
             latch_dirty: false,
         };
+        let state = Arc::new(Mutex::new(state));
+        let gate = Arc::new(WriteGate::new(config.mode));
+        let journal = Arc::new(LiveWriteJournal::new(
+            Arc::clone(&state),
+            Arc::clone(&ledger),
+        ));
         Self {
             cell_store: LedgerLatchStore::new(Arc::clone(&ledger)),
             learning_store: LedgerLearningStore::new(Arc::clone(&ledger)),
@@ -99,7 +115,9 @@ impl Engine {
             trigger,
             publisher: None,
             runtime: None,
-            state: Mutex::new(state),
+            gate,
+            journal,
+            state,
         }
     }
 
@@ -119,8 +137,11 @@ impl Engine {
     }
 
     /// The control mode in force.
+    ///
+    /// Read from the write gate, which is the same word every hardware command is admitted against:
+    /// there is no second copy of the mode that could disagree with it.
     pub fn mode(&self) -> Result<Authority, EngineError> {
-        Ok(self.lock()?.mode)
+        Ok(self.gate.mode())
     }
 
     /// The plan in force, if one is stored.
@@ -130,22 +151,50 @@ impl Engine {
 
     /// Change the control mode and persist it.
     ///
-    /// Leaving `auto` neutralises what we left running first: a real hold for every latched pack,
-    /// and nothing for hardware we never drove.
+    /// Leaving `auto` neutralises what we left running *while still in `auto`*: the generation is
+    /// fenced first (so a tick that is mid-flight can no longer write), then every latched pack is
+    /// held, then the mode moves. Entering `auto` is refused while the persisted latch is unreadable
+    /// ([`reconcile_latch`](Engine::reconcile_latch) is the operator's way out).
     pub async fn set_mode(&self, mode: Authority, now: i64) -> Result<(), EngineError> {
         if self.mode()? == mode {
             return Ok(());
         }
+        if mode.may_write()
+            && let Some(bytes) = self.lock()?.latch_corrupt
+        {
+            return Err(EngineError::LatchCorrupt { bytes });
+        }
         if !mode.may_write() {
+            self.gate.fence();
             self.release(now).await?;
         }
         crate::mode::save(&self.ledger, mode, now)?;
-        self.lock()?.mode = mode;
+        self.gate.transition(mode);
         self.event(
             now,
             energy_ledger::EventLevel::Info,
             "mode.changed",
             format!("control mode is now {}", mode.slug()),
+        )?;
+        Ok(())
+    }
+
+    /// Accept the loss of an unreadable live-write latch and allow `auto` again.
+    ///
+    /// This is an explicit operator action, never automatic: the stored value could not be read, so
+    /// the packs it named are unknown and persisting an empty latch gives up on neutralising them.
+    pub fn reconcile_latch(&self, now: i64) -> Result<(), EngineError> {
+        let mut state = self.lock()?;
+        LiveLatch::new().save(&self.ledger, now)?;
+        state.latch = LiveLatch::new();
+        state.latch_corrupt = None;
+        drop(state);
+        self.event(
+            now,
+            energy_ledger::EventLevel::Warn,
+            "latch.reconciled",
+            "operator accepted the loss of the unreadable live-write latch; auto control allowed"
+                .to_owned(),
         )?;
         Ok(())
     }
@@ -202,6 +251,17 @@ impl Engine {
     pub(crate) fn mark(&self, now: i64) -> Result<(), EngineError> {
         self.lock()?.watchdog.mark(now);
         Ok(())
+    }
+
+    /// A gated sink bound to one control generation: the only way a command reaches a device.
+    pub(crate) fn guarded(&self, token: u64, now: i64) -> GuardedSink {
+        GuardedSink::new(
+            Arc::clone(&self.sink),
+            Arc::clone(&self.gate),
+            Arc::clone(&self.journal),
+            token,
+            now,
+        )
     }
 
     pub(crate) fn lock(&self) -> Result<MutexGuard<'_, EngineState>, EngineError> {
