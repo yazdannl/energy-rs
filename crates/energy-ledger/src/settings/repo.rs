@@ -57,6 +57,14 @@ impl<'a> Settings<'a> {
         Ok(())
     }
 
+    /// Remove a key; `true` when it existed. History is kept, so a removal is visible as-of.
+    pub fn remove(&self, key: &str) -> Result<bool, LedgerError> {
+        let existed = self.get(key)?.is_some();
+        self.conn
+            .execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+        Ok(existed)
+    }
+
     /// The value in force at `at`, from the newest history row at or before it.
     pub fn as_of(&self, key: &str, at: i64) -> Result<Option<String>, LedgerError> {
         let value = self

@@ -13,14 +13,17 @@
 //! The engine never blocks a tick on its own lock: I/O happens before and after, and the state
 //! mutex is only taken for the synchronous parts.
 
+mod commands;
 mod config;
 mod control;
 mod error;
+mod faults;
 mod latched_write;
 mod live_latch;
 mod persist;
 mod plan_source;
 mod run;
+mod snapshot;
 mod state;
 mod supervise;
 mod tick;

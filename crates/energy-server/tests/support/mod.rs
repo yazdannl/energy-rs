@@ -9,6 +9,9 @@
     clippy::float_cmp
 )]
 
+/// The in-process Home Assistant used by the boot test.
+pub mod fake_ha;
+
 use std::sync::Arc;
 use std::time::Duration;
 

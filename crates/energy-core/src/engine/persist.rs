@@ -26,7 +26,7 @@ impl Engine {
     }
 
     /// Store a plan header plus its 120 slots.
-    pub(crate) fn store_plan(&self, plan: &Plan) -> Result<(), EngineError> {
+    pub(crate) fn store_plan(&self, plan: &Plan) -> Result<i64, EngineError> {
         let mode = self.lock()?.mode;
         let header = StoredPlan::new(
             plan.generated_at,
@@ -36,7 +36,7 @@ impl Engine {
             plan.summary.to_json(),
         );
         let slots: Vec<PlanSlot> = plan.slots.clone();
-        self.ledger.plans()?.insert(&header, &slots)?;
+        let stored = self.ledger.plans()?.insert(&header, &slots)?;
         self.event(
             plan.generated_at,
             EventLevel::Info,
@@ -50,7 +50,7 @@ impl Engine {
                 plan.degraded.as_deref().unwrap_or("fresh")
             ),
         )?;
-        Ok(())
+        Ok(stored.id)
     }
 
     /// Persist one tick's dispatch rows and fold it into the live-write latch.

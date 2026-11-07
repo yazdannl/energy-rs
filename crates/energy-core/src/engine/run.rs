@@ -8,6 +8,8 @@ use energy_ledger::EventLevel;
 
 use crate::engine::control::Engine;
 use crate::engine::error::EngineError;
+use crate::stream::EngineCommand;
+use tokio::sync::mpsc;
 
 impl Engine {
     /// Boot, then run the tick loop and the guard loop until a termination signal arrives.
@@ -16,26 +18,57 @@ impl Engine {
     /// not also stop the watchdog from noticing. Both share the engine's state mutex, which is only
     /// ever held for synchronous work.
     pub async fn run(self: &Arc<Self>) -> Result<(), EngineError> {
-        self.boot(Utc::now().timestamp()).await?;
+        self.run_with(None).await
+    }
+
+    /// Run with the API's command queue: commands are applied between ticks.
+    pub async fn run_with(
+        self: &Arc<Self>,
+        commands: Option<mpsc::Receiver<EngineCommand>>,
+    ) -> Result<(), EngineError> {
+        if !self.lock()?.booted {
+            self.boot(Utc::now().timestamp()).await?;
+        }
         let interval = Duration::from_secs(self.config.tick_seconds.max(1));
         let guard = Arc::clone(self);
         let guard_task = tokio::spawn(async move { guard.guard_loop(interval).await });
-        let running = self.tick_loop(interval).await;
+        let running = self.tick_loop(interval, commands).await;
         guard_task.abort();
         self.shutdown(Utc::now().timestamp(), "terminated").await?;
         running
     }
 
     /// The tick loop, until `SIGTERM`/`SIGINT`.
-    async fn tick_loop(&self, interval: Duration) -> Result<(), EngineError> {
+    async fn tick_loop(
+        &self,
+        interval: Duration,
+        mut commands: Option<mpsc::Receiver<EngineCommand>>,
+    ) -> Result<(), EngineError> {
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
+            let command = next_command(&mut commands);
             tokio::select! {
                 () = terminate() => return Ok(()),
                 _ = tokio::signal::ctrl_c() => return Ok(()),
+                Some(command) = command => self.command_or_log(command).await,
                 _ = ticker.tick() => self.tick_or_log().await,
             }
+        }
+    }
+
+    /// Apply one API command, journalling a failure instead of ending the loop.
+    async fn command_or_log(&self, command: EngineCommand) {
+        let now = Utc::now().timestamp();
+        let kind = command.kind();
+        if let Err(error) = self.apply_command(command, now).await {
+            tracing::error!(%error, command = kind, "engine command failed");
+            let _ = self.event(
+                now,
+                energy_ledger::EventLevel::Error,
+                "engine.command_failed",
+                format!("{kind}: {error}"),
+            );
         }
     }
 
@@ -75,6 +108,16 @@ impl Engine {
                 tracing::error!(%error, "guard step failed");
             }
         }
+    }
+}
+
+/// The next queued command, or a future that never resolves when the server has no queue.
+async fn next_command(
+    commands: &mut Option<mpsc::Receiver<EngineCommand>>,
+) -> Option<EngineCommand> {
+    match commands.as_mut() {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
     }
 }
 

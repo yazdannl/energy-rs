@@ -13,7 +13,7 @@ use crate::measurement::Measurement;
 use crate::pack::{Pack, PackState};
 
 const COLUMNS: &str = "id, sn, name, label_capacity_kwh, reported_capacity_kwh, max_charge_w, max_discharge_w, \
-     first_seen, last_seen";
+     first_seen, last_seen, learned_capacity_kwh, learned_round_trip, learned_confidence, learned_at";
 
 /// Repository for the `packs` table, holding the ledger connection guard for the duration of a
 /// scope.
@@ -58,6 +58,24 @@ impl<'a> Packs<'a> {
             Pack::from_row,
         )?;
         Ok(stored)
+    }
+
+    /// Publish one learning pass on the pack row (capacity, round trip, confidence and instant).
+    pub fn set_learning(
+        &self,
+        id: i64,
+        capacity_kwh: Option<f64>,
+        round_trip: f64,
+        confidence: f64,
+        at: i64,
+    ) -> Result<(), LedgerError> {
+        self.conn.execute(
+            "UPDATE packs SET learned_capacity_kwh = ?2, learned_round_trip = ?3,
+                learned_confidence = ?4, learned_at = ?5
+             WHERE id = ?1",
+            params![id, capacity_kwh, round_trip, confidence, at],
+        )?;
+        Ok(())
     }
 
     pub fn get(&self, id: i64) -> Result<Option<Pack>, LedgerError> {

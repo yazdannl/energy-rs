@@ -19,6 +19,14 @@ pub struct Pack {
     pub max_discharge_w: Option<f64>,
     pub first_seen: i64,
     pub last_seen: i64,
+    /// The learner's effective capacity, kWh (written by a learning pass, `None` before one).
+    pub learned_capacity_kwh: Option<f64>,
+    /// The learner's AC round-trip efficiency.
+    pub learned_round_trip: Option<f64>,
+    /// Confidence of the learned numbers, `[0, 1]`.
+    pub learned_confidence: Option<f64>,
+    /// When the learned numbers were written, UTC epoch seconds.
+    pub learned_at: Option<i64>,
 }
 
 impl Pack {
@@ -34,6 +42,10 @@ impl Pack {
             max_discharge_w: None,
             first_seen,
             last_seen: first_seen,
+            learned_capacity_kwh: None,
+            learned_round_trip: None,
+            learned_confidence: None,
+            learned_at: None,
         }
     }
 
@@ -67,6 +79,10 @@ impl Pack {
             max_discharge_w: row.get(6)?,
             first_seen: row.get(7)?,
             last_seen: row.get(8)?,
+            learned_capacity_kwh: row.get(9)?,
+            learned_round_trip: row.get(10)?,
+            learned_confidence: row.get(11)?,
+            learned_at: row.get(12)?,
         })
     }
 }

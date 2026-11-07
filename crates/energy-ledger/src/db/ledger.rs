@@ -110,6 +110,16 @@ impl Ledger {
         crate::retention::run(&conn, self.retention, now)
     }
 
+    /// Checkpoint the write-ahead log into the database file.
+    ///
+    /// Called on the graceful shutdown path so the add-on's cold backup sees a complete file instead
+    /// of a hot WAL. A checkpoint is a no-op for an in-memory database.
+    pub fn checkpoint(&self) -> Result<(), LedgerError> {
+        let conn = self.lock()?;
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_row| Ok(()))?;
+        Ok(())
+    }
+
     /// Run the retention job as of this instant.
     pub fn run_retention_now(&self) -> Result<RetentionReport, LedgerError> {
         self.run_retention(Utc::now().timestamp())

@@ -48,7 +48,7 @@ are safe to surface in the UI.
 | `validation_failed` | 422 | a well-formed value the API refuses (mode, override, action, timestamps) |
 | `invalid_setting` | 422 | a known setting with an out-of-range/typed-wrong value |
 | `unsupported_setting` | 422 | a key that is not writable through this endpoint |
-| `engine_unavailable` | 503 | no engine loop is draining the command queue |
+| `engine_unavailable` | 503 | the engine command queue is closed or full (no runtime is draining it) |
 | `corrupt_plan` | 500 | a stored plan summary cannot be rendered (the cause is in the log) |
 | `internal` | 500 | anything unexpected; the body never carries the cause |
 
@@ -81,7 +81,7 @@ Liveness for the Supervisor watchdog. It touches no database and no Home Assista
 ```
 
 `status`/`version` are the stable watchdog contract; `mode` and `lastTickAt` are additive.
-`lastTickAt` is `null` until the engine (P8b) publishes its first snapshot.
+`lastTickAt` is `null` until the engine publishes its first snapshot (it does so after every tick).
 
 ### `GET /site`
 

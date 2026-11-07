@@ -34,16 +34,19 @@ pub(crate) fn consult(
 }
 
 /// Turn a maintenance action into per-pack overrides (operator overrides are appended after these).
+///
+/// `only` restricts a manual run to one pack; a scheduled run passes `None` and covers the fleet.
 pub(crate) fn overrides(
     action: FullChargeAction,
     view: &FleetView,
     now: i64,
+    only: Option<&str>,
 ) -> Vec<ManualOverride> {
     let until = now.saturating_add(OVERRIDE_TTL_S);
+    let packs = selected(view, only);
     match action {
         FullChargeAction::Idle | FullChargeAction::Release => Vec::new(),
-        FullChargeAction::Hold { .. } => view
-            .packs
+        FullChargeAction::Hold { .. } => packs
             .iter()
             .map(|pack| ManualOverride::maintenance(pack.pack_id(), OverrideAction::Hold, until))
             .collect(),
@@ -51,12 +54,11 @@ pub(crate) fn overrides(
             limit_w,
             target_soc_pct,
         } => {
-            let count = view.packs.len();
-            if count == 0 {
+            if packs.is_empty() {
                 return Vec::new();
             }
-            let watts = f64::from(limit_w) / count as f64;
-            view.packs
+            let watts = f64::from(limit_w) / packs.len() as f64;
+            packs
                 .iter()
                 .map(|pack| {
                     let reached = pack
@@ -72,4 +74,12 @@ pub(crate) fn overrides(
                 .collect()
         }
     }
+}
+
+/// The packs a maintenance run covers, in view order.
+fn selected<'a>(view: &'a FleetView, only: Option<&str>) -> Vec<&'a crate::dispatch::PackReading> {
+    view.packs
+        .iter()
+        .filter(|pack| only.is_none_or(|sn| pack.pack_id() == sn))
+        .collect()
 }

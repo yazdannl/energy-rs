@@ -19,6 +19,7 @@ impl Engine {
             let mut state = self.lock()?;
             let before = state.mode;
             state.mode = mode;
+            state.booted = true;
             state.latch = latch;
             state.watchdog.mark(now);
             (state.latch.boot_entries().count(), before)
@@ -34,7 +35,9 @@ impl Engine {
                 mode_before.slug()
             ),
         )?;
-        self.retry_boot_latches(now).await
+        self.retry_boot_latches(now).await?;
+        self.publish_boot(now);
+        Ok(())
     }
 
     /// The stored mode, seeding it from the configured default on the very first boot.

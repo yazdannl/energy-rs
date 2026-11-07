@@ -59,9 +59,35 @@ pub(crate) fn run(
     now: i64,
     policy: &SessionPolicy,
 ) -> Result<Vec<LearningReport>, WiringError> {
+    scan(ledger, store, now, policy, None, true)
+}
+
+/// Relearn now, for one pack or the fleet, whatever the completion trigger says.
+pub(crate) fn relearn_now(
+    ledger: &Ledger,
+    store: &dyn LearningStore,
+    now: i64,
+    policy: &SessionPolicy,
+    only: Option<&str>,
+) -> Result<Vec<LearningReport>, WiringError> {
+    scan(ledger, store, now, policy, only, false)
+}
+
+/// The shared pass: extract, load the window, and learn the selected packs.
+fn scan(
+    ledger: &Ledger,
+    store: &dyn LearningStore,
+    now: i64,
+    policy: &SessionPolicy,
+    only: Option<&str>,
+    completed_only: bool,
+) -> Result<Vec<LearningReport>, WiringError> {
     let packs = ledger.packs()?.all()?;
     let mut reports = Vec::new();
     for pack in &packs {
+        if only.is_some_and(|sn| sn != pack.sn) {
+            continue;
+        }
         let extract_from = now.saturating_sub(policy.extract_seconds());
         ledger.sessions()?.extract(
             pack.id,
@@ -74,12 +100,14 @@ pub(crate) fn run(
         let sessions = ledger
             .sessions()?
             .for_pack(pack.id, from, now.saturating_add(1))?;
-        let recent = policy.check_seconds().saturating_mul(2);
-        let just_finished = sessions
-            .iter()
-            .any(|session| session.complete && session.ended_at >= now.saturating_sub(recent));
-        if !just_finished {
-            continue;
+        if completed_only {
+            let recent = policy.check_seconds().saturating_mul(2);
+            let just_finished = sessions
+                .iter()
+                .any(|session| session.complete && session.ended_at >= now.saturating_sub(recent));
+            if !just_finished {
+                continue;
+            }
         }
         let records: Vec<SessionRecord> = sessions
             .iter()
@@ -90,9 +118,28 @@ pub(crate) fn run(
         }
         let bounds = CapacityBounds::new(pack.label_capacity_kwh, pack.reported_capacity_kwh);
         let report = relearn(store, &pack.sn, &records, &bounds, instant(now))?;
+        store_row(ledger, pack.id, &report, now)?;
         reports.push(report);
     }
     Ok(reports)
+}
+
+/// Publish the learned numbers on the pack row, so `/api/v1/packs` and the planner agree.
+fn store_row(
+    ledger: &Ledger,
+    id: i64,
+    report: &LearningReport,
+    now: i64,
+) -> Result<(), WiringError> {
+    let confidence = report.capacity.confidence.min(report.efficiency.confidence);
+    ledger.packs()?.set_learning(
+        id,
+        report.capacity.applied_kwh,
+        report.efficiency.round_trip,
+        confidence,
+        now,
+    )?;
+    Ok(())
 }
 
 /// Map one ledger session into the learner's plain record; incomplete or SoC-less runs are skipped.

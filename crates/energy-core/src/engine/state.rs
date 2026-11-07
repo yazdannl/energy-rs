@@ -14,13 +14,18 @@ use crate::safety::Authority;
 /// Everything the engine remembers between ticks.
 pub(crate) struct EngineState {
     pub(crate) mode: Authority,
+    /// Whether `boot` already ran; the loop only boots an engine that has not.
+    pub(crate) booted: bool,
     pub(crate) plan: Option<Plan>,
+    pub(crate) plan_id: Option<i64>,
     pub(crate) latch: LiveLatch,
     pub(crate) overrides: Vec<ManualOverride>,
     pub(crate) watchdog: Watchdog,
     pub(crate) cells: CellVoltageGuard,
     pub(crate) maintenance: FullChargeScheduler,
     pub(crate) maintenance_action: FullChargeAction,
+    /// Set by a manual `full_charge` request: the maintenance overrides apply to this pack only.
+    pub(crate) maintenance_pack: Option<String>,
     pub(crate) last_minute: Option<i64>,
     pub(crate) last_session_check: Option<i64>,
     pub(crate) pack_ids: BTreeMap<String, i64>,

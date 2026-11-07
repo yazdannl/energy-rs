@@ -1,7 +1,8 @@
 # Status
 
-Phase gates from [PLAN.md](PLAN.md) §11. P0–P3, P0.5, P5, the P6 ledger store and the P10 packaging
-are done; P4, P6 learning/protection, P7–P9 and the live P10 rollout are open.
+Phase gates from [PLAN.md](PLAN.md) §11. P0–P8 and P12 are done; P9 (the real UI) and the live P10
+rollout are open. The runtime assembly (P12) is what makes the add-on actually run end to end; its
+notes are the first section below.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
@@ -12,11 +13,51 @@ are done; P4, P6 learning/protection, P7–P9 and the live P10 rollout are open.
 | P3 | `energy-price` + settlement + store | formula unit tests vs researched numbers, toggle tests | **done** |
 | P4 | `energy-forecast` | 800/800 exact golden vectors, load-profile tests | todo |
 | P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | **done** |
-| P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | **partial**: ledger store done |
-| P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | todo |
-| P8 | `energy-server` API + savings | contract tests, SSE smoke | **partial**: API/SSE contract done; savings math is the engine's (P8b) |
+| P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | **done** |
+| P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | **done** |
+| P8 | `energy-server` API + savings | contract tests, SSE smoke | **partial**: API/SSE/commands done; savings math still open |
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | **partial**: packaging, image and release pipeline done; nothing published, installed or shadowed yet |
+| P12 | Runtime assembly: bootstrap, engine/API bridge, load profile, lifecycle | end-to-end boot test with fake HA + fake devices, graceful stop | **done** |
+
+## P12 notes (runtime assembly)
+
+Done in `feat/assembly`. This is the phase that turns the crates into a running add-on.
+
+- **Bootstrap.** `energy-server/src/bootstrap/` reads `/data/options.json` (env overrides for local
+  runs; tokens redacted from `Debug`), initialises tracing from `LOG_LEVEL`, opens the ledger (with
+  migrations) and the price store, resolves HA (`SUPERVISOR_TOKEN` proxy, else `HASS_URL` +
+  `HASS_TOKEN`), discovers the dashboard, learns the load profile, discovers batteries (manual
+  entries + mDNS unless `ENERGY_RS_MDNS=off`), builds the price provider (`auto`/`zonneplan`/
+  `ha_sensor`), the fleet ports, the meter, the live plan source and the engine, boots it and then
+  serves ingress. Missing options fail fast with a named cause; the one-line startup summary prints
+  counts only (`batteries`, `manual`, `mdns`, `dashboard`, `prices`, `profile_days`, `mode`).
+- **Engine/API bridge.** `Engine::tick_once` publishes a full `EngineSnapshot` (mode, plan id +
+  binding reasons, per-pack SoC/power/staleness/limits/learned profile/latch/override, meter,
+  forecast totals, faults, last tick) on the watch channel after every tick. `Engine::run_with`
+  selects on the API command queue between ticks and applies `SetMode`, `Override`, `FullCharge` and
+  `Relearn` (`apply_command`), publishing the mode/override change immediately. 503 is now only the
+  closed/overflowed queue, i.e. a genuinely absent or dead engine.
+- **Load profile.** `plan_source::learn_load_profile` reads 56 days of hourly `energy/dashboard`
+  statistics (balance: import − export + PV + discharge − charge; a gap hour is skipped, never
+  zero-filled), builds the 48-bucket profile with `energy-forecast` and persists the
+  schema-versioned payload through the forecast `LearningStore` into ledger settings
+  (`forecast.learning.load.profile`). The planner uses it while it is ≤7 days old and has ≥3 local
+  days; the residential shape is now only a fallback *note*, so a plan with a learned profile and a
+  solar forecast is no longer marked degraded. Refresh runs at boot, daily and on a settings PATCH.
+- **Learned values.** Every learning pass (automatic or `POST /api/v1/learning`) writes the applied
+  capacity, round trip, confidence and instant onto the pack row (ledger migration v4), so the UI
+  and `/api/v1/packs` read the same numbers the plan used; the profile JSON keeps the provenance.
+- **Lifecycle.** SIGTERM/SIGINT stop the HTTP surface, the engine performs its hold (every pack in
+  `auto`; only latched packs otherwise; nothing in advisory/dry_run), the ledger WAL is checkpointed
+  and the process exits 0. A 20 s stall falls back to a direct hold.
+- **Tests.** `tests/boot.rs` boots the real binary path on a temporary `/data` against an in-process
+  Home Assistant (REST states + WS auth/`energy/get_prefs`/`energy/solar_forecast`/statistics) and
+  four fake devices with a seeded price book: health/site/packs/UI answer, the snapshot carries the
+  four packs and a solved non-degraded plan, a mode PATCH reaches the engine, `dry_run` writes
+  nothing (including on stop), `auto` holds every pack on stop, and the captured boot log contains
+  no token. Plus `stream_snapshot` (publish per tick, command effects, faults) and `load_profiles`
+  (persist/serve/expire) in `energy-core`.
 
 ## P8 notes (API)
 

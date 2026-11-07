@@ -5,8 +5,9 @@ Energy dashboard, forecasts PV and load in-process, optimizes a 30-hour battery 
 C DP solver, and drives the SolarFlow 800 Plus packs over the local zenSDK HTTP API — with the
 forecasts, prices, settlement, ledger, savings and UI all rebuilt around that core.
 
-See [docs/PLAN.md](docs/PLAN.md) for the design and [docs/STATUS.md](docs/STATUS.md) for the phase
-gates; the system being replaced is [yazdannl/ha-energy-manager](https://github.com/yazdannl/ha-energy-manager).
+See [docs/PLAN.md](docs/PLAN.md) for the design, [docs/STATUS.md](docs/STATUS.md) for the phase
+gates and [docs/RUNBOOK.md](docs/RUNBOOK.md) for installing and operating the add-on; the system
+being replaced is [yazdannl/ha-energy-manager](https://github.com/yazdannl/ha-energy-manager).
 
 ## Status
 
