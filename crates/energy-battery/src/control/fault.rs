@@ -31,6 +31,10 @@ pub enum ControlFault {
         echoed_w: u32,
     },
     #[error(
+        "report for {got} arrived on the {expected} controller: it cannot confirm or fault a write"
+    )]
+    ForeignReport { expected: String, got: String },
+    #[error(
         "hold on {sn} not confirmed: report echoes inputLimit {input_w} W / outputLimit {output_w} W"
     )]
     HoldEcho {

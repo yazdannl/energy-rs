@@ -64,16 +64,32 @@ body so a stale limit from the direction just left cannot linger.
 * **The write is not the truth; the next report is.** `poll()` verifies the pending command against
   the new report: the limit must echo within **5 W** (the vendor tolerance), the direction must
   match when `acMode` is reported, and a hold must show both limits at 0. A mismatch is a typed
-  `ControlFault`, not a retry loop.
+  `ControlFault`, not a retry loop. Only a report *newer* than the pre-write one counts: it must
+  carry the device's serial and move `messageId` (and not the device clock) forward, so a repeated
+  or pre-command report cannot "confirm" a hold whose 0 W limits it already showed. A duplicate
+  report is no evidence at all and leaves the command in doubt.
+* **One transaction per device.** A write takes the pacer's single in-flight slot *first*, then
+  re-reads the state, re-clamps against the live maximum and transmits — waiting for the slot can
+  take seconds, during which a poll can discover a lower limit, a restart or a wedge. The clamped
+  command is installed as pending *before* the request leaves, and the readback (fetch + fold) never
+  interleaves with a send. While a command is unresolved (no fresh report yet) the next write is
+  refused: an unverified command is never silently replaced.
 * **No report, no write.** `apply()` refuses until the device has been read at least once, and a
   device that comes back from a reboot is re-read instead of trusted.
 * **Wedge / restart.** `acMode` outside `{0, 1, 2}` (`127`/`251`/`255` seen in the field) is a
-  `Wedged` fault: writes are refused until a report shows a usable direction again. A `messageId`
-  that jumps backwards across the 8-bit ring, or a device clock that goes back, is a `Restarted`
-  fault: the pending command is dropped, the next decision is made from the fresh report, and the
-  pacer is pushed out by `FAULT_BACKOFF` (10 s) so "back off, re-read" is enforced, not suggested.
-* **Clamping.** Requested watts are clamped to `min(config ceiling, live chargeMaxLimit /
-  inverseMaxPower)`. A reported `0` means "unknown", never "no power".
+  `Wedged` fault: nonzero writes are refused until a report shows a usable direction again. A hold
+  still goes out, at most `MAX_EMERGENCY_HOLDS` (3) times per wedge episode and logged, because it
+  is the one write the verified shape allows there (it carries no `acMode`) and it takes the pack
+  off the AC side instead of leaving it at the last setpoint. A `messageId` that jumps backwards
+  across the 8-bit ring, or a device clock that goes back, is a `Restarted` fault: the pending
+  command is dropped, the next decision is made from the fresh report, and the pacer is pushed out
+  by `FAULT_BACKOFF` (10 s) so "back off, re-read" is enforced, not suggested.
+* **Clamping.** Requested watts are clamped to the tightest known ceiling: `min(config,
+  chargeMaxLimit / inverseMaxPower, hard limit)`. A reported or configured `0` means "unknown",
+  never "no power" and never "unlimited": an `Unknown` ceiling is its own case and a nonzero
+  command is refused (`BatteryError::NoCeiling`) instead of being transmitted unbounded. The
+  fallback is a validated, model-specific `HardLimit` (nonzero, at most 4000 W); with no trusted
+  ceiling at all, no power is the safe answer.
 
 ## Discovery
 
@@ -100,13 +116,16 @@ protection/  latching low-cell guard (cutoff/resume/stale, persisted), weekly + 
 
 ## Tests
 
-`cargo test -p energy-battery` — 122 tests, no hardware:
+`cargo test -p energy-battery` — 134 tests, no hardware:
 
 * report parsing (both envelopes, every conversion, unknown keys, capacity labels, pack sums);
 * exact JSON payloads for charge/discharge/hold/trim, the 512-byte cap and ack validation;
-* clamping against config, device and unknown ceilings;
-* pacing (second write waits, concurrent writes serialize), echo confirmation inside/outside 5 W,
-  hold-without-`acMode`, wedge, restart and its back-off;
+* clamping against config, device, hard and unknown ceilings (a nonzero command with no ceiling is
+  refused);
+* pacing (second write waits, a queued writer cannot replace an unresolved command), the pending
+  command installed before the request leaves, re-clamping after the slot wait, echo confirmation
+  inside/outside 5 W, duplicate/foreign reports refused as evidence, hold-without-`acMode`, wedge
+  plus the bounded emergency hold, restart and its back-off;
 * discovery hostname parsing and registry merge/dedupe;
 * fleet aggregation, staggered polling, dead-device partial failure and fan-out outcomes;
 * learning: exact capacity/round-trip recovery from synthetic sessions, recency dominance, MAD
@@ -135,6 +154,12 @@ ENERGY_RS_LIVE_HOST=192.168.1.31 ENERGY_RS_LIVE_SN=EOC1NLN9N4XXXXXX \
 * Whether `smartMode` is echoed back as `1` after a write on every firmware — the controller
   therefore re-asserts it instead of verifying it.
 * `writeRsp` meaning, and whether it is ever a usable per-write ack.
+* Whether the write ack's `messageId` is the post-write counter: it is used only as an extra lower
+  bound for confirmation when it is ahead of the last report, and ignored otherwise.
+* Whether `messageId` advances on *every* report on every firmware. Confirmation freshness and
+  restart detection both rest on the 8-bit counter, so a report that repeats it is treated as "no
+  news" — a firmware that keeps the counter still would keep a command in doubt forever (the safe
+  failure: no further writes).
 * The restart heuristic: no uptime field exists, so a wrap and a reboot can be confused; the
   `messageId` window (half the 8-bit ring) plus the device clock is the best signal available.
 * Reversal dead time on the 800 Plus (measured on an SF3000 only).

@@ -36,8 +36,9 @@ pub mod report;
 pub mod transport;
 
 pub use control::{
-    Applied, Command, ControlFault, ControlLimits, DeviceController, Direction, ECHO_TOLERANCE_W,
-    FAULT_BACKOFF, MIN_WRITE_SPACING, Observation, Pacer, clamp_command, clamp_watts,
+    Applied, Ceiling, Command, ControlFault, ControlLimits, DeviceController, Direction,
+    ECHO_TOLERANCE_W, FAULT_BACKOFF, HardLimit, MAX_EMERGENCY_HOLDS, MAX_HARD_LIMIT_W,
+    MIN_WRITE_SPACING, Observation, Pacer, Pending, ceiling_for, clamp_command, clamp_watts,
 };
 pub use discovery::{
     DiscoveredDevice, DiscoveryRegistry, DiscoverySource, browse_mdns, build_hostname,

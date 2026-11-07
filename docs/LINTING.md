@@ -12,6 +12,7 @@ cargo test --workspace                        # test job
 cd web && npm ci && npm run lint              # web-lint (also npm run format:check)
 cd web && npm run check                       # web-check  (svelte-check)
 cd web && npm run build                       # web-build
+cd web && npm test                            # web-test  (vitest; also re-runs the four above)
 ```
 
 ## Rust
