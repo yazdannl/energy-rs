@@ -14,6 +14,7 @@
 
 pub(crate) mod cells;
 pub(crate) mod error;
+pub(crate) mod forecast_store;
 pub(crate) mod maintenance;
 pub(crate) mod measurements;
 pub(crate) mod packs;

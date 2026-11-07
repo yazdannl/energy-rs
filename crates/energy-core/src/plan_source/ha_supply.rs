@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use energy_forecast::load::{LoadDevice, LoadForecast, LoadInputs, LoadProfile, load_forecast};
+
 use chrono::{DateTime, Utc};
-use energy_forecast::load::{LoadInputs, load_forecast};
 use energy_ha::{Connection, discover};
 use energy_price::Settlement;
 use energy_price::book::query::TARIFF_TZ;
@@ -13,6 +14,7 @@ use energy_price::store::PriceRepository;
 use crate::dispatch::BoxFuture;
 use crate::plan::PlanError;
 use crate::plan_source::ha_series;
+use crate::plan_source::load_profiles::LoadProfiles;
 use crate::plan_source::{Forecast, HISTORY_HOURS, MeasuredHistory, PlanSupply, Supply};
 
 /// The real supply: `energy/get_prefs` and the energy dashboard's statistics.
@@ -23,15 +25,16 @@ use crate::plan_source::{Forecast, HISTORY_HOURS, MeasuredHistory, PlanSupply, S
 /// provider is configured. Both land in a degraded [`Forecast`] until a model is wired in, which
 /// the plan summary shows honestly.
 pub struct HaPlanSupply {
-    connection: Connection,
+    connection: Arc<Connection>,
     prices: Arc<dyn PriceRepository>,
     settlement: Settlement,
+    profiles: Option<Arc<LoadProfiles>>,
 }
 
 impl HaPlanSupply {
     /// A supply over one HA connection and the price store.
     pub fn new(
-        connection: Connection,
+        connection: Arc<Connection>,
         prices: Arc<dyn PriceRepository>,
         settlement: Settlement,
     ) -> Self {
@@ -39,7 +42,15 @@ impl HaPlanSupply {
             connection,
             prices,
             settlement,
+            profiles: None,
         }
+    }
+
+    /// Use the learned house profile for the load forecast (a fallback when it is absent/stale).
+    #[must_use]
+    pub fn with_load_profiles(mut self, profiles: Arc<LoadProfiles>) -> Self {
+        self.profiles = Some(profiles);
+        self
     }
 
     /// The measured history from the energy dashboard statistics.
@@ -104,7 +115,11 @@ impl HaPlanSupply {
         Ok(total)
     }
 
-    /// The forward forecast: provider PV (or EWMA) and the load fallback, marked degraded.
+    /// The forward forecast: provider PV and either the learned load profile or the fallback.
+    ///
+    /// A learned profile is the point of P12: when one exists, the load series is a model output and
+    /// the plan is not marked degraded for it. Only a genuinely degraded input (no solar forecast, or
+    /// a residential fallback shape) still sets the note.
     async fn forecast(
         &self,
         now: i64,
@@ -114,35 +129,44 @@ impl HaPlanSupply {
         let start = ha_series::slot_floor(now);
         let slots = crate::plan::HORIZON_SLOTS;
         let solar = ha_series::solar_forecast(&self.connection, entry_ids).await?;
-        let (pv_kw, note) = match solar {
-            Some(series) => (ha_series::sample(&series, start, slots), None),
-            None => (
-                history
-                    .fallback(start, slots, false)
-                    .ok_or(PlanError::ForecastUnavailable {
-                        name: "pv_kw",
-                        reason: "no solar forecast and no full day of measured history".to_owned(),
-                    })?,
-                Some("solar forecast missing; EWMA fallback from measured PV"),
-            ),
-        };
-        let base = history.load_kwh_over(24);
-        let load_kw = if base > 0.0 {
-            load_fallback(now, base, slots)?
+        let mut notes = Vec::new();
+        let pv_kw = if let Some(series) = solar {
+            ha_series::sample(&series, start, slots)
         } else {
+            notes.push("solar forecast missing; EWMA fallback from measured PV");
             history
-                .fallback(start, slots, true)
+                .fallback(start, slots, false)
                 .ok_or(PlanError::ForecastUnavailable {
-                    name: "load_kw",
-                    reason: "no measured load level and no full day of history".to_owned(),
+                    name: "pv_kw",
+                    reason: "no solar forecast and no full day of measured history".to_owned(),
                 })?
         };
-        Ok(Forecast::degraded(
-            pv_kw,
-            load_kw,
-            now,
-            note.unwrap_or("load profile missing; residential fallback shape"),
-        ))
+        let profile = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.current(now));
+        let base = history.load_kwh_over(24);
+        let load_kw = match (&profile, base) {
+            (Some(profile), _) => serve(Some(profile), 0.0, now, slots)?,
+            (None, base) if base > 0.0 => {
+                notes.push("load profile missing; residential fallback shape");
+                serve(None, base, now, slots)?
+            }
+            (None, _) => {
+                notes.push("load profile missing; EWMA fallback from measured load");
+                history
+                    .fallback(start, slots, true)
+                    .ok_or(PlanError::ForecastUnavailable {
+                        name: "load_kw",
+                        reason: "no measured load level and no full day of history".to_owned(),
+                    })?
+            }
+        };
+        Ok(if notes.is_empty() {
+            Forecast::fresh(pv_kw, load_kw, now)
+        } else {
+            Forecast::degraded(pv_kw, load_kw, now, notes.join("; "))
+        })
     }
 }
 
@@ -159,10 +183,15 @@ impl PlanSupply for HaPlanSupply {
                 .forecast(now, &history, &site.solar.forecast_entry_ids)
                 .await?;
             let from = ha_series::slot_floor(now);
-            let prices = self
-                .prices
-                .load_book(from, ha_series::price_end(from))
-                .map_err(PlanError::Price)?;
+            // Load the slots that exist and validate them as one gap-free book; a shorter book is
+            // the normal case before the ~13:00 CET publication, and the source shortens its
+            // horizon. `load_book` would instead refuse the (legitimately) missing tail.
+            let prices = energy_price::PriceBook::new(
+                self.prices
+                    .load(from, ha_series::price_end(from))
+                    .map_err(PlanError::Price)?,
+            )
+            .map_err(PlanError::Price)?;
             let fetched_at = self
                 .prices
                 .latest_publication()
@@ -179,8 +208,13 @@ impl PlanSupply for HaPlanSupply {
     }
 }
 
-/// The residential fallback shape at the measured daily level, as 15-minute kW slots.
-fn load_fallback(now: i64, base_kwh_per_day: f64, slots: usize) -> Result<Vec<f64>, PlanError> {
+/// The load series at `now`, from the learned profile or the residential fallback shape.
+fn serve(
+    profile: Option<&LoadProfile>,
+    base_kwh_per_day: f64,
+    now: i64,
+    slots: usize,
+) -> Result<Vec<f64>, PlanError> {
     let moment = DateTime::<Utc>::from_timestamp(now, 0).ok_or(PlanError::Supply {
         reason: format!("timestamp {now} is not representable"),
     })?;
@@ -194,7 +228,8 @@ fn load_fallback(now: i64, base_kwh_per_day: f64, slots: usize) -> Result<Vec<f6
         TARIFF_TZ,
         Some(30),
     );
-    let forecast = load_forecast(None, &[], &inputs);
+    let devices: Vec<LoadDevice> = Vec::new();
+    let forecast: LoadForecast = load_forecast(profile, &devices, &inputs);
     if forecast.slots.len() < slots {
         return Err(PlanError::ForecastUnavailable {
             name: "load_kw",

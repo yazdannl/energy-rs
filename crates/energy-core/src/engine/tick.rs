@@ -44,6 +44,7 @@ impl Engine {
         let outcome = self.dispatcher.tick(&input, self.sink.as_ref()).await;
         self.mark(now)?;
         self.record(&outcome, now)?;
+        self.publish_tick(now, &view, &meter);
         Ok(outcome)
     }
 
@@ -84,11 +85,16 @@ impl Engine {
         match self.source.plan(now, packs).await {
             Ok(plan) => {
                 self.mark(now).ok();
-                if let Err(error) = self.store_plan(&plan) {
-                    tracing::warn!(%error, "plan could not be persisted");
-                }
+                let plan_id = match self.store_plan(&plan) {
+                    Ok(id) => Some(id),
+                    Err(error) => {
+                        tracing::warn!(%error, "plan could not be persisted");
+                        None
+                    }
+                };
                 if let Ok(mut state) = self.lock() {
                     state.plan = Some(plan.clone());
+                    state.plan_id = plan_id;
                 }
                 Some(plan)
             }
@@ -103,8 +109,12 @@ impl Engine {
     fn prepare(&self, now: i64, fleet: &FleetView, hold: bool) -> Result<Prepared, EngineError> {
         let mut state = self.lock()?;
         state.overrides.retain(|entry| entry.active(now));
-        let mut entries =
-            crate::wiring::maintenance::overrides(state.maintenance_action, fleet, now);
+        let mut entries = crate::wiring::maintenance::overrides(
+            state.maintenance_action,
+            fleet,
+            now,
+            state.maintenance_pack.as_deref(),
+        );
         entries.extend(state.overrides.iter().cloned());
         let stale = hold || state.plan.is_none();
         Ok(Prepared {
@@ -168,6 +178,10 @@ impl Engine {
             )?;
         }
         state.maintenance_action = action;
+        if !action.is_active() {
+            // A manual one-pack run is over; the next scheduled run covers the fleet again.
+            state.maintenance_pack = None;
+        }
         Ok(())
     }
 }

@@ -20,6 +20,7 @@ use crate::engine::watchdog::Watchdog;
 use crate::plan::Plan;
 use crate::replan::ReplanTrigger;
 use crate::safety::{Authority, RAMP_LIMIT_W, SafetyLimits};
+use crate::stream::{RuntimeView, SnapshotPublisher};
 use crate::wiring::latch_store::LedgerLatchStore;
 use crate::wiring::learning_store::LedgerLearningStore;
 
@@ -39,6 +40,8 @@ pub struct Engine {
     pub(crate) trigger: ReplanTrigger,
     pub(crate) cell_store: LedgerLatchStore,
     pub(crate) learning_store: LedgerLearningStore,
+    pub(crate) publisher: Option<Arc<dyn SnapshotPublisher>>,
+    pub(crate) runtime: Option<Arc<dyn RuntimeView>>,
     pub(crate) state: Mutex<EngineState>,
 }
 
@@ -65,13 +68,16 @@ impl Engine {
         };
         let state = EngineState {
             mode: config.mode,
+            booted: false,
             plan: None,
+            plan_id: None,
             latch: LiveLatch::new(),
             overrides: Vec::new(),
             watchdog: Watchdog::with_stall_after(config.stall_after_s()),
             cells: CellVoltageGuard::new(),
             maintenance: FullChargeScheduler::new(config.full_charge, instant(now)),
             maintenance_action: FullChargeAction::Idle,
+            maintenance_pack: None,
             last_minute: None,
             last_session_check: None,
             pack_ids: std::collections::BTreeMap::new(),
@@ -91,6 +97,8 @@ impl Engine {
             ledger,
             dispatcher,
             trigger,
+            publisher: None,
+            runtime: None,
             state: Mutex::new(state),
         }
     }

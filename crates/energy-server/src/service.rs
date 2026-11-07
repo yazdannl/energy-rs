@@ -16,7 +16,7 @@ use energy_core::stream::SnapshotPublisher;
 use energy_core::stream::{EngineCommand, EngineSnapshot, WatchPublisher};
 use energy_ledger::Ledger;
 use energy_price::{PriceRepository, Settlement};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Notify, mpsc, watch};
 
 use crate::engine_handles::EngineHandles;
 use crate::service_options::ServiceOptions;
@@ -32,6 +32,7 @@ pub struct Service {
     snapshots: WatchPublisher,
     commands: mpsc::Sender<EngineCommand>,
     heartbeat: Duration,
+    refresh: Arc<Notify>,
 }
 
 impl Service {
@@ -55,6 +56,7 @@ impl Service {
             snapshots: snapshots.clone(),
             commands,
             heartbeat: options.heartbeat,
+            refresh: Arc::new(Notify::new()),
         });
         (service, EngineHandles::new(snapshots, command_rx))
     }
@@ -87,6 +89,16 @@ impl Service {
     /// A reader woken on every publish (used by the SSE stream).
     pub fn subscribe(&self) -> watch::Receiver<EngineSnapshot> {
         self.snapshots.subscribe()
+    }
+
+    /// Ask the load-profile loop to relearn now (a setting changed).
+    pub fn request_profile_refresh(&self) {
+        self.refresh.notify_one();
+    }
+
+    /// The signal the load-profile loop waits on.
+    pub fn profile_refresh(&self) -> Arc<Notify> {
+        Arc::clone(&self.refresh)
     }
 
     /// The configured SSE heartbeat interval.

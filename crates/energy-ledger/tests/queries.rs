@@ -77,6 +77,7 @@ fn a_pack_upsert_keeps_the_first_seen_and_known_limits() {
         max_discharge_w: Some(800.0),
         first_seen: 900,
         last_seen: 1_000,
+        ..energy_ledger::Pack::new("ABC123", 1.92, 900)
     };
     packs.upsert(&limited).unwrap();
     let mut blank = energy_ledger::Pack::new("ABC123", 1.92, 1_000);

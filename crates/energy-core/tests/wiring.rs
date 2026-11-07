@@ -147,6 +147,28 @@ async fn a_completed_session_triggers_a_relearn() {
         events.iter().any(|event| event.kind == "learning.applied"),
         "the relearn was not journalled: {events:?}"
     );
+
+    // The same numbers land on the pack row, so the UI and the planner read one value.
+    let row = h
+        .ledger
+        .packs()
+        .expect("packs")
+        .get(id)
+        .expect("read")
+        .expect("pack row");
+    // One session is below the learner's minimum, so the capacity stays empty but the row still
+    // records the pass (round trip, confidence, instant).
+    assert_eq!(row.learned_capacity_kwh, profile.capacity_kwh);
+    assert!(
+        row.learned_capacity_kwh.is_none(),
+        "a single session cannot publish a capacity"
+    );
+    assert_eq!(row.learned_round_trip, Some(profile.round_trip));
+    assert_eq!(row.learned_at, Some(NOW));
+    assert!(
+        row.learned_confidence
+            .is_some_and(|value| (0.0..=1.0).contains(&value))
+    );
 }
 
 /// A hold-bounded 30-minute charge run ending five minutes ago.

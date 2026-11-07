@@ -19,8 +19,10 @@ file: migrations are additive and each table name is owned by exactly one crate.
 ## Tables
 
 * `packs` — `sn` (unique), optional name, label and reported capacity, optional device power
-  maxima, `first_seen`/`last_seen`. The upsert keeps `first_seen`, moves `last_seen` forward and
-  never blanks a known limit or name with `NULL`.
+  maxima, `first_seen`/`last_seen`, and the applied learning numbers (`learned_capacity_kwh`,
+  `learned_round_trip`, `learned_confidence`, `learned_at`, migration v4). The upsert keeps
+  `first_seen`, moves `last_seen` forward, never blanks a known limit or name with `NULL` and never
+  touches the learned columns; only a learning pass writes those.
 * `measurements` — 1-minute samples keyed `(pack_id, ts)`; `power_w` signed (positive charges the
   pack), optional `soc_pct`, `kind` (`report` or `derived`). Ingestion is an upsert, so a repeated
   poll is idempotent.
@@ -48,7 +50,9 @@ Forward-only, numbered, in code (`db/migrations/vN.rs`), applied inside one tran
 recorded in `meta.schema_version`. `meta` is created before the first migration, so an empty file,
 a file at any prior version and an already-current file all take the same path. A database whose
 version is newer than the binary is refused (`SchemaTooNew`) instead of opened. Tests migrate from
-empty and from every prior version.
+empty and from every prior version. v3 added the dispatch note; v4 added the four `learned_*` pack
+columns. `Ledger::checkpoint()` runs `PRAGMA wal_checkpoint(TRUNCATE)` on the graceful stop path so
+the cold backup sees a complete file.
 
 ## Retention
 

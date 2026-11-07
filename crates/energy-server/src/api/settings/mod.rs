@@ -234,6 +234,7 @@ pub(crate) async fn patch_settings(
         read_values(ledger, None)
     })
     .await?;
+    service.request_profile_refresh();
     let mut values = render_values(&stored);
     values.retain(|key, _| keys.iter().any(|wanted| wanted == key));
     Ok(Json(Settings {
