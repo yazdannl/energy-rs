@@ -1,0 +1,22 @@
+[package]
+name = "energy-core"
+description = "Engine loop, safety clamp ladder, dispatcher and dry-run/shadow modes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+energy-battery.workspace = true
+energy-forecast.workspace = true
+energy-ha.workspace = true
+energy-ledger.workspace = true
+energy-opt.workspace = true
+energy-price.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "energy-opt"
+description = "DP optimizer core: vendored C solver, Rust validation and brute-force oracle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[dependencies]
