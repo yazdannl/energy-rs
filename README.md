@@ -10,12 +10,15 @@ gates; the system being replaced is [yazdannl/ha-energy-manager](https://github.
 
 ## Status
 
-P0 only: workspace, crates, UI shell and add-on packaging. Everything builds; no business logic yet.
+P0 and P1 are done: workspace, crates, UI shell, add-on packaging, and the DP optimizer core
+(`energy-opt`) — the old add-on's C solver vendored verbatim behind a plain C ABI, a validating Rust
+API, an independent brute-force oracle and 20 parity fixtures pinned to the Python reference. The
+remaining phases (HA, price, forecast, battery, ledger, engine, server, UI) are still stubs.
 
 ## Layout
 
 ```
-crates/energy-opt       C DP core + validation + brute-force oracle   (P1)
+crates/energy-opt       C DP core + validation + brute-force oracle   (done)
 crates/energy-ha        HA REST/WS, dashboard discovery, statistics   (P2)
 crates/energy-price     Zonneplan provider, store, settlement         (P3)
 crates/energy-forecast  PV GBT + physics + EWMA, load profile         (P4)
@@ -40,6 +43,10 @@ add-on keeps controlling the hardware.
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --workspace
+
+# The C core is generated and the parity fixtures come from the old add-on:
+python3 scripts/extract_core.py --check          # the vendored C matches upstream, byte for byte
+python3 scripts/gen_parity_fixtures.py --check   # the fixtures match the Python reference
 
 cd web
 NODE_OPTIONS=--max-old-space-size=4096 npm install

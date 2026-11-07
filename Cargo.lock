@@ -410,6 +410,13 @@ dependencies = [
 [[package]]
 name = "energy-opt"
 version = "0.1.0"
+dependencies = [
+ "cc",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "energy-price"
