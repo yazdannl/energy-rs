@@ -35,6 +35,18 @@ impl SqlitePriceRepository {
         Self::prepare(conn)
     }
 
+    /// Open an existing database for reading only: no creation, no migration, no writes.
+    ///
+    /// The doctor reads a live store this way; a missing file or an empty schema is an error the
+    /// caller reports, never a reason to create the store.
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, PriceError> {
+        let conn = Connection::open(path)?;
+        conn.pragma_update(None, "query_only", true)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
+    }
+
     fn prepare(conn: Connection) -> Result<Self, PriceError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", true)?;

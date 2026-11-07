@@ -6,7 +6,8 @@ C DP solver, and drives the SolarFlow 800 Plus packs over the local zenSDK HTTP 
 forecasts, prices, settlement, ledger, savings and UI all rebuilt around that core.
 
 See [docs/PLAN.md](docs/PLAN.md) for the design, [docs/STATUS.md](docs/STATUS.md) for the phase
-gates and [docs/RUNBOOK.md](docs/RUNBOOK.md) for installing and operating the add-on; the system
+gates, [docs/RUNBOOK.md](docs/RUNBOOK.md) for installing and operating the add-on and
+[docs/DOCTOR.md](docs/DOCTOR.md) for the read-only `doctor`/`plan-once` diagnostics; the system
 being replaced is [yazdannl/ha-energy-manager](https://github.com/yazdannl/ha-energy-manager).
 
 ## Status
@@ -40,6 +41,25 @@ add-on keeps controlling the hardware.
 
 The manifest pulls a prebuilt per-arch image; building the add-on locally (image or release tarball)
 is covered in [energy_rs/README.md](energy_rs/README.md) and [docs/RELEASE.md](docs/RELEASE.md).
+
+### Validate before you switch to `auto`
+
+The same binary carries two read-only diagnostics. They open the ledger and the price store without
+writing, read device reports with `GET /properties/report`, never send a write and never change the
+mode:
+
+```bash
+docker exec addon_energy_rs energy-server doctor      # PASS/WARN/FAIL table, 0/1/2
+docker exec addon_energy_rs energy-server plan-once   # one real plan, 0 or 2
+```
+
+`doctor` checks the HA transport and token kind, the energy dashboard sources, 5-minute/24 h and
+hourly/30 d statistics coverage, the live meter, the price publication/coverage/derivation, every
+battery's report (reachable, SN, pack label, limits, SoC, wedge state), the ledger and one real plan,
+then prints `next steps` for each failure. `plan-once` prints the 15-minute timeline
+(`slot, buy, feed-in, pv, load, battery W, soc, reason`) with the summary and any degraded/refusal
+reason; `--json` is for scripting. Both accept `--data-dir`, `--json` and `--verbose` (timings only).
+See [docs/DOCTOR.md](docs/DOCTOR.md) for every row and its limits.
 
 ## Development
 

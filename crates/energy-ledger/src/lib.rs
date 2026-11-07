@@ -52,6 +52,7 @@
 //! * [`plan`] / [`dispatch`] — plan + slot and dispatch-log persistence.
 //! * [`event`] / [`savings`] / [`settings`] — journal, daily accounting, as-of settings.
 //! * [`retention`] — the trim job.
+//! * [`stats`] — read-only row counts and freshness for the doctor.
 
 pub mod db;
 pub mod dispatch;
@@ -64,6 +65,7 @@ pub mod retention;
 pub mod savings;
 pub mod session;
 pub mod settings;
+pub mod stats;
 
 pub use db::{Ledger, LedgerConfig};
 pub use dispatch::DispatchEntry;
@@ -75,3 +77,4 @@ pub use plan::{Plan, PlanSlot};
 pub use retention::{RetentionPolicy, RetentionReport};
 pub use savings::SavingsDaily;
 pub use session::{Direction, ExtractReport, Session, SessionRules};
+pub use stats::LedgerStats;
