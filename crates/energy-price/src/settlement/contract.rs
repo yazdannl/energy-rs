@@ -3,9 +3,7 @@
 
 use crate::book::Slot;
 use crate::error::PriceError;
-use crate::settlement::{
-    BonusRules, Daylight, EnergyTaxTable, ExportSource, TaxYear,
-};
+use crate::settlement::{BonusRules, Daylight, EnergyTaxTable, ExportSource, TaxYear};
 
 /// VAT on energy (prices.md §7 row 4).
 pub const VAT_NL: f64 = 0.21;

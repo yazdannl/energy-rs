@@ -22,7 +22,11 @@ pub(crate) fn parse_state(payload: &Value) -> Result<ParsedSeries, PriceError> {
     let attributes = payload
         .get("attributes")
         .ok_or_else(|| PriceError::Payload("sensor has no attributes".to_owned()))?;
-    check_unit(attributes.get("unit_of_measurement").and_then(Value::as_str))?;
+    check_unit(
+        attributes
+            .get("unit_of_measurement")
+            .and_then(Value::as_str),
+    )?;
     let forecast = attributes
         .get("forecast")
         .and_then(Value::as_array)
@@ -91,24 +95,20 @@ fn parse_entry(entry: &Value) -> Result<Option<(i64, Option<i64>, f64)>, PriceEr
         .pointer("/price_tax_included/amount")
         .and_then(amount_eur)
         .or_else(|| entry.get("electricity_price").and_then(amount_eur))
-        .ok_or_else(|| {
-            PriceError::Payload(format!("forecast entry at {t_start} has no price"))
-        })?;
+        .ok_or_else(|| PriceError::Payload(format!("forecast entry at {t_start} has no price")))?;
     Ok(Some((t_start, t_end, buy_all_in)))
 }
 
 fn infer_step(entries: &[(i64, Option<i64>, f64)]) -> Option<i64> {
     for (start, end, _) in entries {
-        if let Some(end) = end {
-            if end > start {
-                return Some(end - start);
-            }
+        if let Some(end) = end
+            && end > start
+        {
+            return Some(end - start);
         }
     }
-    entries
-        .windows(2)
-        .find_map(|pair| match pair {
-            [first, second] if second.0 > first.0 => Some(second.0 - first.0),
-            _ => None,
-        })
+    entries.windows(2).find_map(|pair| match pair {
+        [first, second] if second.0 > first.0 => Some(second.0 - first.0),
+        _ => None,
+    })
 }

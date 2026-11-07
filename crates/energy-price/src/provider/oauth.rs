@@ -70,18 +70,15 @@ pub(crate) async fn fetch_access_token(
             reason: format!("status {status}"),
         });
     }
-    let token: TokenResponse = response.json().await.map_err(|err| PriceError::Payload(format!(
-        "Zonneplan token response is not JSON: {err}"
-    )))?;
+    let token: TokenResponse = response.json().await.map_err(|err| {
+        PriceError::Payload(format!("Zonneplan token response is not JSON: {err}"))
+    })?;
     if token.access_token.trim().is_empty() {
         return Err(PriceError::Auth(
             "Zonneplan returned an empty access token".to_owned(),
         ));
     }
-    let ttl = token
-        .expires_in
-        .unwrap_or(TOKEN_TTL_SECS)
-        .clamp(0, 86_400);
+    let ttl = token.expires_in.unwrap_or(TOKEN_TTL_SECS).clamp(0, 86_400);
     let now = Utc::now().timestamp();
     Ok(AccessToken {
         token: token.access_token,

@@ -25,13 +25,13 @@ impl EnergyTaxTable {
             entry.validate()?;
         }
         for pair in years.windows(2) {
-            if let [first, second] = pair {
-                if first.year == second.year {
-                    return Err(PriceError::Payload(format!(
-                        "energy tax year {} appears twice",
-                        first.year
-                    )));
-                }
+            if let [first, second] = pair
+                && first.year == second.year
+            {
+                return Err(PriceError::Payload(format!(
+                    "energy tax year {} appears twice",
+                    first.year
+                )));
             }
         }
         Ok(Self { years })

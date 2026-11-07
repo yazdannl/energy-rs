@@ -18,7 +18,10 @@ impl TaxYear {
 
     /// A rate entry; validity is checked by [`EnergyTaxTable::new`].
     pub const fn new(year: i32, energy_tax_ex: f64) -> Self {
-        Self { year, energy_tax_ex }
+        Self {
+            year,
+            energy_tax_ex,
+        }
     }
 
     /// Refuse a year or a rate that cannot be settled.

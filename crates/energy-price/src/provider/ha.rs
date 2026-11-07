@@ -11,7 +11,7 @@ use crate::error::PriceError;
 use crate::provider::ha_credentials::HaCredentials;
 use crate::provider::parse::{ProviderKind, ingest};
 use crate::provider::parse_ha::parse_state;
-use crate::provider::provider::{BoxFuture, PriceProvider};
+use crate::provider::price_provider::{BoxFuture, PriceProvider};
 use crate::settlement::Contract;
 
 const REQUEST_TIMEOUT_SECS: u64 = 15;

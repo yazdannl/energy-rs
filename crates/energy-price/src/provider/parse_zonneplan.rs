@@ -5,9 +5,7 @@
 use serde_json::Value;
 
 use crate::error::PriceError;
-use crate::provider::parse::{
-    ParsedSeries, RawSlot, amount_eur, parse_timestamp,
-};
+use crate::provider::parse::{ParsedSeries, RawSlot, amount_eur, parse_timestamp};
 
 /// Chart names (prices.md §1.1); the quarter-hourly series is the settlement grid.
 pub(crate) const CHART_QUARTER: &str = "electricity-quarter-hourly";

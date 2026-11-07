@@ -11,7 +11,7 @@ pub mod daylight;
 pub mod export_source;
 pub mod net_metering;
 pub mod saldering;
-pub mod settlement;
+pub mod billing;
 pub mod tax_table;
 pub mod tax_year;
 
@@ -21,6 +21,6 @@ pub use daylight::Daylight;
 pub use export_source::ExportSource;
 pub use net_metering::{NetMetering, SALDERING_END_YEAR};
 pub use saldering::Saldering;
-pub use settlement::Settlement;
+pub use billing::Settlement;
 pub use tax_table::EnergyTaxTable;
 pub use tax_year::TaxYear;

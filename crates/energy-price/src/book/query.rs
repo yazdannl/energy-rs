@@ -43,9 +43,9 @@ impl PriceQuery {
         let start_utc = local_midnight(from).ok_or_else(|| {
             PriceError::Payload(format!("local midnight of {from} is not representable"))
         })?;
-        let end_utc = next_day(to)
-            .and_then(local_midnight)
-            .ok_or_else(|| PriceError::Payload(format!("local midnight after {to} is not valid")))?;
+        let end_utc = next_day(to).and_then(local_midnight).ok_or_else(|| {
+            PriceError::Payload(format!("local midnight after {to} is not valid"))
+        })?;
         Ok(Self {
             from,
             to,
@@ -121,8 +121,7 @@ pub fn local_date_of(t_start: i64) -> Option<NaiveDate> {
 
 /// Local year of an instant in the tariff timezone.
 pub fn local_year_of(t_start: i64) -> Option<i32> {
-    chrono::DateTime::from_timestamp(t_start, 0)
-        .map(|utc| utc.with_timezone(&TARIFF_TZ).year())
+    chrono::DateTime::from_timestamp(t_start, 0).map(|utc| utc.with_timezone(&TARIFF_TZ).year())
 }
 
 /// Whether a naive local timestamp is unambiguous enough to settle (earliest on DST overlap).

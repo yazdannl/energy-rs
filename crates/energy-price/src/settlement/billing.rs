@@ -97,10 +97,7 @@ impl Settlement {
     /// Whether 1:1 netting applies to this slot's tariff date.
     pub fn saldering_active(&self, slot: &Slot) -> bool {
         let date = self.slot_date(slot);
-        self.regime.is_active(date)
-            && self
-                .budget
-                .is_some_and(|budget| budget.year == date.year())
+        self.regime.is_active(date) && self.budget.is_some_and(|budget| budget.year == date.year())
     }
 
     /// kWh of export still netted 1:1 in this slot's tariff year.
@@ -120,8 +117,7 @@ impl Settlement {
 
     /// Raw post-saldering feed-in price (may be negative; export uses the clamped price).
     pub fn feed_in_post(&self, slot: &Slot, source: ExportSource) -> f64 {
-        self.contract
-            .feed_in_post(slot, source, self.bonus_ytd_kwh)
+        self.contract.feed_in_post(slot, source, self.bonus_ytd_kwh)
     }
 
     /// The export price per kWh: 1:1 all-in while budget remains, else the clamped feed-in.
@@ -160,14 +156,16 @@ impl Settlement {
         }
         let date = self.slot_date(slot);
         let mut netted = 0.0;
-        if self.regime.is_active(date) {
-            if let Some(budget) = self.budget.as_mut() {
-                netted = budget.consume(date.year(), kwh);
-            }
+        if self.regime.is_active(date)
+            && let Some(budget) = self.budget.as_mut()
+        {
+            netted = budget.consume(date.year(), kwh);
         }
         let rest = kwh - netted;
-        let counts_for_bonus =
-            rest > 0.0 && self.contract.bonus_applies(slot, source, self.bonus_ytd_kwh);
+        let counts_for_bonus = rest > 0.0
+            && self
+                .contract
+                .bonus_applies(slot, source, self.bonus_ytd_kwh);
         if counts_for_bonus {
             self.bonus_ytd_kwh += rest;
         }

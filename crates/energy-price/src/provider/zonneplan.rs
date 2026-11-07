@@ -12,7 +12,7 @@ use crate::error::PriceError;
 use crate::provider::oauth::{AccessToken, app_headers, fetch_access_token};
 use crate::provider::parse::{ProviderKind, ingest};
 use crate::provider::parse_zonneplan::{CHART_HOUR, CHART_QUARTER, parse_chart};
-use crate::provider::provider::{BoxFuture, PriceProvider};
+use crate::provider::price_provider::{BoxFuture, PriceProvider};
 use crate::provider::zonneplan_credentials::ZonneplanCredentials;
 use crate::settlement::Contract;
 
@@ -106,10 +106,13 @@ impl ZonneplanDirect {
                 reason: format!("status {status}"),
             });
         }
-        response.json::<Value>().await.map_err(|err| PriceError::Http {
-            url,
-            reason: format!("response is not JSON: {err}"),
-        })
+        response
+            .json::<Value>()
+            .await
+            .map_err(|err| PriceError::Http {
+                url,
+                reason: format!("response is not JSON: {err}"),
+            })
     }
 }
 

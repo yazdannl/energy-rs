@@ -24,12 +24,7 @@ pub struct Slot {
 
 impl Slot {
     /// Construct a slot from values already derived (providers use this through the book builder).
-    pub const fn new(
-        t_start: i64,
-        buy_all_in: f64,
-        market: f64,
-        source: SlotSource,
-    ) -> Self {
+    pub const fn new(t_start: i64, buy_all_in: f64, market: f64, source: SlotSource) -> Self {
         Self {
             t_start,
             buy_all_in,

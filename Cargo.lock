@@ -427,9 +427,11 @@ dependencies = [
  "chrono-tz",
  "pretty_assertions",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
