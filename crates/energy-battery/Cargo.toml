@@ -9,6 +9,8 @@ repository.workspace = true
 
 [dependencies]
 axum.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
 futures-util.workspace = true
 mdns-sd.workspace = true
 reqwest.workspace = true

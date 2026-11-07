@@ -46,6 +46,15 @@ pub use discovery::{
 pub use error::BatteryError;
 pub use fake::{FakeBehaviour, FakeDevice, FakePack, FakeState};
 pub use fleet::{DeviceSnapshot, FanOutReport, FleetAggregate, FleetClient, FleetSnapshot};
+pub use learning::{
+    CapacityBounds, CapacityEstimate, CyclePair, DEFAULT_ROUND_TRIP, EfficiencyEstimate,
+    LearningDecision, LearningProfile, LearningReport, LearningStore, Refusal, SessionRecord,
+    SessionWeight, recency_weight, relearn,
+};
+pub use protection::{
+    CellConfig, CellDecision, CellLatch, CellLatchStore, CellReading, CellVoltageGuard,
+    FullChargeAction, FullChargeScheduler, FullChargeSettings, LatchReason,
+};
 pub use report::{GridReverse, PackLabel, PackReport, Properties, Report, SocLimit, parse_report};
 pub use transport::{
     BoxFuture, DeviceIo, Endpoint, HttpTransport, MAX_BODY_BYTES, WriteAck, WriteProperties,
