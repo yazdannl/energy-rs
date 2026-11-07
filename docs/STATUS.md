@@ -14,9 +14,43 @@ are done; P4, P6 learning/protection, P7–P9 and the live P10 rollout are open.
 | P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | **done** |
 | P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | **partial**: ledger store done |
 | P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | todo |
-| P8 | `energy-server` API + savings | contract tests, SSE smoke | todo |
+| P8 | `energy-server` API + savings | contract tests, SSE smoke | **partial**: API/SSE contract done; savings math is the engine's (P8b) |
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | **partial**: packaging, image and release pipeline done; nothing published, installed or shadowed yet |
+
+## P8 notes (API)
+
+Done in `feat/api` (nothing pushed), contract in [API.md](API.md):
+
+- **Contract location.** The engine/server handshake is `energy-core::stream`: `EngineSnapshot`
+  (mode, site, plan, packs with learned profile + latch + override, meter, forecast, last tick,
+  faults), the `SnapshotPublisher` trait with a tokio `watch` implementation, and `EngineCommand`
+  (`SetMode`, `Override`, `FullCharge`, `Relearn`). The server re-exports them; P8b's loop only has
+  to publish a snapshot per tick and drain the command queue. The mode type is the engine's
+  `Authority` (serde slugs on it) and `PATCH /mode` persists through `energy_core::mode::save`
+  (`control.mode`), so the engine and the API cannot disagree about the stored mode. Overrides use
+  the engine's `dispatch::OverrideAction`, so `charge`/`hold`/`off` has one spelling.
+- **Routes.** `health`, `site`, `packs`, `prices`, `plan/current`, `plans`, `dispatch`, `savings`,
+  `settings` GET/PATCH, `mode` PATCH, `override`/`protection`/`learning` POST, `stream` SSE. Units
+  are in every field name (W, Wh, kWh, EUR/kWh); money rounds to the ledger's 1e-6; timestamps are
+  RFC3339 UTC. One error envelope with twelve stable codes and 400/404/409/422/503/500 mapping;
+  the four body commands are validated by `ApiJson` so even extractor failures use the envelope.
+- **Settings.** An eleven-key whitelist with typed validation (choice/number/text); `mode` is
+  deliberately not writable here. `PATCH` is timestamped and appends ledger history; a timestamp
+  predating a stored change is `409 stale_write`, so history is never rewritten. Private keys
+  (e.g. `zonneplan_refresh_token`) are invisible, and a redaction test asserts no token, credential
+  name or database path appears in any response.
+- **SSE.** `state` on connect and after every change, `plan` when the plan id changes, `fault` per
+  new fault, `heartbeat` every 15 s (configurable for tests). Backpressure is the watch channel:
+  slow readers get the newest snapshot, never a backlog.
+- **Static UI.** rust-embed wiring kept; only `/`, `/plan`, `/prices`, `/batteries`, `/savings`,
+  `/settings` fall back to `index.html`, a missing asset is a 404. `main.rs` now opens the ledger
+  and price store from `ENERGY_RS_DATA` and drops the command queue, so write commands answer
+  `503 engine_unavailable` until P8b lands.
+- **Tests.** 32 in the crate: 9 read-contract, 9 command/validation, 7 settings, 4 envelope/redaction,
+  3 SSE (first event, heartbeat, plan event), plus the core snapshot unit tests. `scripts/api_smoke.sh`
+  passes against a locally started binary (all routes 200, plan 404 before the first plan, SSE state
+  event, redaction).
 
 ## P10 notes (packaging)
 
