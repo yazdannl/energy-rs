@@ -346,18 +346,34 @@ function makeDay(now: Date, offset: number): SavingsDay {
   const exportWh = Math.round(pvWh * 0.32);
   const baselineEur = round6((importWh / 1000) * 0.268);
   const actualEur = round6(baselineEur * (0.55 + 0.12 * (1 - wave)));
+  const savingEur = round6(baselineEur - actualEur);
+
+  // The four components sum to the saving exactly, as the API promises.
+  const arbitrageEur = round6(savingEur * 0.45);
+  const selfConsumptionEur = round6(savingEur * 0.4);
+  const feedInEur = round6(savingEur * 0.22);
+  const batteryBalanceEur = round6(savingEur - arbitrageEur - selfConsumptionEur - feedInEur);
+
+  const provisional = offset === 0;
+  const gapped = offset === 3;
+  const moneyPresent = !gapped;
+
   return {
     day: dayKey(date),
-    actualEur,
-    baselineEur,
-    savingEur: round6(baselineEur - actualEur),
+    actualEur: moneyPresent ? actualEur : null,
+    baselineEur: moneyPresent ? baselineEur : null,
+    savingEur: moneyPresent ? savingEur : null,
+    arbitrageEur: moneyPresent ? arbitrageEur : null,
+    selfConsumptionEur: moneyPresent ? selfConsumptionEur : null,
+    feedInEur: moneyPresent ? feedInEur : null,
+    batteryBalanceEur: moneyPresent ? batteryBalanceEur : null,
     importWh,
     exportWh,
     pvWh,
     batteryChargeWh: Math.round(pvWh * 0.42),
     batteryDischargeWh: Math.round(pvWh * 0.34),
-    coverageHours: offset === 0 ? 14.5 : 24,
-    complete: offset !== 0,
+    coverageHours: provisional ? 14.5 : gapped ? 9.5 : 24,
+    complete: !provisional && !gapped,
   };
 }
 
@@ -366,30 +382,39 @@ export function makeSavings(now: Date, period: SavingsPeriod): Savings {
   const days = Array.from({ length: counts[period] }, (_, offset) =>
     makeDay(now, offset),
   ).reverse();
-  const totals = days.reduce(
+  // `lifetime` sums complete days only; shorter periods also count the provisional current day.
+  // A day with `null` money is in `days` but in no total.
+  const counted = days.filter(
+    (day) => day.savingEur !== null && (period !== 'lifetime' || day.complete),
+  );
+  const totals = counted.reduce(
     (acc, day) => ({
-      actualEur: acc.actualEur + day.actualEur,
-      baselineEur: acc.baselineEur + day.baselineEur,
-      savingEur: acc.savingEur + day.savingEur,
+      actualEur: acc.actualEur + (day.actualEur ?? 0),
+      baselineEur: acc.baselineEur + (day.baselineEur ?? 0),
+      savingEur: acc.savingEur + (day.savingEur ?? 0),
+      arbitrageEur: acc.arbitrageEur + (day.arbitrageEur ?? 0),
+      selfConsumptionEur: acc.selfConsumptionEur + (day.selfConsumptionEur ?? 0),
+      feedInEur: acc.feedInEur + (day.feedInEur ?? 0),
+      batteryBalanceEur: acc.batteryBalanceEur + (day.batteryBalanceEur ?? 0),
       importWh: acc.importWh + day.importWh,
       exportWh: acc.exportWh + day.exportWh,
       pvWh: acc.pvWh + day.pvWh,
       batteryChargeWh: acc.batteryChargeWh + day.batteryChargeWh,
       batteryDischargeWh: acc.batteryDischargeWh + day.batteryDischargeWh,
-      days: acc.days + 1,
-      completeDays: acc.completeDays + (day.complete ? 1 : 0),
     }),
     {
       actualEur: 0,
       baselineEur: 0,
       savingEur: 0,
+      arbitrageEur: 0,
+      selfConsumptionEur: 0,
+      feedInEur: 0,
+      batteryBalanceEur: 0,
       importWh: 0,
       exportWh: 0,
       pvWh: 0,
       batteryChargeWh: 0,
       batteryDischargeWh: 0,
-      days: 0,
-      completeDays: 0,
     },
   );
   return {
@@ -401,13 +426,17 @@ export function makeSavings(now: Date, period: SavingsPeriod): Savings {
       actualEur: round6(totals.actualEur),
       baselineEur: round6(totals.baselineEur),
       savingEur: round6(totals.savingEur),
+      arbitrageEur: round6(totals.arbitrageEur),
+      selfConsumptionEur: round6(totals.selfConsumptionEur),
+      feedInEur: round6(totals.feedInEur),
+      batteryBalanceEur: round6(totals.batteryBalanceEur),
       importWh: Math.round(totals.importWh),
       exportWh: Math.round(totals.exportWh),
       pvWh: Math.round(totals.pvWh),
       batteryChargeWh: Math.round(totals.batteryChargeWh),
       batteryDischargeWh: Math.round(totals.batteryDischargeWh),
-      days: totals.days,
-      completeDays: totals.completeDays,
+      days: days.length,
+      completeDays: days.filter((day) => day.complete).length,
     },
   };
 }

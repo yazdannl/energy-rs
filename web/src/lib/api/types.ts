@@ -207,11 +207,20 @@ export interface DispatchResponse {
   entries: DispatchEntry[];
 }
 
+/**
+ * Money is `null` for a **closed** day whose slots were not all measured: the day keeps its energy
+ * sums and `coverageHours` instead of a fabricated number. The current day is provisional — money
+ * present, `complete: false` — until it closes.
+ */
 export interface SavingsDay {
   day: LocalDay;
-  actualEur: number;
-  baselineEur: number;
-  savingEur: number;
+  actualEur: number | null;
+  baselineEur: number | null;
+  savingEur: number | null;
+  arbitrageEur: number | null;
+  selfConsumptionEur: number | null;
+  feedInEur: number | null;
+  batteryBalanceEur: number | null;
   importWh: number;
   exportWh: number;
   pvWh: number;
@@ -221,10 +230,15 @@ export interface SavingsDay {
   complete: boolean;
 }
 
+/** Totals never carry `null`: a `null` day is in `days` but in no total. */
 export interface SavingsTotals {
   actualEur: number;
   baselineEur: number;
   savingEur: number;
+  arbitrageEur: number;
+  selfConsumptionEur: number;
+  feedInEur: number;
+  batteryBalanceEur: number;
   importWh: number;
   exportWh: number;
   pvWh: number;
