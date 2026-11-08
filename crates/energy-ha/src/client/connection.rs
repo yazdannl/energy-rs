@@ -31,6 +31,10 @@ pub(crate) struct Shared {
     waiters: Mutex<HashMap<u64, oneshot::Sender<Result<Value, HaError>>>>,
     subscriptions: Mutex<HashMap<u64, mpsc::Sender<Value>>>,
     next_id: AtomicU64,
+    /// Serialises id assignment with the enqueue: Home Assistant refuses a request whose id is not
+    /// greater than the previous one, and two tasks that take an id before either sends can swap
+    /// them (`id_reuse`). Held across the send only, never across the response wait.
+    send_order: tokio::sync::Mutex<()>,
     closed: Notify,
     closed_flag: AtomicBool,
     request_timeout: Duration,
@@ -43,6 +47,7 @@ impl Shared {
             waiters: Mutex::new(HashMap::new()),
             subscriptions: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            send_order: tokio::sync::Mutex::new(()),
             closed: Notify::new(),
             closed_flag: AtomicBool::new(false),
             request_timeout,
@@ -51,6 +56,11 @@ impl Shared {
 
     pub(crate) fn next_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Take the send order, so ids reach the server in the order they were assigned.
+    pub(crate) async fn lock_send(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.send_order.lock().await
     }
 
     pub(crate) fn request_timeout(&self) -> Duration {
@@ -117,10 +127,6 @@ impl Shared {
         notified.await;
     }
 
-    pub(crate) fn try_send_text(&self, text: String) {
-        let _ = self.out.try_send(Outgoing::Text(text));
-    }
-
     pub(crate) fn try_close(&self) {
         let _ = self.out.try_send(Outgoing::Close);
     }
@@ -180,42 +186,26 @@ impl Connection {
 
     /// Send one command and return the raw `result` value.
     pub async fn call_value(&self, command_type: &str, params: Value) -> Result<Value, HaError> {
-        let id = self.shared.next_id();
-        self.request_with_id(id, command_type, params).await
+        let (sender, receiver) = oneshot::channel();
+        let id = {
+            let _order = self.shared.lock_send().await;
+            let id = self.shared.next_id();
+            self.shared.register_waiter(id, sender);
+            if let Err(error) = self.send_with_id(id, command_type, params).await {
+                self.shared.remove_waiter(id);
+                return Err(error);
+            }
+            id
+        };
+        self.await_reply(id, receiver).await
     }
 
-    /// Subscribe to a command that streams `event` frames carrying the subscription id.
-    pub async fn subscribe(
-        &self,
-        command_type: &str,
-        params: Value,
-    ) -> Result<EventStream, HaError> {
-        let id = self.shared.next_id();
-        let (sender, receiver) = mpsc::channel(SUBSCRIPTION_QUEUE);
-        self.shared.add_subscription(id, sender);
-
-        if let Err(error) = self.request_with_id(id, command_type, params).await {
-            self.shared.remove_subscription(id);
-            return Err(error);
-        }
-        Ok(EventStream::new(Arc::clone(&self.shared), id, receiver))
-    }
-
-    async fn request_with_id(
+    /// Wait for the reply to `id`; a timeout or a closed socket clears the waiter.
+    async fn await_reply(
         &self,
         id: u64,
-        command_type: &str,
-        params: Value,
+        receiver: oneshot::Receiver<Result<Value, HaError>>,
     ) -> Result<Value, HaError> {
-        let (sender, receiver) = oneshot::channel();
-        self.shared.register_waiter(id, sender);
-
-        let request = request_object(id, command_type, params)?;
-        if let Err(error) = self.shared.send_value(&request).await {
-            self.shared.remove_waiter(id);
-            return Err(error);
-        }
-
         match timeout(self.shared.request_timeout(), receiver).await {
             Err(_) => {
                 self.shared.remove_waiter(id);
@@ -224,6 +214,46 @@ impl Connection {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(HaError::Disconnected),
         }
+    }
+
+    /// Subscribe to a command that streams `event` frames carrying the subscription id.
+    pub async fn subscribe(
+        &self,
+        command_type: &str,
+        params: Value,
+    ) -> Result<EventStream, HaError> {
+        let (sender, receiver) = mpsc::channel(SUBSCRIPTION_QUEUE);
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        let id = {
+            let _order = self.shared.lock_send().await;
+            let id = self.shared.next_id();
+            self.shared.add_subscription(id, sender);
+            self.shared.register_waiter(id, reply_sender);
+            if let Err(error) = self.send_with_id(id, command_type, params).await {
+                self.shared.remove_subscription(id);
+                self.shared.remove_waiter(id);
+                return Err(error);
+            }
+            id
+        };
+        // The subscription is only live once the server accepted it: an unknown command must fall
+        // back instead of waiting forever for events that will never come.
+        if let Err(error) = self.await_reply(id, reply_receiver).await {
+            self.shared.remove_subscription(id);
+            return Err(error);
+        }
+        Ok(EventStream::new(Arc::clone(&self.shared), id, receiver))
+    }
+
+    /// Enqueue one command with an already assigned id. The caller holds the send order.
+    async fn send_with_id(
+        &self,
+        id: u64,
+        command_type: &str,
+        params: Value,
+    ) -> Result<(), HaError> {
+        let request = request_object(id, command_type, params)?;
+        self.shared.send_value(&request).await
     }
 }
 

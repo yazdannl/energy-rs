@@ -1,5 +1,7 @@
 //! In-memory repository for tests and `advisory` runs: same publication semantics as SQLite
-//! (content-hash idempotency, immutable publications, newest publication per slot wins).
+//! (content-hash idempotency, immutable slot rows, newest publication per slot wins).  An unchanged
+//! save still refreshes `fetched_at`: it is the last confirmation with the provider, and a book
+//! whose content does not change for a day is not stale.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -7,7 +9,7 @@ use std::sync::Mutex;
 use crate::book::{PriceBook, Slot};
 use crate::error::PriceError;
 use crate::store::publication::{
-    already_stored, book_bounds, canonical_book, content_hash, publication_from_book,
+    already_stored, book_bounds, canonical_book, content_hash, now_utc, publication_from_book,
 };
 use crate::store::{PriceRepository, Publication, SaveOutcome};
 
@@ -59,24 +61,29 @@ impl PriceRepository for MemoryPriceRepository {
         let hash = content_hash(&book);
         let (first, end) = book_bounds(&book)?;
         let mut publications = self.lock()?;
-        if let Some(existing) = publications
+        // An unchanged book still counts as confirmed: the provider answered, and `fetched_at` is
+        // the last confirmation, not the last content change.
+        let confirmed = publications
             .iter()
             .find(|stored| stored.publication.content_hash == hash)
-        {
-            return Ok(SaveOutcome::Unchanged {
-                publication: existing.publication.clone(),
+            .map(|stored| stored.publication.id)
+            .or_else(|| {
+                let latest = publications
+                    .iter()
+                    .max_by_key(|stored| (stored.publication.last_t_end, stored.publication.id))?;
+                let stored = newest_slots(&publications, first, end);
+                already_stored(&book, &stored, Some(&latest.publication))
+                    .then_some(latest.publication.id)
             });
-        }
-        let latest = publications
-            .iter()
-            .max_by_key(|stored| (stored.publication.last_t_end, stored.publication.id));
-        if let Some(latest) = latest {
-            let stored = newest_slots(&publications, first, end);
-            if already_stored(&book, &stored, Some(&latest.publication)) {
-                return Ok(SaveOutcome::Unchanged {
-                    publication: latest.publication.clone(),
-                });
-            }
+        if let Some(id) = confirmed {
+            let touched = publications
+                .iter_mut()
+                .find(|stored| stored.publication.id == id)
+                .ok_or_else(|| PriceError::Store("publication vanished".to_owned()))?;
+            touched.publication.fetched_at = now_utc();
+            return Ok(SaveOutcome::Unchanged {
+                publication: touched.publication.clone(),
+            });
         }
         let next_id = publications
             .iter()

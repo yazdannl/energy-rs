@@ -59,6 +59,41 @@ async fn authenticated_calls_increment_ids_and_deserialize() {
     assert_eq!(ids, vec![1, 2, 3]);
 }
 
+/// Home Assistant refuses a request whose id is not greater than the previous one (`id_reuse`), so
+/// concurrent callers must not swap ids between assignment and enqueue.
+#[tokio::test]
+async fn concurrent_calls_keep_the_ids_in_order() {
+    let server = FakeServer::spawn(Arc::new(|_, command, request| match command {
+        "test/echo" => support::Reply::ok(json!({"value": request["value"].clone()})),
+        _ => support::Reply::fail("unknown_command", "unexpected"),
+    }))
+    .await;
+    let config = Config::direct(&server.base_url(), TOKEN).expect("config");
+    let connection = Arc::new(Connection::connect(&config).await.expect("connect"));
+
+    let mut tasks = Vec::new();
+    for index in 0..16 {
+        let connection = Arc::clone(&connection);
+        tasks.push(tokio::spawn(async move {
+            let echoed: Value = connection
+                .call("test/echo", json!({"value": index}))
+                .await
+                .expect("echo");
+            assert_eq!(echoed["value"], index);
+        }));
+    }
+    for task in tasks {
+        task.await.expect("join");
+    }
+
+    let ids = server.request_ids.lock().expect("ids").clone();
+    assert_eq!(ids.len(), 16);
+    assert!(
+        ids.windows(2).all(|pair| pair[0] < pair[1]),
+        "ids reached the server out of order: {ids:?}"
+    );
+}
+
 #[tokio::test]
 async fn bad_token_is_an_auth_error() {
     let server = FakeServer::spawn(Arc::new(|_, _, _| support::Reply::ok(Value::Null))).await;

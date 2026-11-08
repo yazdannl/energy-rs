@@ -43,14 +43,22 @@ impl EventStream {
 impl Drop for EventStream {
     fn drop(&mut self) {
         self.shared.remove_subscription(self.id);
-        let id = self.shared.next_id();
-        let unsubscribe = json!({
-            "id": id,
-            "type": "unsubscribe_events",
-            "subscription": self.id,
+        // The unsubscribe takes an id like any other command, so it goes through the send order
+        // instead of racing an in-flight request; `drop` cannot await, so it spawns.
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let shared = Arc::clone(&self.shared);
+        let subscription = self.id;
+        handle.spawn(async move {
+            let _order = shared.lock_send().await;
+            let id = shared.next_id();
+            let unsubscribe = json!({
+                "id": id,
+                "type": "unsubscribe_events",
+                "subscription": subscription,
+            });
+            let _ = shared.send_value(&unsubscribe).await;
         });
-        if let Ok(text) = serde_json::to_string(&unsubscribe) {
-            self.shared.try_send_text(text);
-        }
     }
 }

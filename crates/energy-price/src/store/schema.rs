@@ -1,10 +1,11 @@
-//! SQLite schema and in-code migrations.  Publications are append-only; slot rows belong to one
-//! publication and are never updated, so a past publication cannot be rewritten.
+//! SQLite schema and in-code migrations.  Slot rows belong to one publication and are never
+//! updated, so a past publication cannot be rewritten; only `fetched_at` moves, because it is the
+//! last successful poll of that content, not part of it.
 //!
 //! `price_publications` holds the publication identity: `source` is the provider and resolution
 //! (`zonneplan_quarter_hourly`, `ha_hourly`, ...), `content_hash` is the publication key (content
 //! hash of the slot set), `last_t_end` is the coverage end used to detect a new publication, and
-//! `fetched_at` is the poll time for the UI.  `price_slots` keeps one row per slot per publication.
+//! `fetched_at` is the last poll that returned this content (the staleness bound reads it).  `price_slots` keeps one row per slot per publication.
 
 use rusqlite::Connection;
 

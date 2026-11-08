@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::book::{PriceBook, Slot, SlotSource};
 use crate::error::PriceError;
 use crate::store::publication::{
-    already_stored, book_bounds, canonical_book, content_hash, publication_from_book,
+    already_stored, book_bounds, canonical_book, content_hash, now_utc, publication_from_book,
 };
 use crate::store::{PriceRepository, Publication, SaveOutcome, schema};
 
@@ -70,16 +70,27 @@ impl PriceRepository for SqlitePriceRepository {
         let hash = content_hash(&book);
         let (first, end) = book_bounds(&book)?;
         let mut conn = self.lock()?;
-        if let Some(publication) = read_publication_by_hash(&conn, &hash)? {
-            return Ok(SaveOutcome::Unchanged { publication });
-        }
-        if let Some(latest) = read_latest_publication(&conn)? {
-            let stored = load_slots(&conn, first, end)?;
-            if already_stored(&book, &stored, Some(&latest)) {
-                return Ok(SaveOutcome::Unchanged {
-                    publication: latest,
-                });
-            }
+        let confirmed = match read_publication_by_hash(&conn, &hash)? {
+            Some(publication) => Some(publication),
+            None => read_latest_publication(&conn)?.filter(|latest| {
+                load_slots(&conn, first, end)
+                    .is_ok_and(|stored| already_stored(&book, &stored, Some(latest)))
+            }),
+        };
+        if let Some(publication) = confirmed {
+            // The provider answered with the same content: confirm it. `fetched_at` is the last
+            // successful poll, so a book that does not change for a day is not stale.
+            let now = now_utc();
+            conn.execute(
+                "UPDATE price_publications SET fetched_at = ?1 WHERE id = ?2",
+                params![now, publication.id],
+            )?;
+            return Ok(SaveOutcome::Unchanged {
+                publication: Publication {
+                    fetched_at: now,
+                    ..publication
+                },
+            });
         }
         let mut publication = publication_from_book(&book, 0, hash)?;
         let slot_count = i64::try_from(publication.slot_count)

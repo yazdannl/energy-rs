@@ -43,6 +43,36 @@ fn repositories() -> Vec<(&'static str, Box<dyn PriceRepository>)> {
 }
 
 #[test]
+fn an_unchanged_save_confirms_the_publication_without_storing_a_new_one() {
+    for (name, repo) in repositories() {
+        let book = book(START, &[0.20, 0.21, 0.19, 0.18]);
+        let first = repo.save_publication(&book).expect(name);
+        let first_at = first.publication().fetched_at;
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let again = repo.save_publication(&book).expect(name);
+        assert!(
+            matches!(again, SaveOutcome::Unchanged { .. }),
+            "{name}: the same content is not a new publication"
+        );
+        assert_eq!(
+            again.publication().id,
+            first.publication().id,
+            "{name}: same publication"
+        );
+        assert!(
+            again.publication().fetched_at > first_at,
+            "{name}: the confirmation moves the age, or a day-old book looks stale"
+        );
+        let latest = repo.latest_publication().expect(name).expect("latest");
+        assert_eq!(
+            latest.fetched_at,
+            again.publication().fetched_at,
+            "{name}: the stored age is the last confirmation"
+        );
+    }
+}
+
+#[test]
 fn the_published_no_tax_price_survives_a_round_trip() {
     for (name, repo) in repositories() {
         let slots: Vec<_> = support::quarter_hourly(START, &[0.20, 0.21])

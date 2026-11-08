@@ -22,7 +22,8 @@ pub struct Publication {
     pub last_t_end: i64,
     /// Number of slots.
     pub slot_count: usize,
-    /// Fetch time in UTC epoch seconds (publication age for the UI).
+    /// Last successful poll of this content, UTC epoch seconds: the age the staleness bound and
+    /// the UI read. An unchanged re-fetch moves it without creating a publication.
     pub fetched_at: i64,
 }
 
