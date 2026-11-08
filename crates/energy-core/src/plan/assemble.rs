@@ -27,7 +27,10 @@ pub(crate) fn build(input: &PlanInput, check: Option<&Differential>) -> Result<P
         // which is the average price it intends to pay for the energy it holds.
         basis = presolve_basis(input, &slots, &aggregate)?;
     }
-    let policy = Policy { cost_basis_eur_per_kwh: basis, ..input.policy };
+    let policy = Policy {
+        cost_basis_eur_per_kwh: basis,
+        ..input.policy
+    };
     let break_even = break_even(input, &slots, &aggregate, &policy);
     let config = config::solver_config(input, &aggregate, floor, break_even);
     let solved = solve(input, &slots, &config, check)?;

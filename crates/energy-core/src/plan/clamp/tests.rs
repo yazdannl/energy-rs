@@ -58,7 +58,11 @@ fn a_grid_charge_stops_at_the_solar_ceiling_but_the_pv_part_survives() {
     let load = [0.0, 0.0];
     let feed_in = [0.05, 0.05];
     let outcome = clamp(&request(&powers, &energies, &pv, &load, &feed_in, &policy));
-    assert!((outcome.powers[0] - 1.4).abs() < 1e-9, "{:?}", outcome.powers);
+    assert!(
+        (outcome.powers[0] - 1.4).abs() < 1e-9,
+        "{:?}",
+        outcome.powers
+    );
     assert!(outcome.flags[0].ceiling);
 }
 
@@ -72,7 +76,11 @@ fn a_below_break_even_export_is_shortened_to_the_house_need() {
     let load = [0.5, 0.0];
     let feed_in = [0.05, 0.05];
     let outcome = clamp(&request(&powers, &energies, &pv, &load, &feed_in, &policy));
-    assert!((outcome.powers[0] + 0.5).abs() < 1e-9, "{:?}", outcome.powers);
+    assert!(
+        (outcome.powers[0] + 0.5).abs() < 1e-9,
+        "{:?}",
+        outcome.powers
+    );
     assert!(outcome.flags[0].gate);
     assert!(outcome.gated_kwh > 0.0);
 }
@@ -129,7 +137,11 @@ fn the_capture_budget_licenses_a_sale_only_when_pv_would_be_lost() {
     let outcome = clamp(&request(&powers, &energies, &pv, &load, &feed_in, &policy));
     // The budget is the room-limited surplus (0.5 kWh, the 2 kW charge power), which licenses
     // 0.5 kWh of sale: the first slot sells, the second is gated.
-    assert!((outcome.powers[0] + 2.0).abs() < 1e-9, "{:?}", outcome.powers);
+    assert!(
+        (outcome.powers[0] + 2.0).abs() < 1e-9,
+        "{:?}",
+        outcome.powers
+    );
     assert!(outcome.powers[1].abs() < 1e-9, "{:?}", outcome.powers);
     assert!(outcome.flags[1].gate);
 }

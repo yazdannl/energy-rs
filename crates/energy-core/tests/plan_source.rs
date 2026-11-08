@@ -293,8 +293,15 @@ async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
     // The ceiling is half the pack: no plan slot charges above it from the grid.
     let cap = plan.solar_reserve_kwh;
     assert!(cap > 0.0);
-    let max_soc = plan.slots.iter().map(|slot| slot.soc_kwh).fold(0.0, f64::max);
-    assert!(max_soc <= 1.92 + 1e-6, "pack charged above the ceiling: {max_soc}");
+    let max_soc = plan
+        .slots
+        .iter()
+        .map(|slot| slot.soc_kwh)
+        .fold(0.0, f64::max);
+    assert!(
+        max_soc <= 1.92 + 1e-6,
+        "pack charged above the ceiling: {max_soc}"
+    );
 }
 
 #[tokio::test]
@@ -316,5 +323,9 @@ async fn the_peak_guideline_never_forces_an_import() {
     let plan = plan(&source).await;
     // At a high buy price the pack serves the house instead of holding the guideline.
     let first = &plan.slots[0];
-    assert!(first.battery_kw <= 0.0, "the guideline held the pack: {}", first.battery_kw);
+    assert!(
+        first.battery_kw <= 0.0,
+        "the guideline held the pack: {}",
+        first.battery_kw
+    );
 }

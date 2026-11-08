@@ -107,26 +107,17 @@ static SPECS: [SettingSpec; 17] = [
     },
     SettingSpec {
         key: "peak_reserve_value_eur_per_kwh",
-        kind: SettingKind::Number {
-            min: 0.0,
-            max: 1.0,
-        },
+        kind: SettingKind::Number { min: 0.0, max: 1.0 },
         default: "0.15",
     },
     SettingSpec {
         key: "wear_eur_per_kwh",
-        kind: SettingKind::Number {
-            min: 0.0,
-            max: 0.1,
-        },
+        kind: SettingKind::Number { min: 0.0, max: 0.1 },
         default: "0.02",
     },
     SettingSpec {
         key: "cost_basis_eur_per_kwh",
-        kind: SettingKind::Number {
-            min: 0.0,
-            max: 1.0,
-        },
+        kind: SettingKind::Number { min: 0.0, max: 1.0 },
         default: "0",
     },
     SettingSpec {

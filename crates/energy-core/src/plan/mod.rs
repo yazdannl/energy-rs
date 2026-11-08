@@ -7,8 +7,8 @@
 
 mod aggregate;
 mod assemble;
-mod clamp;
 mod checks;
+mod clamp;
 mod config;
 mod differential;
 mod export_policy;
@@ -24,13 +24,13 @@ mod summary;
 mod timeline;
 
 pub use differential::Differential;
+pub use export_policy::ExportPolicy;
 pub use generated_plan::Plan;
 pub use pack_spec::PackSpec;
 pub use pack_state::PackState;
 pub use plan_error::PlanError;
 pub use plan_input::PlanInput;
 pub use plan_summary::PlanSummary;
-pub use export_policy::ExportPolicy;
 pub use policy::Policy;
 
 /// Slots in a plan horizon (30 hours at quarter-hour resolution).

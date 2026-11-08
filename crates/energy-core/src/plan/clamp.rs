@@ -132,7 +132,8 @@ fn curtailment(request: &Request<'_>, baseline: &(Vec<f64>, Vec<f64>, Vec<Flags>
     (0..energies.len())
         .map(|index| {
             let surplus = (request.pv_kw[index] - request.load_kw[index]).max(0.0) * HOURS;
-            let room = (request.spec.e_max_kwh - energies[index]).max(0.0) / request.spec.eta_charge;
+            let room =
+                (request.spec.e_max_kwh - energies[index]).max(0.0) / request.spec.eta_charge;
             let chargeable = surplus.min(room).min(power_limit);
             let curtailed = (surplus - chargeable).max(0.0);
             // Surplus above the charge power is lost whatever the SoC: room cannot rescue it.
@@ -173,7 +174,12 @@ fn pass(
         let mut flag = Flags::default();
         let base = request.load_kw[index] - request.pv_kw[index];
         let mut power = bound_charge(
-            request, request.powers[index], base, start, ceilings[index], &mut flag,
+            request,
+            request.powers[index],
+            base,
+            start,
+            ceilings[index],
+            &mut flag,
         );
         if step(spec, start, power) < spec.e_min_kwh {
             power = power.max((spec.e_min_kwh - start) * spec.eta_discharge / HOURS);

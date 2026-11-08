@@ -242,7 +242,8 @@ impl<'a> Ladder<'a> {
         if slot.battery_kw <= NEGLIGIBLE_KW || self.limits.solar_reserve_pct <= 0.0 {
             return;
         }
-        let ceiling = self.pack.e_max_kwh() - self.pack.capacity_kwh * self.limits.solar_reserve_pct / 100.0;
+        let ceiling =
+            self.pack.e_max_kwh() - self.pack.capacity_kwh * self.limits.solar_reserve_pct / 100.0;
         if self.energy_kwh < ceiling - SOLAR_HYSTERESIS_KWH {
             return;
         }
