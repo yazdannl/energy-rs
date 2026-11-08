@@ -12,23 +12,27 @@ being replaced is [yazdannl/ha-energy-manager](https://github.com/yazdannl/ha-en
 
 ## Status
 
-P0 and P1 are done: workspace, crates, UI shell, add-on packaging, and the DP optimizer core
-(`energy-opt`) — the old add-on's C solver vendored verbatim behind a plain C ABI, a validating Rust
-API, an independent brute-force oracle and 20 parity fixtures pinned to the Python reference. The
-remaining phases (HA, price, forecast, battery, ledger, engine, server, UI) are still stubs.
+P0–P8 and P11–P16 are done: the workspace, the DP optimizer core, the Home Assistant, price, forecast,
+battery and ledger crates, the engine with its safety ladder and dispatcher, the API with SSE, the
+real UI, runtime assembly, measured savings and the read-only `doctor`/`plan-once` diagnostics. The
+control layer and the battery layer have both been through an independent safety review (P15, P16).
+
+P10 is the open gate: `v0.1.0` images and the release tarball are published, the add-on is installed
+next to the old Python one and running `dry_run`; the shadow comparison and the `auto` go-ahead are
+still pending. See [docs/STATUS.md](docs/STATUS.md) for the gate table.
 
 ## Layout
 
 ```
 crates/energy-opt       C DP core + validation + brute-force oracle   (done)
-crates/energy-ha        HA REST/WS, dashboard discovery, statistics   (P2)
-crates/energy-price     Zonneplan provider, store, settlement         (P3)
-crates/energy-forecast  PV GBT + physics + EWMA, load profile         (P4)
-crates/energy-battery   zenSDK client, discovery, learning, protection (P5)
-crates/energy-ledger    SQLite schema, sessions, savings              (P6)
-crates/energy-core      engine loop, safety ladder, dispatcher        (P7)
-crates/energy-server    axum API + embedded UI + add-on entrypoint    (P8)
-web/                    Svelte 5 + Vite + Tailwind 4 UI               (P9/P10)
+crates/energy-ha        HA REST/WS, dashboard discovery, statistics   (done)
+crates/energy-price     Zonneplan provider, store, settlement         (done)
+crates/energy-forecast  PV GBT + physics + EWMA, load profile         (done)
+crates/energy-battery   zenSDK client, discovery, learning, protection (done)
+crates/energy-ledger    SQLite schema, sessions, savings              (done)
+crates/energy-core      engine loop, safety ladder, dispatcher        (done)
+crates/energy-server    axum API + embedded UI + add-on entrypoint    (done)
+web/                    Svelte 5 + Vite + Tailwind 4 UI               (done)
 energy_rs/              Home Assistant add-on (config.yaml, Dockerfile)
 ```
 

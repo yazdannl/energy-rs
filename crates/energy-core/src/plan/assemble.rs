@@ -5,17 +5,18 @@ use energy_price::{ExportSource, Slot};
 
 use crate::plan::aggregate;
 use crate::plan::config;
+use crate::plan::differential::Differential;
 use crate::plan::summary;
 use crate::plan::timeline;
 use crate::plan::{Plan, PlanError, PlanInput, SLOT_MINUTES, SLOT_SECONDS, checks, horizon};
 
-pub(crate) fn build(input: &PlanInput) -> Result<Plan, PlanError> {
+pub(crate) fn build(input: &PlanInput, check: Option<&Differential>) -> Result<Plan, PlanError> {
     checks::validate(input)?;
     let slots = horizon::slots(input)?;
     let aggregate = aggregate::aggregate(input);
     let floor = sell_floor(input, &slots);
     let config = config::solver_config(input, &aggregate, floor);
-    let solved = solve(input, &slots, &config)?;
+    let solved = solve(input, &slots, &config, check)?;
     let rows = timeline::timeline(
         input,
         &slots,
@@ -45,6 +46,7 @@ fn solve(
     input: &PlanInput,
     slots: &[Slot],
     config: &energy_opt::Config,
+    check: Option<&Differential>,
 ) -> Result<energy_opt::SolveResult, PlanError> {
     if slots.len() != input.horizon_slots {
         return Err(PlanError::SolveShape {
@@ -59,7 +61,13 @@ fn solve(
         .collect();
     let minutes = vec![SLOT_MINUTES; slots.len()];
     let scenario = SolveInput::new(&input.pv_kw, &input.load_kw, &buy, &sell, &minutes);
-    Ok(energy_opt::solve(&scenario, config)?)
+    let solved = energy_opt::solve(&scenario, config)?;
+    // The slow path is allowed here and nowhere else: one solve per interval is re-derived by the
+    // oracle, and a disagreement refuses the plan instead of shipping it (PLAN.md §6).
+    if let Some(check) = check {
+        check.verify(&scenario, config, &solved)?;
+    }
+    Ok(solved)
 }
 
 /// The strictest marginal export value over the horizon; the plan's own sell floor.

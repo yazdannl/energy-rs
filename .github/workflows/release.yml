@@ -147,8 +147,13 @@ jobs:
           fi
           docker buildx build "${args[@]}" .
       - name: Smoke test the image
-        if: env.PUSH_IMAGES != 'true'
+        # Runs for published images too: a `--push` build leaves nothing in the local store, so the
+        # image is pulled back from GHCR first. That also proves the tag is really pullable, which
+        # the add-on depends on.
         run: |
+          if [ "${PUSH_IMAGES}" = "true" ]; then
+            docker pull "${IMAGE}"
+          fi
           docker run --rm -d --name energy-rs-smoke -p 8099:8099 "${IMAGE}"
           ok=""
           for _ in $(seq 1 30); do

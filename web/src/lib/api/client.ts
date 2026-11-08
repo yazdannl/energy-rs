@@ -52,9 +52,21 @@ export interface ApiPort {
   relearn(pack?: string): Promise<LearningResponse>;
 }
 
-export function apiRoot(): URL {
-  const base = typeof document === 'undefined' ? 'http://localhost/' : document.baseURI;
-  return new URL('api/v1/', base);
+export function apiRoot(baseURI?: string): URL {
+  const base =
+    baseURI ?? (typeof document === 'undefined' ? 'http://localhost/' : document.baseURI);
+  return new URL('api/v1/', collapseSlashes(base));
+}
+
+/**
+ * Collapse repeated slashes in a URL's path, keeping the scheme's `//`.
+ *
+ * Home Assistant reports an add-on's `ingress_url` as `<entry>//`, so the panel's `document.baseURI`
+ * can end in two slashes. Resolved naively that yields `//api/v1/...`, which the router answers with
+ * 404 -- while `//` itself still serves the SPA shell, so the UI looks connected but stays empty.
+ */
+export function collapseSlashes(url: string): string {
+  return url.replace(/([^:/])\/{2,}/g, '$1/');
 }
 
 function query(params: Record<string, string | number | undefined>): string {

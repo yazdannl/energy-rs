@@ -9,6 +9,7 @@ mod aggregate;
 mod assemble;
 mod checks;
 mod config;
+mod differential;
 mod generated_plan;
 mod horizon;
 mod pack_spec;
@@ -19,6 +20,7 @@ mod plan_summary;
 mod summary;
 mod timeline;
 
+pub use differential::Differential;
 pub use generated_plan::Plan;
 pub use pack_spec::PackSpec;
 pub use pack_state::PackState;

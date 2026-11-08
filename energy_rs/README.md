@@ -4,10 +4,11 @@ Home Assistant add-on for [energy-rs](https://github.com/yazdannl/energy-rs): it
 dashboard, plans battery dispatch from prices and the PV/load forecast, and — only in `auto` — writes
 setpoints to SolarFlow packs over the LAN.
 
-**State: packaging (P10).** The ledger, prices, battery protocol and planner are in place; the engine
-loop and the UI wiring are not (P7–P9). Installed today the add-on serves the ingest UI shell and the
-health endpoint, stores its options and logs — `mode` is validated but nothing is dispatched yet, so
-`auto` is safe but pointless. Install it side by side with the old add-on, not instead of it.
+**State: side-by-side dry run (P10).** The engine, the planner, the battery control, the ledger and
+the UI are all in place; the add-on plans and journals intended setpoints. It ships in `dry_run` on
+purpose: nothing is written to a pack until `mode` is set to `auto`, so it can run next to the old
+add-on and be compared with it. Validate with the read-only `doctor` and `plan-once` diagnostics
+before switching.
 
 ## Install
 
