@@ -194,7 +194,19 @@ with the old add-on's actual dispatch) → user flips `auto` and stops the old a
 | P9 | `web/` UI | build + render smoke, no console errors, ingress paths |
 | P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending |
 
-P1 ∥ P2 after P0; P4 ∥ P5 ∥ P3 after P2/P1 land; P9 starts when the P8 contract is frozen.
+Phases added while executing the plan (same rules, same gates):
+
+| # | Phase | Gate |
+|---|---|---|
+| P11 | `web/` real UI: Now, Plan, Prices, Batteries, Savings, Settings | build + render smoke, no console errors, ingress paths |
+| P12 | Runtime assembly: bootstrap, engine/API bridge, load profile, lifecycle | end-to-end boot test with fake HA + fake devices, graceful stop |
+| P13 | Savings accounting: measured counterfactual, split, rollups, catch-up | accounting/rollup tests, `docs/SAVINGS.md` |
+| P14 | Read-only diagnostics: `doctor` and `plan-once` | `docs/DOCTOR.md`, CLI tests |
+| P15 | Control-layer hardening from the independent safety review | one regression test per finding, `docs/RUNBOOK.md` §2 |
+| P16 | Battery-layer hardening from the independent safety review | one regression test per finding |
+
+P1 ∥ P2 after P0; P4 ∥ P5 ∥ P3 after P2/P1 land; P9 starts when the P8 contract is frozen; P11
+replaces P9's placeholder shell; P13–P16 land as independent reviews report.
 
 Standing rules: one worktree per task, merge to `main`, green gates before merge, push every merge,
 no pushes/deploys without explicit instruction, no secrets in code or logs.

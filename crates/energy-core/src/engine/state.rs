@@ -7,6 +7,7 @@ use energy_battery::protection::{CellLatch, CellVoltageGuard};
 
 use crate::dispatch::ManualOverride;
 use crate::engine::LiveLatch;
+use crate::engine::Refusal;
 use crate::engine::Watchdog;
 use crate::plan::Plan;
 
@@ -37,6 +38,8 @@ pub(crate) struct EngineState {
     pub(crate) known_packs: Vec<(String, Option<i64>)>,
     pub(crate) last_stale_log: Option<i64>,
     pub(crate) last_refusal_log: Option<i64>,
+    /// Why the last solve was refused; cleared by the next plan that is accepted.
+    pub(crate) refusal: Option<Refusal>,
     pub(crate) latch_dirty: bool,
 }
 

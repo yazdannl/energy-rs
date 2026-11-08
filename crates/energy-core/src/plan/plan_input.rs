@@ -2,7 +2,7 @@
 
 use energy_price::{PriceBook, Settlement};
 
-use crate::plan::{HORIZON_SLOTS, PackState, Plan, PlanError, assemble};
+use crate::plan::{Differential, HORIZON_SLOTS, PackState, Plan, PlanError, assemble};
 
 /// A plan request under construction.
 ///
@@ -124,6 +124,11 @@ impl PlanInput {
 
     /// Validate, solve and return the plan -- or the typed reason it was refused.
     pub fn plan(&self) -> Result<Plan, PlanError> {
-        assemble::build(self)
+        self.plan_checked(None)
+    }
+
+    /// Build the plan, running the periodic oracle differential when `check` is due.
+    pub fn plan_checked(&self, check: Option<&Differential>) -> Result<Plan, PlanError> {
+        assemble::build(self, check)
     }
 }

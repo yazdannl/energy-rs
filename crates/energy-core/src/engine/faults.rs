@@ -5,6 +5,7 @@
 //! a file path.
 
 use crate::dispatch::{FleetView, MeterReading};
+use crate::engine::Refusal;
 use crate::plan::Plan;
 use crate::stream::{FaultSnapshot, RuntimeView};
 
@@ -18,6 +19,7 @@ pub(crate) fn derive(
     view: &FleetView,
     meter: &MeterReading,
     runtime: Option<&dyn RuntimeView>,
+    refusal: Option<&Refusal>,
 ) -> Vec<FaultSnapshot> {
     let mut faults = Vec::new();
     match plan {
@@ -35,6 +37,16 @@ pub(crate) fn derive(
             since: plan.horizon_end,
         }),
         Some(_) => {}
+    }
+    if let Some(refusal) = refusal {
+        faults.push(FaultSnapshot {
+            kind: "plan_refused".to_owned(),
+            message: format!(
+                "the last plan solve was refused, so the packs are held: {}",
+                refusal.reason
+            ),
+            since: refusal.at,
+        });
     }
     faults.extend(pack_faults(now, view));
     if meter.grid_w.is_none() {

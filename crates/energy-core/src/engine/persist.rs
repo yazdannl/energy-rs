@@ -136,18 +136,39 @@ impl Engine {
 
     /// Log a refused solve, at most once every five minutes.
     pub(crate) fn log_refusal(&self, now: i64, reason: &str) {
-        let Ok(mut state) = self.lock() else {
-            return;
-        };
-        if !throttle(state.last_refusal_log, now, 300) {
-            return;
-        }
-        state.last_refusal_log = Some(now);
-        drop(state);
-        if let Err(error) = self.event(now, EventLevel::Warn, "plan.refused", reason.to_owned()) {
-            tracing::warn!(%error, "plan refusal could not be journalled");
+        if self.record_refusal(now, reason) {
+            self.report_refusal(now, reason);
         }
     }
+
+    /// Say it once: the operator's line in the add-on log, then the ledger event.
+    fn report_refusal(&self, now: i64, reason: &str) {
+        tracing::warn!(reason, "plan solve refused; holding all packs");
+        if let Err(error) = self.event(now, EventLevel::Warn, "plan.refused", reason.to_owned()) {
+            note_journal_failure(&error);
+        }
+    }
+
+    /// Keep the refusal for the snapshot and the throttle; whether it is worth reporting now.
+    fn record_refusal(&self, now: i64, reason: &str) -> bool {
+        let Ok(mut state) = self.lock() else {
+            return false;
+        };
+        if !throttle(state.last_refusal_log, now, 300) {
+            return false;
+        }
+        state.last_refusal_log = Some(now);
+        state.refusal = Some(crate::engine::Refusal {
+            reason: reason.to_owned(),
+            at: now,
+        });
+        true
+    }
+}
+
+/// A ledger failure must not hide the refusal that is already in the log.
+fn note_journal_failure(error: &EngineError) {
+    tracing::warn!(%error, "plan refusal could not be journalled");
 }
 
 /// Fold one pack's outcome into the latch; returns whether it changed.

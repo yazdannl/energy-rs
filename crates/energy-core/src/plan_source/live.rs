@@ -6,7 +6,7 @@ use energy_price::PriceBook;
 
 use crate::dispatch::BoxFuture;
 use crate::engine::PlanSource;
-use crate::plan::{HORIZON_SLOTS, PackState, Plan, PlanError, SLOT_SECONDS};
+use crate::plan::{Differential, HORIZON_SLOTS, PackState, Plan, PlanError, SLOT_SECONDS};
 use crate::plan_source::{MIN_HORIZON_SLOTS, PlanSupply, SourceConfig, Supply};
 use crate::replan::Changes;
 
@@ -20,6 +20,7 @@ pub struct LivePlanSource<S: PlanSupply> {
     config: SourceConfig,
     pending: Mutex<Changes>,
     last: Mutex<Option<Fingerprint>>,
+    differential: Differential,
 }
 
 /// What makes a stored plan's inputs outdated without reading the inputs again.
@@ -47,6 +48,7 @@ impl<S: PlanSupply> LivePlanSource<S> {
             config,
             pending: Mutex::new(Changes::none()),
             last: Mutex::new(None),
+            differential: Differential::default(),
         }
     }
 
@@ -70,7 +72,8 @@ impl<S: PlanSupply> LivePlanSource<S> {
             Some(note) => input.with_forecast_note(note),
             None => input,
         };
-        input.plan()
+        let check = self.differential.due(now).then_some(&self.differential);
+        input.plan_checked(check)
     }
 
     /// Refuse a price book whose publication is older than the configured bound.

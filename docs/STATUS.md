@@ -1,8 +1,8 @@
 # Status
 
-Phase gates from [PLAN.md](PLAN.md) §11. P0–P8 and P12 are done; P9 (the real UI) and the live P10
-rollout are open. The runtime assembly (P12) is what makes the add-on actually run end to end. The
-newest notes come first below.
+Phase gates from [PLAN.md](PLAN.md) §11. P0–P8 and P11–P16 are done; P10 is published and
+installed side by side, and its shadow run is the only gate still open. The runtime assembly (P12) is
+what makes the add-on actually run end to end; the real UI is P11. The newest notes come first below.
 
 | # | Phase | Gate | State |
 |---|---|---|---|
@@ -11,16 +11,19 @@ newest notes come first below.
 | P1 | `energy-opt` + C core + validation + Rust oracle | differential tests, `-ffp-contract=off`, bench < 50 ms/solve | **done** |
 | P2 | `energy-ha` discovery/stats/subscriptions | recorded-fixture tests, live read-only smoke | **done** |
 | P3 | `energy-price` + settlement + store | formula unit tests vs researched numbers, toggle tests | **done** |
-| P4 | `energy-forecast` | 800/800 exact golden vectors, load-profile tests | todo |
+| P4 | `energy-forecast` | 800/800 exact golden vectors, load-profile tests | **done**: bit-exact GBT port, physics, EWMA fallback, 48-bucket profile |
 | P5 | `energy-battery` zenSDK client + fake device | protocol tests against an in-process fake, pacing/echo tests | **done** |
 | P6 | `energy-ledger` + learning + protection | schema/migration tests, learner golden sessions | **done** |
 | P7 | `energy-core` engine + safety + dispatch + dry-run | ported trap tests, shadow-mode test | **done** |
 | P8 | `energy-server` API + savings | contract tests, SSE smoke | **done**: API/SSE/commands and the measured savings rollup (P13) |
-| P9 | `web/` UI | build + render smoke, no console errors, ingress paths | todo |
-| P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | **partial**: packaging, image and release pipeline done; nothing published, installed or shadowed yet |
+| P9 | `web/` UI | build + render smoke, no console errors, ingress paths | **done**: shipped as P11 |
+| P10 | Packaging + install side-by-side + shadow run | live advisory/dry-run verified, go-ahead pending | **partial**: `v0.1.0` images and the release tarball are published, the add-on is installed next to the old one and running `dry_run`; the shadow comparison and the `auto` go-ahead are open |
+| P11 | `web/` real UI: Now/Plan/Prices/Batteries/Savings/Settings | build + render smoke, no console errors, ingress paths | **done** |
 | P12 | Runtime assembly: bootstrap, engine/API bridge, load profile, lifecycle | end-to-end boot test with fake HA + fake devices, graceful stop | **done** |
 | P13 | Savings accounting: measured counterfactual, split, rollups, catch-up | accounting/rollup tests, `docs/SAVINGS.md` | **done** |
+| P14 | Read-only diagnostics: `doctor` and `plan-once` | `docs/DOCTOR.md`, CLI tests | **done** |
 | P15 | Control-layer hardening from the independent safety review (`crates/energy-core`) | one regression test per finding, `docs/RUNBOOK.md` §2 safety invariants | **done** |
+| P16 | Battery-layer hardening from the independent safety review (`crates/energy-battery`) | one regression test per finding (`tests/echo.rs`, `tests/control.rs`, `tests/clamp.rs`) | **done** |
 
 ## P15 notes (control-layer safety review)
 

@@ -61,7 +61,9 @@ impl Engine {
     ///
     /// A stale/expired/missing plan is never executed: the tick holds and the fresh solve lands for
     /// the next one. Every other trigger (slot boundary, SoC deviation, refreshed inputs) replans
-    /// first and then executes the new plan in the same tick.
+    /// first and then executes the new plan in the same tick. A **refused** solve always holds too:
+    /// the previous plan is not a fallback, and the trigger fires again until a plan is accepted
+    /// (`PLAN.md` §6).
     async fn maybe_replan(&self, now: i64, fleet: &FleetView) -> Result<bool, EngineError> {
         let plan = self.current_plan()?;
         let reason = self.trigger.reason(
@@ -80,7 +82,12 @@ impl Engine {
         if stale {
             self.log_stale(now, reason)?;
         }
-        self.replan(now, fleet).await;
+        if self.replan(now, fleet).await.is_none() {
+            // The refusal is journalled by `replan`; the hold is the safety half of it. Nothing is
+            // dispatched against the previous plan while the source keeps refusing.
+            self.log_stale(now, reason)?;
+            return Ok(true);
+        }
         Ok(stale)
     }
 
@@ -104,6 +111,8 @@ impl Engine {
                 if let Ok(mut state) = self.lock() {
                     state.plan = Some(plan.clone());
                     state.plan_id = plan_id;
+                    // An accepted plan clears the refusal fault: the hold is over.
+                    state.refusal = None;
                 }
                 Some(plan)
             }

@@ -156,4 +156,10 @@ pub enum PlanError {
         /// Returned slots.
         got: usize,
     },
+    /// The periodic differential against the brute-force oracle disagreed (`PLAN.md` §6).
+    #[error("the oracle differential disagreed: {detail}")]
+    Differential {
+        /// Which field disagreed, and the two values.
+        detail: String,
+    },
 }

@@ -52,12 +52,20 @@ impl Engine {
             .cloned()
             .collect();
         let last_tick = state.watchdog.last_progress();
+        let refusal = state.refusal.clone();
         drop(state);
 
         let mode = self.gate.mode();
         let packs = self.pack_snapshots(view, now, &overrides);
         let plan_snapshot = plan.as_ref().map(|plan| plan_snapshot(plan, plan_id));
-        let faults = faults::derive(now, plan.as_ref(), view, meter, self.runtime.as_deref());
+        let faults = faults::derive(
+            now,
+            plan.as_ref(),
+            view,
+            meter,
+            self.runtime.as_deref(),
+            refusal.as_ref(),
+        );
         EngineSnapshot {
             mode,
             site: self
@@ -82,6 +90,7 @@ impl Engine {
         let Ok(state) = self.lock() else {
             return;
         };
+        let refusal = state.refusal.clone();
         drop(state);
         let mode = self.gate.mode();
         let view = FleetView::default();
@@ -92,7 +101,14 @@ impl Engine {
                 .runtime
                 .as_ref()
                 .map_or_else(Default::default, |runtime| runtime.site()),
-            faults: faults::derive(now, None, &view, &meter, self.runtime.as_deref()),
+            faults: faults::derive(
+                now,
+                None,
+                &view,
+                &meter,
+                self.runtime.as_deref(),
+                refusal.as_ref(),
+            ),
             ..EngineSnapshot::default()
         });
     }

@@ -94,6 +94,7 @@ impl Engine {
             known_packs: Vec::new(),
             last_stale_log: None,
             last_refusal_log: None,
+            refusal: None,
             latch_dirty: false,
         };
         let state = Arc::new(Mutex::new(state));
