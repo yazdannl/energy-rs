@@ -105,7 +105,6 @@ fn published_end(
     end
 }
 
-
 /// The configured battery charge and discharge statistics, per battery source.
 pub(crate) fn battery_entities(site: &SiteModel) -> (Vec<String>, Vec<String>) {
     let mut charge = Vec::new();
@@ -211,7 +210,11 @@ mod tests {
     fn the_unpublished_tail_is_trimmed_not_refused() {
         let window = (START, START + 4 * SLOT_SECONDS);
         let end = published_end(&series(3), &series(3), &series(3), window.0, window.1);
-        assert_eq!(end, START + 3 * SLOT_SECONDS, "the last published slot wins");
+        assert_eq!(
+            end,
+            START + 3 * SLOT_SECONDS,
+            "the last published slot wins"
+        );
         let history = timeline(
             &series(3),
             &series(3),
