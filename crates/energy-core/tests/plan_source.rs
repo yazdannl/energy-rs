@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use energy_core::dispatch::BoxFuture;
 use energy_core::engine::PlanSource;
-use energy_core::plan::{HORIZON_SLOTS, Plan, PlanError};
+use energy_core::plan::{ExportPolicy, HORIZON_SLOTS, Plan, PlanError, Policy};
 use energy_core::plan_source::{
     Forecast, LivePlanSource, MeasuredHistory, PlanSupply, SourceConfig, Supply,
 };
@@ -226,4 +226,95 @@ async fn a_forecast_rebuilt_on_every_read_does_not_ask_for_a_replan() {
     // The next slot is a real change of the capture instant's bucket, and the trigger says so.
     source.plan(NOW + 900, packs()).await.expect("third plan");
     assert!(source.changes().forecast, "a new slot is a forecast change");
+}
+
+/// A source with the post-net-metering policy armed and a known cost basis.
+fn policy_source(supply: Supply, basis: f64) -> LivePlanSource<FakeSupply> {
+    let policy = Policy {
+        export: ExportPolicy::CostBasis,
+        solar_reserve_pct: 0.0,
+        peak_reserve_pct: 0.0,
+        peak_reserve_value_eur_per_kwh: 0.0,
+        wear_eur_per_kwh: 0.0,
+        cost_basis_eur_per_kwh: Some(basis),
+    };
+    let config = SourceConfig {
+        policy,
+        ..SourceConfig::default()
+    };
+    LivePlanSource::new(FakeSupply::new(supply), config)
+}
+
+#[tokio::test]
+async fn a_below_break_even_export_is_not_planned() {
+    // Break-even 0.10/0.9025 = 0.1108; the feed-in is 0.05, so the plan never exports.
+    let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.30);
+    let source = policy_source(supply(prices, NOW), 0.10);
+    let plan = plan(&source).await;
+    assert!(plan.export_floor_eur_per_kwh.is_some());
+    for slot in &plan.slots {
+        let base = slot.load_kw - slot.pv_kw;
+        assert!(
+            base + slot.battery_kw >= -1e-9,
+            "slot {} exports below the floor: {}",
+            slot.idx,
+            slot.feed_in
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_above_break_even_export_is_planned_when_it_pays() {
+    // A free basis makes the break-even the wear only, so a high feed-in licenses an export.
+    let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.60);
+    let source = policy_source(supply(prices, NOW), 0.01);
+    let plan = plan(&source).await;
+    assert!(plan.export_floor_eur_per_kwh.unwrap() < 0.02);
+    assert!(plan.summary.discharged_kwh > 0.0);
+}
+
+#[tokio::test]
+async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
+    let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.02);
+    let policy = Policy {
+        export: ExportPolicy::Legacy,
+        solar_reserve_pct: 50.0,
+        peak_reserve_pct: 0.0,
+        peak_reserve_value_eur_per_kwh: 0.0,
+        wear_eur_per_kwh: 0.0,
+        cost_basis_eur_per_kwh: None,
+    };
+    let config = SourceConfig {
+        policy,
+        ..SourceConfig::default()
+    };
+    let source = LivePlanSource::new(FakeSupply::new(supply(prices, NOW)), config);
+    let plan = plan(&source).await;
+    // The ceiling is half the pack: no plan slot charges above it from the grid.
+    let cap = plan.solar_reserve_kwh;
+    assert!(cap > 0.0);
+    let max_soc = plan.slots.iter().map(|slot| slot.soc_kwh).fold(0.0, f64::max);
+    assert!(max_soc <= 1.92 + 1e-6, "pack charged above the ceiling: {max_soc}");
+}
+
+#[tokio::test]
+async fn the_peak_guideline_never_forces_an_import() {
+    let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.40);
+    let policy = Policy {
+        export: ExportPolicy::Legacy,
+        solar_reserve_pct: 0.0,
+        peak_reserve_pct: 50.0,
+        peak_reserve_value_eur_per_kwh: 0.05,
+        wear_eur_per_kwh: 0.0,
+        cost_basis_eur_per_kwh: None,
+    };
+    let config = SourceConfig {
+        policy,
+        ..SourceConfig::default()
+    };
+    let source = LivePlanSource::new(FakeSupply::new(supply(prices, NOW)), config);
+    let plan = plan(&source).await;
+    // At a high buy price the pack serves the house instead of holding the guideline.
+    let first = &plan.slots[0];
+    assert!(first.battery_kw <= 0.0, "the guideline held the pack: {}", first.battery_kw);
 }

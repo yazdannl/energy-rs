@@ -1,7 +1,6 @@
 //! Turn the solver's path into the ledger's `plan_slots` rows.
 
 use energy_ledger::plan::PlanSlot;
-use energy_opt::SolveResult;
 use energy_price::{ExportSource, Settlement, Slot};
 
 use crate::plan::{PlanError, PlanInput, SLOT_MINUTES};
@@ -10,13 +9,14 @@ use crate::plan::{PlanError, PlanInput, SLOT_MINUTES};
 pub(crate) fn timeline(
     input: &PlanInput,
     slots: &[Slot],
-    solved: &SolveResult,
+    energies: &[f64],
+    powers: &[f64],
     etas: (f64, f64),
 ) -> Result<Vec<PlanSlot>, PlanError> {
-    if solved.energies.len() != slots.len() || solved.powers.len() != slots.len() {
+    if energies.len() != slots.len() || powers.len() != slots.len() {
         return Err(PlanError::SolveShape {
             expected: slots.len(),
-            got: solved.energies.len().min(solved.powers.len()),
+            got: energies.len().min(powers.len()),
         });
     }
     let hours = SLOT_MINUTES / 60.0;
@@ -24,7 +24,7 @@ pub(crate) fn timeline(
     let mut timeline = Vec::with_capacity(slots.len());
     for (index, (slot, (energy, power))) in slots
         .iter()
-        .zip(solved.energies.iter().zip(solved.powers.iter()))
+        .zip(energies.iter().zip(powers.iter()))
         .enumerate()
     {
         // The timeline length is the 120-slot horizon; cast is bounded.
@@ -37,8 +37,7 @@ pub(crate) fn timeline(
         row.load_kw = input.load_kw[index];
         row.battery_kw = *power;
         row.soc_kwh = *energy;
-        row.target_soc_kwh = solved
-            .energies
+        row.target_soc_kwh = energies
             .get(index + 1)
             .copied()
             .unwrap_or_else(|| end_energy(*energy, *power, hours, eta_charge, eta_discharge));

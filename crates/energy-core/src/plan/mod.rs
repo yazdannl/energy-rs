@@ -7,9 +7,11 @@
 
 mod aggregate;
 mod assemble;
+mod clamp;
 mod checks;
 mod config;
 mod differential;
+mod export_policy;
 mod generated_plan;
 mod horizon;
 mod pack_spec;
@@ -17,6 +19,7 @@ mod pack_state;
 mod plan_error;
 mod plan_input;
 mod plan_summary;
+mod policy;
 mod summary;
 mod timeline;
 
@@ -27,6 +30,8 @@ pub use pack_state::PackState;
 pub use plan_error::PlanError;
 pub use plan_input::PlanInput;
 pub use plan_summary::PlanSummary;
+pub use export_policy::ExportPolicy;
+pub use policy::Policy;
 
 /// Slots in a plan horizon (30 hours at quarter-hour resolution).
 pub const HORIZON_SLOTS: usize = 120;

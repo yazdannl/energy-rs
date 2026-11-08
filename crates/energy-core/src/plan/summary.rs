@@ -22,6 +22,12 @@ pub(crate) fn summarize(
         cycles: 0.0,
         terminal_target_kwh,
         infeasible_reason: None,
+        export_floor_eur_per_kwh: None,
+        cost_basis_eur_per_kwh: None,
+        peak_reserve_kwh: None,
+        solar_reserve_kwh: 0.0,
+        clipped_kwh: 0.0,
+        gated_kwh: 0.0,
     };
     for slot in timeline {
         let base = slot.load_kw - slot.pv_kw;

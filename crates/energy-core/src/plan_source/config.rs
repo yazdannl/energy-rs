@@ -2,7 +2,7 @@
 
 use energy_price::{PriceBook, Settlement};
 
-use crate::plan::{PackState, PlanInput};
+use crate::plan::{PackState, PlanInput, Policy};
 
 /// What the plan source adds to the price book and the forecasts.
 ///
@@ -16,6 +16,8 @@ pub struct SourceConfig {
     pub reserve_soc_pct: f64,
     /// Wear cost per kWh delivered, EUR/kWh.
     pub wear_eur_per_kwh: f64,
+    /// The post-net-metering policy (export gate, reserves, basis).
+    pub policy: Policy,
     /// Terminal target, percent of the fleet's usable ceiling.
     pub terminal_target_pct: Option<f64>,
     /// Penalty per kWh of terminal-target error, EUR/kWh.
@@ -35,6 +37,7 @@ impl Default for SourceConfig {
         Self {
             reserve_soc_pct: 0.0,
             wear_eur_per_kwh: 0.0,
+            policy: Policy::legacy(),
             terminal_target_pct: None,
             target_penalty_eur_per_kwh: 1.0,
             replan_seconds: 900,
@@ -62,6 +65,7 @@ impl SourceConfig {
             input = input.with_terminal_target_pct(pct);
         }
         input.target_penalty_eur_per_kwh = self.target_penalty_eur_per_kwh;
+        input.policy = self.policy;
         input
     }
 }

@@ -25,6 +25,8 @@ pub struct EngineConfig {
     pub stale_plan_seconds: i64,
     /// Per-pack reserve floor above the pack minimum, percent.
     pub reserve_soc_pct: f64,
+    /// Headroom kept free of grid energy at dispatch, percent of capacity.
+    pub solar_reserve_pct: f64,
     /// Grid import ceiling, W (0 = unlimited).
     pub max_grid_import_w: f64,
     /// Grid export ceiling, W (0 = unlimited).
@@ -56,6 +58,7 @@ impl Default for EngineConfig {
             replan_seconds: 900,
             stale_plan_seconds: 1800,
             reserve_soc_pct: 0.0,
+            solar_reserve_pct: 0.0,
             max_grid_import_w: 0.0,
             max_grid_export_w: 0.0,
             fleet_max_charge_w: 0.0,

@@ -29,6 +29,12 @@ struct SummaryDto {
     cycles: f64,
     terminal_target_wh: Option<f64>,
     infeasible_reason: Option<String>,
+    export_floor_eur_per_kwh: Option<Euro>,
+    cost_basis_eur_per_kwh: Option<Euro>,
+    peak_reserve_wh: Option<f64>,
+    solar_reserve_wh: f64,
+    clipped_wh: f64,
+    gated_wh: f64,
 }
 
 /// One 15-minute slot. Power is W (positive charges), energy is Wh over the slot.
@@ -75,6 +81,12 @@ fn summary_dto(summary: &PlanSummary) -> SummaryDto {
         cycles: summary.cycles,
         terminal_target_wh: summary.terminal_target_kwh.map(kwh_to_wh),
         infeasible_reason: summary.infeasible_reason.clone(),
+        export_floor_eur_per_kwh: summary.export_floor_eur_per_kwh.map(Euro::new),
+        cost_basis_eur_per_kwh: summary.cost_basis_eur_per_kwh.map(Euro::new),
+        peak_reserve_wh: summary.peak_reserve_kwh.map(kwh_to_wh),
+        solar_reserve_wh: kwh_to_wh(summary.solar_reserve_kwh),
+        clipped_wh: kwh_to_wh(summary.clipped_kwh),
+        gated_wh: kwh_to_wh(summary.gated_kwh),
     }
 }
 

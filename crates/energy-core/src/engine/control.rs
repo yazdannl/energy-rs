@@ -275,6 +275,7 @@ fn safety_limits(config: &EngineConfig) -> SafetyLimits {
     SafetyLimits {
         mode: config.mode,
         reserve_soc_pct: config.reserve_soc_pct,
+        solar_reserve_pct: config.solar_reserve_pct,
         tick_seconds: config.tick_seconds as f64,
         ramp_limit_w: RAMP_LIMIT_W,
         max_grid_import_w: config.max_grid_import_w,

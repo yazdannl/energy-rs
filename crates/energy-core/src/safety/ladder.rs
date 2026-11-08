@@ -8,6 +8,8 @@ use crate::safety::decision::SafetyDecision;
 use crate::safety::{CommandRequest, Reason, SafetyLimits};
 
 const NEGLIGIBLE_KW: f64 = 1e-9;
+/// Slack on the solar ceiling so a pack sitting on it does not chatter, kWh.
+const SOLAR_HYSTERESIS_KWH: f64 = 0.05;
 
 /// The bounds collected in ladder order, then applied together.
 #[allow(clippy::struct_excessive_bools)] // one boolean per independent bound
@@ -30,6 +32,7 @@ pub(crate) struct Ladder<'a> {
     pub(crate) grid_export: bool,
     pub(crate) grid_missing: bool,
     pub(crate) base_kw: Option<f64>,
+    pub(crate) measured_base: Option<f64>,
     pub(crate) ramp_lo: f64,
     pub(crate) ramp_hi: f64,
     pub(crate) floor_lo: Option<f64>,
@@ -72,6 +75,7 @@ impl<'a> Ladder<'a> {
             grid_export: false,
             grid_missing: false,
             base_kw: None,
+            measured_base: None,
             ramp_lo: p_min,
             ramp_hi: p_max,
             floor_lo: None,
@@ -87,6 +91,7 @@ impl<'a> Ladder<'a> {
         self.grid();
         self.ramp();
         self.floor();
+        self.solar_ceiling();
         self.finish()
     }
 
@@ -171,6 +176,7 @@ impl<'a> Ladder<'a> {
                 _ => None,
             },
         );
+        self.measured_base = measured;
         self.base_kw = forecast.or(measured);
         let import_base = pick(forecast, measured, f64::max);
         let export_base = pick(forecast, measured, f64::min);
@@ -203,7 +209,12 @@ impl<'a> Ladder<'a> {
         self.ramp_hi = previous + limit;
     }
 
-    /// The cost-basis floor judges only the plan's own planned discharge.
+    /// The cost-basis floor judges only the **export** leg, on the flow that will actually happen.
+    ///
+    /// A planned self-consumption discharge is never refused, whatever the buy price: only the part
+    /// of the discharge that would leave the house is bounded, and only when the feed-in is below
+    /// the floor. The measured base is preferred over the forecast, because a forecast that made a
+    /// discharge look self-consumed can be wrong by the time the command goes out.
     fn floor(&mut self) {
         let (Some(floor), Some(slot)) = (
             self.limits.sell_floor_eur_per_kwh,
@@ -211,17 +222,37 @@ impl<'a> Ladder<'a> {
         ) else {
             return;
         };
-        if slot.battery_kw >= -NEGLIGIBLE_KW {
+        if slot.battery_kw >= -NEGLIGIBLE_KW || slot.feed_in >= floor {
             return;
         }
-        let planned_grid = self.base_kw.unwrap_or(0.0) + slot.battery_kw;
-        let leg = if planned_grid < 0.0 {
-            slot.feed_in
-        } else {
-            slot.buy_all_in
+        let base = self.measured_base.or(self.base_kw).unwrap_or(0.0);
+        if base + slot.battery_kw >= 0.0 {
+            return;
+        }
+        // Discharge no more than the house is using; the rest stays in the pack.
+        self.floor_lo = Some((-base * 1000.0).min(0.0));
+    }
+
+    /// Grid energy may not enter the solar reserve: above the ceiling, a charge is bounded by the
+    /// pack's share of the measured PV surplus, so PV still fills it.
+    fn solar_ceiling(&mut self) {
+        let Some(slot) = self.request.plan_slot.as_ref() else {
+            return;
         };
-        if leg < floor {
-            self.floor_lo = Some(0.0);
+        if slot.battery_kw <= NEGLIGIBLE_KW || self.limits.solar_reserve_pct <= 0.0 {
+            return;
+        }
+        let ceiling = self.pack.e_max_kwh() - self.pack.capacity_kwh * self.limits.solar_reserve_pct / 100.0;
+        if self.energy_kwh < ceiling - SOLAR_HYSTERESIS_KWH {
+            return;
+        }
+        let (Some(pv), Some(load)) = (self.request.measured.pv_kw, self.request.measured.load_kw)
+        else {
+            return;
+        };
+        let surplus = ((pv - load) * 1000.0).max(0.0) * self.share();
+        if surplus < slot.battery_kw * 1000.0 {
+            self.soc_hi = self.soc_hi.min(surplus);
         }
     }
 }

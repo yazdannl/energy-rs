@@ -93,6 +93,12 @@ pub fn summary() -> PlanSummary {
         cycles: 0.0,
         terminal_target_kwh: None,
         infeasible_reason: None,
+        export_floor_eur_per_kwh: None,
+        cost_basis_eur_per_kwh: None,
+        peak_reserve_kwh: None,
+        solar_reserve_kwh: 0.0,
+        clipped_kwh: 0.0,
+        gated_kwh: 0.0,
     }
 }
 
@@ -106,6 +112,12 @@ pub fn plan(generated_at: i64, slot_soc_kwh: f64) -> Plan {
         feasible: true,
         objective_eur: 0.0,
         sell_floor: None,
+        export_floor_eur_per_kwh: None,
+        cost_basis_eur_per_kwh: None,
+        peak_reserve_kwh: None,
+        solar_reserve_kwh: 0.0,
+        clipped_kwh: 0.0,
+        gated_kwh: 0.0,
         summary: summary(),
         degraded: None,
         slots: vec![slot],

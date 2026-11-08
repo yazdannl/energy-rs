@@ -9,6 +9,7 @@ use chrono::{NaiveTime, Weekday};
 use energy_battery::protection::CellConfig;
 use energy_battery::protection::full_charge::FullChargeSettings;
 use energy_core::engine::EngineConfig;
+use energy_core::plan::{ExportPolicy, Policy};
 use energy_ledger::Ledger;
 
 use crate::bootstrap::options::Options;
@@ -23,6 +24,7 @@ pub fn engine_config(options: &Options, ledger: &Ledger) -> EngineConfig {
         replan_seconds: seconds(ledger, "replan_seconds", defaults.replan_seconds),
         stale_plan_seconds: seconds(ledger, "stale_input_seconds", defaults.stale_plan_seconds),
         reserve_soc_pct: number(ledger, "reserve_soc_pct", defaults.reserve_soc_pct),
+        solar_reserve_pct: number(ledger, "solar_reserve_pct", 20.0),
         max_grid_import_w: number(ledger, "grid_import_limit_w", defaults.max_grid_import_w),
         max_grid_export_w: number(ledger, "grid_export_limit_w", defaults.max_grid_export_w),
         fleet_max_charge_w: max_charge_w,
@@ -30,6 +32,19 @@ pub fn engine_config(options: &Options, ledger: &Ledger) -> EngineConfig {
         cell: CellConfig::default(),
         full_charge: full_charge(ledger, max_charge_w),
         ..defaults
+    }
+}
+
+/// The post-net-metering policy from the stored settings.
+pub fn policy(ledger: &Ledger) -> Policy {
+    let basis = number(ledger, "cost_basis_eur_per_kwh", 0.0);
+    Policy {
+        export: ExportPolicy::parse(&text(ledger, "export_policy").unwrap_or_default()),
+        solar_reserve_pct: number(ledger, "solar_reserve_pct", 20.0),
+        peak_reserve_pct: number(ledger, "peak_reserve_pct", 20.0),
+        peak_reserve_value_eur_per_kwh: number(ledger, "peak_reserve_value_eur_per_kwh", 0.15),
+        wear_eur_per_kwh: number(ledger, "wear_eur_per_kwh", 0.02),
+        cost_basis_eur_per_kwh: (basis > 0.0).then_some(basis),
     }
 }
 

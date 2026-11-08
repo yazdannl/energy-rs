@@ -132,6 +132,7 @@ async fn wire_engine(
         Arc::clone(&prices.repository),
         prices.settlement(),
         Arc::clone(profiles),
+        config::policy(ledger),
     );
     Ok(engine::engine(
         Arc::clone(ledger),

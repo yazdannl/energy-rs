@@ -50,10 +50,16 @@ pub fn plan_source(
     prices: Arc<dyn PriceRepository>,
     settlement: Settlement,
     profiles: Arc<LoadProfiles>,
+    policy: energy_core::plan::Policy,
 ) -> Arc<dyn PlanSource> {
+    let config = energy_core::plan_source::SourceConfig {
+        policy,
+        wear_eur_per_kwh: policy.wear_eur_per_kwh,
+        ..energy_core::plan_source::SourceConfig::default()
+    };
     Arc::new(LivePlanSource::new(
         HaPlanSupply::new(connection, prices, settlement).with_load_profiles(profiles),
-        energy_core::plan_source::SourceConfig::default(),
+        config,
     ))
 }
 

@@ -23,6 +23,18 @@ pub struct Plan {
     pub objective_eur: f64,
     /// The sell floor this plan was solved with, EUR/kWh.
     pub sell_floor: Option<f64>,
+    /// The break-even an exported kWh had to clear, EUR/kWh; `None` when the gate is inert.
+    pub export_floor_eur_per_kwh: Option<f64>,
+    /// The cost basis the gate was armed with, EUR/kWh.
+    pub cost_basis_eur_per_kwh: Option<f64>,
+    /// The soft peak guideline in force, kWh.
+    pub peak_reserve_kwh: Option<f64>,
+    /// Headroom kept free of grid energy, kWh.
+    pub solar_reserve_kwh: f64,
+    /// PV a ceiling forced out of the pack, kWh.
+    pub clipped_kwh: f64,
+    /// Battery energy the export gate kept in the pack, kWh.
+    pub gated_kwh: f64,
     /// Money and energy totals.
     pub summary: PlanSummary,
     /// Why the forecasts were degraded (an EWMA/fallback series was planned with), `None` when the

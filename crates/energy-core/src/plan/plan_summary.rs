@@ -29,6 +29,24 @@ pub struct PlanSummary {
     pub terminal_target_kwh: Option<f64>,
     /// `terminal_target_unreachable` when the target was missed.
     pub infeasible_reason: Option<String>,
+    /// The break-even an exported kWh had to clear, EUR/kWh; `None` when the gate is inert.
+    #[serde(default)]
+    pub export_floor_eur_per_kwh: Option<f64>,
+    /// The cost basis the gate was armed with, EUR/kWh.
+    #[serde(default)]
+    pub cost_basis_eur_per_kwh: Option<f64>,
+    /// The soft peak guideline in force, kWh.
+    #[serde(default)]
+    pub peak_reserve_kwh: Option<f64>,
+    /// Headroom kept free of grid energy, kWh.
+    #[serde(default)]
+    pub solar_reserve_kwh: f64,
+    /// PV a ceiling forced out of the pack, kWh.
+    #[serde(default)]
+    pub clipped_kwh: f64,
+    /// Battery energy the export gate kept in the pack, kWh.
+    #[serde(default)]
+    pub gated_kwh: f64,
 }
 
 impl PlanSummary {

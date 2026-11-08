@@ -2,7 +2,7 @@
 
 use energy_price::{PriceBook, Settlement};
 
-use crate::plan::{Differential, HORIZON_SLOTS, PackState, Plan, PlanError, assemble};
+use crate::plan::{Differential, HORIZON_SLOTS, PackState, Plan, PlanError, Policy, assemble};
 
 /// A plan request under construction.
 ///
@@ -38,6 +38,8 @@ pub struct PlanInput {
     pub reserve_soc_pct: f64,
     /// Wear cost per kWh delivered, EUR/kWh.
     pub wear_eur_per_kwh: f64,
+    /// The post-net-metering policy: export gate, reserves, basis.
+    pub policy: Policy,
     /// Terminal target, percent of the fleet's usable ceiling.
     pub terminal_target_pct: Option<f64>,
     /// Penalty per kWh of terminal-target error, EUR/kWh.
@@ -63,6 +65,7 @@ impl PlanInput {
             forecast_note: None,
             reserve_soc_pct: 0.0,
             wear_eur_per_kwh: 0.0,
+            policy: Policy::legacy(),
             terminal_target_pct: None,
             target_penalty_eur_per_kwh: 1.0,
             replan_seconds: 900,

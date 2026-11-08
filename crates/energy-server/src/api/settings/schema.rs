@@ -9,9 +9,10 @@ use super::setting_spec::SettingSpec;
 
 const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const PRICE_PROVIDERS: [&str; 2] = ["zonneplan", "ha_sensor"];
+const EXPORT_POLICIES: [&str; 2] = ["legacy", "cost_basis"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 11] = [
+static SPECS: [SettingSpec; 17] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -87,6 +88,51 @@ static SPECS: [SettingSpec; 11] = [
         key: "full_charge_time",
         kind: SettingKind::Text,
         default: "03:00",
+    },
+    SettingSpec {
+        key: "solar_reserve_pct",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 50.0,
+        },
+        default: "20",
+    },
+    SettingSpec {
+        key: "peak_reserve_pct",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 50.0,
+        },
+        default: "20",
+    },
+    SettingSpec {
+        key: "peak_reserve_value_eur_per_kwh",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 1.0,
+        },
+        default: "0.15",
+    },
+    SettingSpec {
+        key: "wear_eur_per_kwh",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 0.1,
+        },
+        default: "0.02",
+    },
+    SettingSpec {
+        key: "cost_basis_eur_per_kwh",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 1.0,
+        },
+        default: "0",
+    },
+    SettingSpec {
+        key: "export_policy",
+        kind: SettingKind::Choice(&EXPORT_POLICIES),
+        default: "legacy",
     },
 ];
 

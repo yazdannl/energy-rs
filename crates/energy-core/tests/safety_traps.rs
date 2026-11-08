@@ -224,7 +224,9 @@ fn the_sell_floor_judges_only_the_plans_own_discharge() {
     slot.load_kw = 0.2;
     discharge.plan_slot = Some(slot);
     let decision = check(&discharge, &pack, &limits, None);
-    assert_eq!(decision.allowed_w, 0.0);
+    // The house uses 0.2 kW, so the discharge is bounded to that and the export part is refused:
+    // self-consumption is never gated, only the export leg is.
+    assert_eq!(decision.allowed_w, -200.0);
     assert!(decision.has(Reason::SellFloor));
     let mut charge = request("a", 500.0, NOW);
     charge.measured.energy_kwh = Some(2.0);
@@ -254,7 +256,6 @@ fn a_cell_voltage_latch_blocks_discharge_and_forces_a_charge() {
 fn lo_above_hi_blocks_with_every_binding_reason() {
     let pack = spec("a", 4.0, 1000.0);
     let mut limits = limits();
-    limits.sell_floor_eur_per_kwh = Some(0.12);
     limits.max_grid_import_w = 1000.0;
     let mut req = request("a", -500.0, NOW);
     req.measured.energy_kwh = Some(3.8);
@@ -262,11 +263,12 @@ fn lo_above_hi_blocks_with_every_binding_reason() {
     slot.load_kw = 5.0;
     slot.battery_kw = -5.5;
     req.plan_slot = Some(slot);
-    let decision = check(&req, &pack, &limits, None);
+    // A cell latch forbids discharge while the import ceiling demands at least 4 kW of it.
+    let decision = check(&req, &pack, &limits, Some(&latch(false)));
     assert!(decision.blocked);
     assert!(decision.reasons.len() >= 2, "{:?}", decision.reasons);
     assert!(decision.has(Reason::GridImportLimit));
-    assert!(decision.has(Reason::SellFloor));
+    assert!(decision.has(Reason::CellVoltageGuard));
 }
 
 #[test]
