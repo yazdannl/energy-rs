@@ -319,7 +319,7 @@ fn soc_is_capacity_weighted_and_excludes_invalid_values() {
 }
 
 #[test]
-fn live_balance_clamps_negative_load_and_never_zero_fills() {
+fn live_balance_subtracts_a_charging_battery_and_never_zero_fills() {
     let site = SiteModel::from_prefs(&prefs(json!({
         "energy_sources": [
             { "type": "grid", "stat_energy_from": "sensor.grid", "stat_rate": "sensor.grid_w" },
@@ -334,24 +334,37 @@ fn live_balance_clamps_negative_load_and_never_zero_fills() {
             }
         ]
     })));
-    let negative = readings(&[
+    // A negative battery power discharges into the house, so it adds to the load.
+    let discharging = readings(&[
         ("sensor.grid_w", 100.0, "W"),
         ("sensor.pv_w", 300.0, "W"),
         ("sensor.battery_w", -500.0, "W"),
         ("sensor.soc", 55.0, "%"),
     ]);
-    let live = site.live(&negative);
-    assert_eq!(live.load_w, Some(0.0));
-    assert!(live.load_clamped);
+    let live = site.live(&discharging);
+    assert_eq!(live.load_w, Some(900.0));
+    assert!(!live.load_clamped);
     assert_eq!(live.soc_pct, Some(55.0));
 
-    let normal = readings(&[
+    // A positive battery power charges, so it comes out of the load.
+    let charging = readings(&[
         ("sensor.grid_w", 100.0, "W"),
         ("sensor.pv_w", 300.0, "W"),
         ("sensor.battery_w", 100.0, "W"),
         ("sensor.soc", 55.0, "%"),
     ]);
-    assert_eq!(site.live(&normal).load_w, Some(500.0));
+    assert_eq!(site.live(&charging).load_w, Some(300.0));
+
+    // Exporting while the pack barely discharges is measurement noise: clamp, never a negative load.
+    let noise = readings(&[
+        ("sensor.grid_w", -200.0, "W"),
+        ("sensor.pv_w", 100.0, "W"),
+        ("sensor.battery_w", -50.0, "W"),
+        ("sensor.soc", 55.0, "%"),
+    ]);
+    let live = site.live(&noise);
+    assert_eq!(live.load_w, Some(0.0));
+    assert!(live.load_clamped);
 
     let missing = readings(&[
         ("sensor.grid_w", 100.0, "W"),

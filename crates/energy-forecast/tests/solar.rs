@@ -254,6 +254,27 @@ fn ha_energy_converts_wh_to_kw_with_period_clamps() {
 }
 
 #[test]
+fn ha_energy_does_not_turn_the_sunset_marker_into_a_spike() {
+    // Home Assistant appends a 0 Wh marker at the exact sunset, seconds after the last bucket.
+    // Dividing that bucket by the marker's gap reads 44 Wh over 99 s as 1.6 kW at dusk, which is
+    // how a dark evening became a `pv_surplus_charge` decision.
+    let mut sunset = BTreeMap::new();
+    sunset.insert(time("2026-11-08T13:00:00+00:00"), 220.0);
+    sunset.insert(time("2026-11-08T14:00:00+00:00"), 167.0);
+    sunset.insert(time("2026-11-08T15:00:00+00:00"), 101.0);
+    sunset.insert(time("2026-11-08T16:00:00+00:00"), 44.0);
+    sunset.insert(time("2026-11-08T16:01:39+00:00"), 0.0);
+    let power = ha_energy_power_series(&sunset);
+    let values: Vec<f64> = power.samples().iter().map(|(_, value)| *value).collect();
+    assert_eq!(values.len(), 5);
+    assert!(
+        (values[3] - 0.044).abs() < 1e-12,
+        "44 Wh over the hour: {values:?}"
+    );
+    assert_eq!(values[4], 0.0, "the marker itself carries no energy");
+}
+
+#[test]
 fn bias_update_matches_the_reference_payload() {
     let fixture = merge_fixture();
     let block = &fixture["bias"];
