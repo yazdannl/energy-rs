@@ -30,7 +30,10 @@ impl Engine {
         let token = self.gate.token();
         let mut view = self.fleet.view(now).await?;
         self.mark(now)?;
-        let meter = self.meter.reading().await;
+        // The dashboard's battery power entity is optional; without it the site model cannot
+        // balance the house, so the fleet's own measurement closes it here.
+        let pack_w = (!view.packs.is_empty()).then(|| view.power_w());
+        let meter = self.meter.reading().await.with_pack_power(pack_w);
         self.mark(now)?;
         self.wire(now, &mut view)?;
         self.mark(now)?;

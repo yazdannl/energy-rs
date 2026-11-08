@@ -62,9 +62,10 @@ impl SiteModel {
 
     /// Resolve the current snapshot from entity readings.
     ///
-    /// Load follows `grid + pv - battery`, never the sum of devices (devices are a subset of load
-    /// and can be included in another statistic). The battery term is subtracted because a
-    /// positive battery power charges: a pack discharging 1 kW adds 1 kW to the house.
+    /// Load follows `grid + pv + battery`, never the sum of devices (devices are a subset of load
+    /// and can be included in another statistic). The battery term is signed positive while
+    /// discharging, so a discharging pack adds to the house; the engine closes the balance from
+    /// the fleet's own measurements when the dashboard has no battery power entity.
     pub fn live(&self, readings: &HashMap<String, PowerReading>) -> Live {
         let grid_w = self
             .grid
@@ -181,7 +182,7 @@ fn resolve_batteries(
 fn balance(grid: Option<f64>, pv: Option<f64>, battery: Option<f64>) -> (Option<f64>, bool) {
     match (grid, pv, battery) {
         (Some(grid), Some(pv), Some(battery)) => {
-            let total = grid + pv - battery;
+            let total = grid + pv + battery;
             if total < 0.0 {
                 (Some(0.0), true)
             } else {
