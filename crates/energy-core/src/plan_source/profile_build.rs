@@ -85,25 +85,11 @@ async fn collect(
         to,
     )
     .await?;
-    let pv = optional(
-        connection,
-        site.solar.energy.as_ref(),
-        "solar_energy",
-        from,
-        to,
-    )
-    .await?;
+    let pv = optional(connection, site.solar.energy.as_ref(), from, to).await?;
     let (charge_entities, discharge_entities) =
         crate::plan_source::ha_series::battery_entities(site);
-    let charge = optional_many(connection, &charge_entities, "battery_charge", from, to).await?;
-    let discharge = optional_many(
-        connection,
-        &discharge_entities,
-        "battery_discharge",
-        from,
-        to,
-    )
-    .await?;
+    let charge = optional_many(connection, &charge_entities, from, to).await?;
+    let discharge = optional_many(connection, &discharge_entities, from, to).await?;
     Ok(Counters {
         import,
         export,
@@ -136,19 +122,18 @@ async fn series(
     let entity = entity
         .filter(|id| !id.trim().is_empty())
         .ok_or(PlanError::StatsMissing { series: name })?;
-    fetch(connection, entity, name, from, to).await
+    fetch(connection, entity, from, to).await
 }
 
 /// One optional series; an absent entity is an empty series.
 async fn optional(
     connection: &Connection,
     entity: Option<&String>,
-    name: &'static str,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Result<BTreeMap<i64, f64>, PlanError> {
     match entity.filter(|id| !id.trim().is_empty()) {
-        Some(entity) => fetch(connection, entity, name, from, to).await,
+        Some(entity) => fetch(connection, entity, from, to).await,
         None => Ok(BTreeMap::new()),
     }
 }
@@ -157,24 +142,22 @@ async fn optional(
 async fn optional_many(
     connection: &Connection,
     entities: &[String],
-    name: &'static str,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Result<BTreeMap<i64, f64>, PlanError> {
     let mut total = BTreeMap::new();
     for entity in entities {
-        for (hour, kwh) in fetch(connection, entity, name, from, to).await? {
+        for (hour, kwh) in fetch(connection, entity, from, to).await? {
             *total.entry(hour).or_insert(0.0) += kwh;
         }
     }
     Ok(total)
 }
 
-/// One statistic as hourly kWh; a hole inside the range is a typed refusal.
+/// One statistic as hourly kWh; an hour Home Assistant has no state for is skipped, not zeroed.
 async fn fetch(
     connection: &Connection,
     entity: &str,
-    name: &'static str,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Result<BTreeMap<i64, f64>, PlanError> {
@@ -186,11 +169,9 @@ async fn fetch(
     let mut series = BTreeMap::new();
     for slot in slots {
         let hour = slot.start_ms.div_euclid(1000);
-        let kwh = slot.kwh.ok_or(PlanError::StatsGap {
-            series: name,
-            t_start: hour,
-        })?;
-        series.insert(hour, kwh);
+        if let Some(kwh) = slot.kwh {
+            series.insert(hour, kwh);
+        }
     }
     Ok(series)
 }

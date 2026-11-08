@@ -60,6 +60,9 @@ pub(crate) fn timeline(
     window: (i64, i64),
 ) -> Result<MeasuredHistory, PlanError> {
     let (start, end) = window;
+    // Statistics for the slot that just ended appear a few seconds late, and a plan is due right at
+    // the boundary: trim the unpublished tail instead of refusing a plan for it.
+    let end = published_end(import, export, pv, start, end);
     let hours = SLOT_SECONDS as f64 / 3600.0;
     let mut starts = Vec::new();
     let mut pv_kw = Vec::new();
@@ -78,6 +81,30 @@ pub(crate) fn timeline(
     }
     MeasuredHistory::new(starts, pv_kw, load_kw)
 }
+
+/// The window end after dropping the trailing slots Home Assistant has not published yet.
+///
+/// Only the tail is dropped: an interior hole is still a refusal, because a zero-fill there would
+/// teach the planner a house that was empty and dark. A window with nothing published at all comes
+/// back empty and is refused by [`MeasuredHistory::new`].
+fn published_end(
+    import: &BTreeMap<i64, f64>,
+    export: &BTreeMap<i64, f64>,
+    pv: &BTreeMap<i64, f64>,
+    start: i64,
+    end: i64,
+) -> i64 {
+    let mut end = end;
+    while end > start {
+        let last = end.saturating_sub(SLOT_SECONDS);
+        if import.contains_key(&last) && export.contains_key(&last) && pv.contains_key(&last) {
+            return end;
+        }
+        end = last;
+    }
+    end
+}
+
 
 /// The configured battery charge and discharge statistics, per battery source.
 pub(crate) fn battery_entities(site: &SiteModel) -> (Vec<String>, Vec<String>) {
@@ -162,4 +189,55 @@ fn timestamp(seconds: i64) -> Result<DateTime<Utc>, PlanError> {
     DateTime::<Utc>::from_timestamp(seconds, 0).ok_or(PlanError::Supply {
         reason: format!("timestamp {seconds} is not representable"),
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{SLOT_SECONDS, published_end, timeline};
+
+    const START: i64 = 1_790_000_000 - 1_790_000_000 % SLOT_SECONDS;
+
+    /// A series covering `slots` quarter-hours from `START`.
+    fn series(slots: i64) -> BTreeMap<i64, f64> {
+        (0..slots)
+            .map(|index| (START + index * SLOT_SECONDS, 1.0))
+            .collect()
+    }
+
+    #[test]
+    fn the_unpublished_tail_is_trimmed_not_refused() {
+        let window = (START, START + 4 * SLOT_SECONDS);
+        let end = published_end(&series(3), &series(3), &series(3), window.0, window.1);
+        assert_eq!(end, START + 3 * SLOT_SECONDS, "the last published slot wins");
+        let history = timeline(
+            &series(3),
+            &series(3),
+            &series(3),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            window,
+        )
+        .expect("a lagging publication is not a refusal");
+        assert_eq!(history.len(), 3);
+    }
+
+    #[test]
+    fn an_interior_hole_is_still_refused() {
+        let window = (START, START + 3 * SLOT_SECONDS);
+        let mut holed = series(3);
+        holed.remove(&(START + SLOT_SECONDS));
+        let error = timeline(
+            &holed,
+            &series(3),
+            &series(3),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            window,
+        )
+        .expect_err("an interior gap must refuse");
+        assert!(error.to_string().contains("gap"), "{error}");
+    }
 }
