@@ -133,11 +133,20 @@ impl<S: PlanSupply> LivePlanSource<S> {
     }
 
     /// Record which inputs changed since the previous read, for the next trigger check.
+    ///
+    /// A forecast's `as_of` is the read instant, and the real supply rebuilds its series (the EWMA
+    /// fallback especially) on every read. Compared raw it changes on every tick, which turns the
+    /// "refreshed inputs" trigger into a replan every five seconds. The capture instant is bucketed
+    /// to the clock slot instead: an unchanged forecast then only forces the replan the slot
+    /// boundary already asks for.
     fn note_changes(&self, supply: &Supply) {
         let fingerprint = Fingerprint {
             coverage_end: supply.prices.coverage_end().unwrap_or(0),
             fetched_at: supply.price_fetched_at,
-            forecast_as_of: supply.forecast.as_ref().map(|forecast| forecast.as_of),
+            forecast_as_of: supply
+                .forecast
+                .as_ref()
+                .map(|forecast| forecast.as_of.div_euclid(SLOT_SECONDS)),
         };
         let Ok(mut last) = self.last.lock() else {
             return;

@@ -186,3 +186,42 @@ async fn the_same_supply_produces_the_same_plan() {
     ));
     assert_eq!(plan(&source).await, plan(&source).await);
 }
+
+/// A supply that rebuilds its forecast on every read, exactly as the real one does (`as_of = now`).
+struct ChurningSupply {
+    supply: Supply,
+}
+
+impl PlanSupply for ChurningSupply {
+    fn supply(&self, now: i64) -> BoxFuture<'_, Result<Supply, PlanError>> {
+        Box::pin(async move {
+            let mut supply = self.supply.clone();
+            if let Some(forecast) = supply.forecast.as_mut() {
+                forecast.as_of = now;
+            }
+            Ok(supply)
+        })
+    }
+}
+
+/// A forecast whose only change is its capture instant must not force a replan on every tick.
+#[tokio::test]
+async fn a_forecast_rebuilt_on_every_read_does_not_ask_for_a_replan() {
+    let source = LivePlanSource::new(
+        ChurningSupply {
+            supply: supply(flat_book(NOW, HORIZON_SLOTS), NOW),
+        },
+        SourceConfig::default(),
+    );
+    source.plan(NOW, packs()).await.expect("first plan");
+    let _ = source.changes();
+    source.plan(NOW + 5, packs()).await.expect("second plan");
+    let changes = source.changes();
+    assert!(
+        !changes.forecast,
+        "the rebuilt-but-unchanged forecast asked for a replan"
+    );
+    // The next slot is a real change of the capture instant's bucket, and the trigger says so.
+    source.plan(NOW + 900, packs()).await.expect("third plan");
+    assert!(source.changes().forecast, "a new slot is a forecast change");
+}
