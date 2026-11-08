@@ -22,11 +22,14 @@ pub(crate) fn slot_floor(now: i64) -> i64 {
     now - now.rem_euclid(SLOT_SECONDS)
 }
 
-/// Fetch one statistics series as `start -> kWh`, refusing a hole instead of zero-filling it.
+/// Fetch one statistics series as `start -> kWh`.
+///
+/// A slot Home Assistant has no state for is left out instead of zero-filled: [`timeline`] trims
+/// the unpublished tail (the boundary slot is written a few seconds late) and refuses an interior
+/// hole, which is the only place a gap can still mean a broken dashboard.
 pub(crate) async fn fetch(
     connection: &Connection,
     entity: &str,
-    name: &'static str,
     window: (i64, i64),
 ) -> Result<BTreeMap<i64, f64>, PlanError> {
     let (from, to) = window;
@@ -38,11 +41,9 @@ pub(crate) async fn fetch(
     let mut series = BTreeMap::new();
     for slot in slots {
         let t_start = slot.start_ms.div_euclid(1000);
-        let kwh = slot.kwh.ok_or(PlanError::StatsGap {
-            series: name,
-            t_start,
-        })?;
-        series.insert(t_start, kwh);
+        if let Some(kwh) = slot.kwh {
+            series.insert(t_start, kwh);
+        }
     }
     Ok(series)
 }

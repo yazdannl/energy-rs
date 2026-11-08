@@ -88,7 +88,7 @@ impl HaPlanSupply {
         let entity = entity
             .filter(|id| !id.trim().is_empty())
             .ok_or(PlanError::StatsMissing { series: name })?;
-        ha_series::fetch(&self.connection, entity, name, window).await
+        ha_series::fetch(&self.connection, entity, window).await
     }
 
     /// The summed battery statistics of one direction; empty when no battery configures one.
@@ -100,14 +100,9 @@ impl HaPlanSupply {
     ) -> Result<BTreeMap<i64, f64>, PlanError> {
         let (charge, discharge) = ha_series::battery_entities(site);
         let entities = if charging { charge } else { discharge };
-        let name = if charging {
-            "battery_charge"
-        } else {
-            "battery_discharge"
-        };
         let mut total = BTreeMap::new();
         for entity in entities {
-            let series = ha_series::fetch(&self.connection, &entity, name, window).await?;
+            let series = ha_series::fetch(&self.connection, &entity, window).await?;
             for (t_start, kwh) in series {
                 *total.entry(t_start).or_insert(0.0) += kwh;
             }
