@@ -150,18 +150,32 @@ jobs:
         # Runs for published images too: a `--push` build leaves nothing in the local store, so the
         # image is pulled back from GHCR first. That also proves the tag is really pullable, which
         # the add-on depends on.
+        #
+        # The add-on cannot serve `/api/v1/health` without Home Assistant, so the check is two
+        # honest halves: the image runs and reports the release version, and bootstrap reaches the
+        # documented "no Home Assistant transport" failure instead of crashing. A full health probe
+        # needs a fake HA and lives in the crate's integration tests, not here.
         run: |
           if [ "${PUSH_IMAGES}" = "true" ]; then
             docker pull "${IMAGE}"
           fi
-          docker run --rm -d --name energy-rs-smoke -p 8099:8099 "${IMAGE}"
-          ok=""
-          for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8099/api/v1/health; then ok=1; break; fi
-            sleep 1
-          done
-          docker stop energy-rs-smoke >/dev/null
-          [ -n "$ok" ] || { echo "no healthy /api/v1/health after 30 s" >&2; exit 1; }
+          docker run --rm --entrypoint /usr/local/bin/energy-server "${IMAGE}" --version \
+            | tee /tmp/energy-rs-version.txt
+          grep -q "energy-server ${VERSION}" /tmp/energy-rs-version.txt \
+            || { echo "the image is not stamped ${VERSION}" >&2; exit 1; }
+
+          data="$(mktemp -d)"
+          printf '{"mode":"dry_run","log_level":"info","price_provider":"auto","batteries":"[]"}' \
+            >"${data}/options.json"
+          status=0
+          out="$(docker run --rm -v "${data}:/data" "${IMAGE}" 2>&1)" || status=$?
+          printf '%s\n' "${out}"
+          grep -q "energy-server starting" <<<"${out}" \
+            || { echo "the add-on did not start (exit ${status})" >&2; exit 1; }
+          grep -q "no Home Assistant transport" <<<"${out}" \
+            || { echo "bootstrap did not reach the HA transport check" >&2; exit 1; }
+          [ "${status}" -ne 0 ] \
+            || { echo "bootstrap without Home Assistant must fail fast" >&2; exit 1; }
 
   # The add-on tarball is the Supervisor's build context: a self-contained folder that can be built
   # on the device when the published image is not wanted.
