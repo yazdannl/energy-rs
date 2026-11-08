@@ -19,6 +19,9 @@ pub struct Slot {
     pub buy_all_in: f64,
     /// EUR/kWh market price, derived at ingest: `(buy_all_in - fee_incl) / (1 + vat) - tax_ex`.
     pub market: f64,
+    /// EUR/kWh exactly as the provider published it without the energy tax, when it does. This is
+    /// the feed-in price after net metering ends, so it is never re-derived from `buy_all_in`.
+    pub buy_ex_tax: Option<f64>,
     /// Which provider/resolution produced the slot.
     pub source: SlotSource,
 }
@@ -30,7 +33,19 @@ impl Slot {
             t_start,
             buy_all_in,
             market,
+            buy_ex_tax: None,
             source,
+        }
+    }
+
+    /// Attach the provider's published no-tax price, rounded like the other money fields.
+    #[must_use]
+    pub fn with_ex_tax(self, buy_ex_tax: Option<f64>) -> Self {
+        Self {
+            buy_ex_tax: buy_ex_tax
+                .filter(|value| value.is_finite())
+                .map(round_money),
+            ..self
         }
     }
 

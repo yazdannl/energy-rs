@@ -98,7 +98,11 @@ pub(crate) fn build_book(
             PriceError::Payload(format!("slot start {} has no local year", raw.t_start))
         })?;
         let market = contract.market_from_buy(raw.buy_all_in, year)?;
-        slots.push(Slot::new(raw.t_start, raw.buy_all_in, market, source).money_rounded());
+        slots.push(
+            Slot::new(raw.t_start, raw.buy_all_in, market, source)
+                .with_ex_tax(raw.buy_ex_tax)
+                .money_rounded(),
+        );
     }
     PriceBook::new(slots)
 }

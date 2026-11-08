@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use crate::error::PriceError;
 
 /// Current schema version (`PRAGMA user_version`).
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS price_publications (
@@ -34,11 +34,19 @@ CREATE TABLE IF NOT EXISTS price_slots (
 CREATE INDEX IF NOT EXISTS price_slots_by_start ON price_slots(t_start);
 ";
 
+/// v2: the published price without the energy tax, the feed-in price once net metering ends.
+/// Nullable, so a v1 row keeps the fallback (`market + fee`) instead of inventing a number.
+const MIGRATION_V2: &str = "ALTER TABLE price_slots ADD COLUMN buy_ex_tax REAL;";
+
 /// Apply pending migrations in code.
 pub(crate) fn migrate(conn: &Connection) -> Result<(), PriceError> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version < 1 {
         conn.execute_batch(MIGRATION_V1)?;
+        conn.pragma_update(None, "user_version", 1)?;
+    }
+    if version < 2 {
+        conn.execute_batch(MIGRATION_V2)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())

@@ -122,8 +122,8 @@ fn insert_slots(
     book: &PriceBook,
 ) -> Result<(), PriceError> {
     let mut insert = tx.prepare(
-        "INSERT INTO price_slots (publication_id, t_start, buy_all_in, market, source)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO price_slots (publication_id, t_start, buy_all_in, market, source, buy_ex_tax)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(publication_id, t_start) DO NOTHING",
     )?;
     for slot in book {
@@ -133,6 +133,7 @@ fn insert_slots(
             slot.buy_all_in,
             slot.market,
             slot.source.as_str(),
+            slot.buy_ex_tax,
         ])?;
     }
     Ok(())
@@ -141,7 +142,7 @@ fn insert_slots(
 /// Newest publication per slot start in `[from, to)`, ascending.
 fn load_slots(conn: &Connection, from: i64, to: i64) -> Result<Vec<Slot>, PriceError> {
     let mut statement = conn.prepare(
-        "SELECT s.t_start, s.buy_all_in, s.market, s.source
+        "SELECT s.t_start, s.buy_all_in, s.market, s.source, s.buy_ex_tax
                  FROM price_slots s
                  WHERE s.t_start >= ?1 AND s.t_start < ?2
                    AND s.publication_id = (
@@ -155,7 +156,9 @@ fn load_slots(conn: &Connection, from: i64, to: i64) -> Result<Vec<Slot>, PriceE
     while let Some(row) = rows.next()? {
         let source_text: String = row.get(3)?;
         let source = SlotSource::from_key(&source_text)?;
-        slots.push(Slot::new(row.get(0)?, row.get(1)?, row.get(2)?, source));
+        let buy_ex_tax: Option<f64> = row.get(4)?;
+        slots
+            .push(Slot::new(row.get(0)?, row.get(1)?, row.get(2)?, source).with_ex_tax(buy_ex_tax));
     }
     Ok(slots)
 }

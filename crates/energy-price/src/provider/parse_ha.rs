@@ -1,6 +1,8 @@
 //! Parse the Zonneplan integration's HA sensor: the `forecast` attribute in either the
 //! quarter-hourly shape (`price_tax_included.amount`) or the legacy hourly shape
-//! (`electricity_price`).  The gas sensor publishes the same shape, so the unit and the grid are the
+//! (`electricity_price`).  Both shapes also publish the price without the energy tax
+//! (`price_tax_excluded.amount`, `electricity_price_excl_tax`), which is the feed-in price after
+//! net metering ends.  The gas sensor publishes the same shape, so the unit and the grid are the
 //! decoy guards (prices.md §1.3).
 
 use serde_json::Value;
@@ -8,6 +10,9 @@ use serde_json::Value;
 use crate::error::PriceError;
 use crate::provider::parse::{amount_eur, parse_timestamp};
 use crate::provider::{ParsedSeries, RawSlot};
+
+/// One forecast entry: start, optional end, all-in price, optional price without the energy tax.
+type Entry = (i64, Option<i64>, f64, Option<f64>);
 
 /// Parse `GET /api/states/<sensor>` for a Zonneplan electricity tariff sensor.
 pub fn parse_state(payload: &Value) -> Result<ParsedSeries, PriceError> {
@@ -35,7 +40,7 @@ pub fn parse_state(payload: &Value) -> Result<ParsedSeries, PriceError> {
     if forecast.len() < 2 {
         return Err(PriceError::GasDecoy);
     }
-    let mut entries: Vec<(i64, Option<i64>, f64)> = Vec::with_capacity(forecast.len());
+    let mut entries: Vec<Entry> = Vec::with_capacity(forecast.len());
     for entry in forecast {
         if let Some(parsed) = parse_entry(entry)? {
             entries.push(parsed);
@@ -53,9 +58,10 @@ pub fn parse_state(payload: &Value) -> Result<ParsedSeries, PriceError> {
     }
     let raw = entries
         .into_iter()
-        .map(|(t_start, _, buy_all_in)| RawSlot {
+        .map(|(t_start, _, buy_all_in, buy_ex_tax)| RawSlot {
             t_start,
             buy_all_in,
+            buy_ex_tax,
         })
         .collect();
     Ok(ParsedSeries { raw, step })
@@ -77,7 +83,7 @@ fn check_unit(unit: Option<&str>) -> Result<(), PriceError> {
     Ok(())
 }
 
-fn parse_entry(entry: &Value) -> Result<Option<(i64, Option<i64>, f64)>, PriceError> {
+fn parse_entry(entry: &Value) -> Result<Option<Entry>, PriceError> {
     let start_text = entry
         .get("start_date")
         .and_then(Value::as_str)
@@ -97,11 +103,15 @@ fn parse_entry(entry: &Value) -> Result<Option<(i64, Option<i64>, f64)>, PriceEr
         .and_then(amount_eur)
         .or_else(|| entry.get("electricity_price").and_then(amount_eur))
         .ok_or_else(|| PriceError::Payload(format!("forecast entry at {t_start} has no price")))?;
-    Ok(Some((t_start, t_end, buy_all_in)))
+    let buy_ex_tax = entry
+        .pointer("/price_tax_excluded/amount")
+        .and_then(amount_eur)
+        .or_else(|| entry.get("electricity_price_excl_tax").and_then(amount_eur));
+    Ok(Some((t_start, t_end, buy_all_in, buy_ex_tax)))
 }
 
-fn infer_step(entries: &[(i64, Option<i64>, f64)]) -> Option<i64> {
-    for (start, end, _) in entries {
+fn infer_step(entries: &[Entry]) -> Option<i64> {
+    for (start, end, _, _) in entries {
         if let Some(end) = end
             && end > start
         {

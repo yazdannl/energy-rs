@@ -21,8 +21,8 @@ use support::{ENERGY_TAX_EX, FEE_INCL, contract, quarter_hourly, slot_at};
 const BUY: f64 = 0.20;
 /// `(0.20 - 0.02) / 1.21 - 0.09161` in full f64 precision.
 const MARKET_EXACT_AT_0_20: f64 = 0.05715033057851243;
-/// `market + 0.02` -- the researched 0.0772 EUR/kWh to four decimals.
-const FEED_IN_AT_0_20: f64 = 0.07715;
+/// `market + fee_ex` -- the feed-in, ex-VAT, at 0.20 all-in.
+const FEED_IN_AT_0_20: f64 = 0.0736789256198347;
 
 fn close(actual: f64, expected: f64) -> bool {
     (actual - expected).abs() < 1e-9
@@ -61,11 +61,11 @@ fn market_is_the_published_build_up_inverted() {
 fn the_feed_in_is_market_plus_the_supplier_fee() {
     let settlement = post_saldering_2027();
     let slot = slot_at("2027-06-01T13:00:00+02:00", BUY);
-    // Battery export earns no Zonnebonus: (0.20 - 0.0200) / 1.21 - 0.09161 + 0.0200 = 0.07715,
-    // which reproduces the published 7.92 ct average to four decimals.
+    // Battery export earns no Zonnebonus: (0.20 - 0.0200) / 1.21 - 0.09161 + 0.016529 = 0.07368.
+    // An exported kWh carries no VAT, so the supplier fee enters ex-VAT.
     let feed_in = settlement.feed_in_post(&slot, ExportSource::Battery);
     assert!(close(feed_in, FEED_IN_AT_0_20), "feed-in was {feed_in}");
-    assert!((feed_in - 0.0772).abs() < 1e-4);
+    assert!((feed_in - 0.0737).abs() < 1e-4);
     // No return costs for Zonneplan, so the export price is the feed-in.
     assert!(close(
         settlement.export_price(&slot, ExportSource::Battery),
@@ -92,15 +92,41 @@ fn the_all_in_price_turns_negative_at_the_documented_market_price() {
             .expect("2026"),
         0.0
     ));
-    // feed_in = market + fee, so it hits zero at market = -fee, i.e. all-in 0.1066481.
-    let zero_feed_in_buy = contract.all_in(-FEE_INCL, 2026).expect("2026");
-    assert!(close(zero_feed_in_buy, 0.1066481));
+    // feed_in = market + fee_ex, so it hits zero at market = -fee_ex, i.e. all-in 0.1108481 --
+    // the same number as the published price without the energy tax, since VAT leaves both sides.
+    let zero_feed_in_buy = contract.all_in(-contract.fee_ex(), 2026).expect("2026");
+    assert!(close(zero_feed_in_buy, 0.1108481));
+    // Money is rounded to 1e-6 at ingest, so the zero is a rounded zero.
+    assert!(
+        post_saldering_2027()
+            .feed_in_post(
+                &slot_at("2027-06-01T13:00:00+02:00", zero_feed_in_buy),
+                ExportSource::Pv
+            )
+            .abs()
+            < 1e-6
+    );
+}
+
+#[test]
+fn the_published_no_tax_price_prices_the_feed_in_once_netting_ends() {
+    let settlement = post_saldering_2027();
+    // 0.20 all-in, market 0.0571503..., published without the energy tax: 0.0891519, which still
+    // carries VAT; the supplier pays 0.0891519 / 1.21 = 0.0736793.
+    let published = support::slot_at("2027-06-01T12:00:00+02:00", BUY)
+        .with_ex_tax(Some(0.089152))
+        .money_rounded();
+    let feed_in = settlement.feed_in_post(&published, ExportSource::Battery);
+    assert!(close(feed_in, 0.089152 / 1.21), "feed-in was {feed_in}");
     assert!(close(
-        post_saldering_2027().feed_in_post(
-            &slot_at("2027-06-01T13:00:00+02:00", zero_feed_in_buy),
-            ExportSource::Pv
-        ),
-        0.0
+        settlement.export_price(&published, ExportSource::Battery),
+        0.089152 / 1.21
+    ));
+    // A provider that publishes only the all-in price keeps the researched `market + fee`.
+    let derived = support::slot_at("2027-06-01T12:00:00+02:00", BUY);
+    assert!(close(
+        settlement.feed_in_post(&derived, ExportSource::Battery),
+        FEED_IN_AT_0_20
     ));
 }
 
@@ -168,9 +194,9 @@ fn the_export_is_netted_first_and_paid_at_feed_in_after_the_budget() {
 fn the_marginal_export_value_is_the_displacement_of_later_pv() {
     let mut settlement = saldering_2026(100.0);
     let slot = slot_at("2026-11-20T12:00:00+01:00", BUY);
-    // prices.md §3.2: buy - feed_in_post ~ 0.20 - 0.078 = 0.12, not the 0.20 all-in price.
+    // prices.md §3.2: buy - feed_in_post = 0.20 - 0.07368 = 0.12632, not the 0.20 all-in price.
     let marginal = settlement.marginal_export(&slot, ExportSource::Battery);
-    assert!(close(marginal, 0.12285), "got {marginal}");
+    assert!(close(marginal, BUY - FEED_IN_AT_0_20), "got {marginal}");
     assert!(marginal < settlement.buy(&slot));
     // Self-consumption replaces an import and is worth the whole all-in price.
     assert!(close(settlement.buy(&slot), BUY));

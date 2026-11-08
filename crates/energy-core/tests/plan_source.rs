@@ -87,7 +87,9 @@ async fn a_full_book_plans_the_whole_horizon() {
     assert_eq!(plan.slots[0].load_kw, 0.6);
     assert!(plan.degraded.is_none());
     let floor = plan.sell_floor.expect("floor");
-    assert!((floor - 0.10).abs() < 1e-9, "floor {floor}");
+    // The fixture market is 0.08 and the supplier fee is 2 ct incl. VAT, i.e. 2/1.21 ex-VAT:
+    // an exported kWh carries no VAT, so the floor is 0.08 + 0.02/1.21.
+    assert!((floor - (0.08 + 0.02 / 1.21)).abs() < 1e-9, "floor {floor}");
     for slot in &plan.slots {
         assert!(slot.battery_kw.is_finite());
     }

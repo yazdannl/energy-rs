@@ -20,8 +20,8 @@ use energy_price::settlement::{BonusRules, ExportSource, Saldering, Settlement};
 use support::{contract, slot_at};
 
 const BUY: f64 = 0.20;
-/// Feed-in without the Zonnebonus for the fixture slot (`market + 0.02`).
-const FEED_IN: f64 = 0.07715;
+/// Feed-in without the Zonnebonus for the fixture slot (`market + fee_ex`, ex-VAT).
+const FEED_IN: f64 = 0.0736789256198347;
 
 fn close(actual: f64, expected: f64) -> bool {
     (actual - expected).abs() < 1e-9

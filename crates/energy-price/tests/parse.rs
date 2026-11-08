@@ -183,6 +183,13 @@ fn the_ha_quarter_hourly_sensor_forecast_parses() {
         Some(energy_price::SlotSource::HaQuarterHourly)
     );
     assert_eq!(book.last().map(|slot| slot.buy_all_in), Some(0.25));
+    // The published price without the energy tax is carried verbatim: it is the feed-in price once
+    // net metering ends, so it is never re-derived from the all-in price.
+    assert_eq!(
+        book.first().and_then(|slot| slot.buy_ex_tax),
+        Some(0.112345)
+    );
+    assert_eq!(book.last().and_then(|slot| slot.buy_ex_tax), None);
 }
 
 #[test]
@@ -192,7 +199,8 @@ fn the_legacy_hourly_sensor_shape_parses_from_datetime_and_electricity_price() {
         "attributes": {
             "unit_of_measurement": "€/kWh",
             "forecast": [
-                {"datetime": "2026-11-20T00:00:00+01:00", "electricity_price": 1_800_000},
+                {"datetime": "2026-11-20T00:00:00+01:00", "electricity_price": 1_800_000,
+                 "electricity_price_excl_tax": 1_010_000},
                 {"datetime": "2026-11-20T01:00:00+01:00", "electricity_price": 2_400_000},
             ],
         },
@@ -211,6 +219,7 @@ fn the_legacy_hourly_sensor_shape_parses_from_datetime_and_electricity_price() {
         Some(energy_price::SlotSource::HaHourly)
     );
     assert_eq!(book.first().map(|slot| slot.buy_all_in), Some(0.18));
+    assert_eq!(book.first().and_then(|slot| slot.buy_ex_tax), Some(0.101));
 }
 
 #[test]

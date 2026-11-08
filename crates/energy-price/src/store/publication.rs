@@ -45,7 +45,15 @@ pub fn content_hash(book: &PriceBook) -> String {
         // The hash covers the raw bits of the epoch seconds; the sign of a timestamp is not
         // meaningful to a price book, and the bits keep the hash stable across a refactor.
         let start_bits = u64::from_ne_bytes(slot.t_start.to_ne_bytes());
-        for value in [start_bits, slot.buy_all_in.to_bits(), slot.market.to_bits()] {
+        // A published no-tax price is part of the content: a provider that starts (or stops)
+        // publishing it must produce a new publication, not a stale one.
+        let ex_tax_bits = slot.buy_ex_tax.map_or(0, f64::to_bits);
+        for value in [
+            start_bits,
+            slot.buy_all_in.to_bits(),
+            slot.market.to_bits(),
+            ex_tax_bits,
+        ] {
             for byte in value.to_be_bytes() {
                 hash = fold(hash, byte);
             }

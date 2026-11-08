@@ -9,6 +9,9 @@ use crate::settlement::{BonusRules, Daylight, EnergyTaxTable, ExportSource, TaxY
 pub const VAT_NL: f64 = 0.21;
 /// Zonneplan inkoopvergoeding, EUR/kWh incl. VAT (prices.md §7 row 5).
 pub const ZONNEPLAN_FEE_INCL: f64 = 0.0200;
+/// The same fee excl. VAT: the market price it is added to carries no VAT either, and neither does
+/// a feed-in kWh, so VAT must not leak into the export price.
+pub const ZONNEPLAN_FEE_EX: f64 = ZONNEPLAN_FEE_INCL / (1.0 + VAT_NL);
 /// Zonneplan terugleverkosten, EUR/kWh (prices.md §7 row 7: none, not even after 2026).
 pub const ZONNEPLAN_TERUGLEVERKOSTEN: f64 = 0.0;
 
@@ -19,7 +22,8 @@ pub struct Contract {
     pub vat: f64,
     /// Supplier fee incl. VAT, EUR/kWh; added to the market price and to the all-in price.
     pub fee_incl: f64,
-    /// Fee paid on exported kWh, EUR/kWh (Zonneplan pays its inkoopvergoeding on export).
+    /// Fee paid on exported kWh, EUR/kWh **excl. VAT** (Zonneplan pays its inkoopvergoeding on
+    /// export). An export kWh carries no VAT, so this is added to the ex-VAT market price.
     pub feed_in_fee: f64,
     /// Per-kWh export charge of the supplier, EUR/kWh (0 for Zonneplan).
     pub teruglever_kosten: f64,
@@ -36,7 +40,7 @@ impl Contract {
         Self {
             vat: VAT_NL,
             fee_incl: ZONNEPLAN_FEE_INCL,
-            feed_in_fee: ZONNEPLAN_FEE_INCL,
+            feed_in_fee: ZONNEPLAN_FEE_EX,
             teruglever_kosten: ZONNEPLAN_TERUGLEVERKOSTEN,
             bonus: BonusRules::zonnebonus(),
             daylight: Some(Daylight::netherlands()),
@@ -112,14 +116,29 @@ impl Contract {
         Ok((market + tax.energy_tax_ex) * (1.0 + self.vat) + self.fee_incl)
     }
 
+    /// The feed-in price before the bonus, EUR/kWh.
+    ///
+    /// An exported kWh carries neither the energy tax nor VAT, so the tariff is ex-VAT throughout.
+    /// The provider's published price without the energy tax is preferred when the sensor carries
+    /// one -- it is the published number rather than one re-derived from the all-in price -- and it
+    /// still includes VAT, which is stripped here. A provider that publishes only the all-in price
+    /// falls back to `market + feed_in_fee`, both of which are already ex-VAT.
+    pub fn feed_in_base(&self, slot: &Slot) -> f64 {
+        match slot.buy_ex_tax {
+            Some(published) if self.vat > -1.0 => published / (1.0 + self.vat),
+            Some(published) => published,
+            None => slot.market + self.feed_in_fee,
+        }
+    }
+
     /// Whether the Zonnebonus applies to this slot/source at this year-to-date export.
     ///
-    /// Only PV, daylight and a positive `market + fee`, under the annual cap.  Netting is decided by
+    /// Only PV, daylight and a positive feed-in, under the annual cap.  Netting is decided by
     /// [`Settlement`](crate::settlement::Settlement) *before* this call, so the bonus lands on the
     /// un-netted remainder only -- the "no stacking on the netted part" assumption of prices.md
     /// §3.2 (flagged `[?]` there; the exposure is <0.8 ct/kWh).
     pub fn bonus_applies(&self, slot: &Slot, source: ExportSource, bonus_ytd_kwh: f64) -> bool {
-        let raw = slot.market + self.feed_in_fee;
+        let raw = self.feed_in_base(slot);
         let daylight = match self.daylight {
             Some(daylight) if self.bonus.daylight => daylight.is_daylight(slot.t_start),
             Some(_) => true,
@@ -139,6 +158,6 @@ impl Contract {
         } else {
             1.0
         };
-        (slot.market + self.feed_in_fee) * multiplier - self.teruglever_kosten
+        self.feed_in_base(slot) * multiplier - self.teruglever_kosten
     }
 }

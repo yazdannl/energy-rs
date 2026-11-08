@@ -91,12 +91,14 @@ fn stored_pv_counts_as_self_consumption_and_is_credited_to_the_lost_export() {
         savings::unseeded(),
     );
     let accounting = account(&reading, &savings::settlement(day));
+    // 3 kWh exported at the post-saldering feed-in: 0.03 market + 2/1.21 ct fee, ex-VAT.
+    let lost_export = 3.0 * (0.03 + 0.02 / 1.21);
     assert!(
-        (accounting.saving_eur - 0.75).abs() < 1e-9,
+        (accounting.saving_eur - (0.90 - lost_export)).abs() < 1e-9,
         "{accounting:?}"
     );
     assert!((accounting.self_consumption_eur - 0.90).abs() < 1e-9);
-    assert!((accounting.feed_in_eur + 0.15).abs() < 1e-9);
+    assert!((accounting.feed_in_eur + lost_export).abs() < 1e-9);
     assert!((accounting.arbitrage_eur).abs() < 1e-12);
     assert!((accounting.pv_kwh - 3.0).abs() < 1e-12);
     assert!(accounting.import_kwh.abs() < 1e-12);
@@ -158,7 +160,12 @@ fn a_day_consumes_the_saldering_budget_the_next_day_needs() {
         savings::seeded(2026, 2.0, 0.0),
     );
     let first = account(&first, &savings::settlement(day));
-    assert!((first.baseline_eur + 0.74).abs() < 1e-9, "{first:?}");
+    // 4 kWh exported: 2 kWh netted 1:1 at 0.30 and 2 kWh at the feed-in (0.05 + 2/1.21 ct).
+    let feed_in = 2.0 * (0.05 + 0.02 / 1.21);
+    assert!(
+        (first.baseline_eur + (0.60 + feed_in)).abs() < 1e-9,
+        "{first:?}"
+    );
     assert!((first.saving_eur).abs() < 1e-12);
     assert_split(&first);
 
@@ -188,7 +195,7 @@ fn a_day_consumes_the_saldering_budget_the_next_day_needs() {
     );
     let unspent = account(&unspent, &savings::settlement(tomorrow));
 
-    assert!((spent.actual_eur + 0.14).abs() < 1e-9, "{spent:?}");
+    assert!((spent.actual_eur + feed_in).abs() < 1e-9, "{spent:?}");
     assert!((unspent.actual_eur + 0.60).abs() < 1e-9, "{unspent:?}");
     assert!(unspent.actual_eur < spent.actual_eur);
 }

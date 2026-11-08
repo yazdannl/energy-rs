@@ -44,6 +44,7 @@ pub fn parse_chart(payload: &Value) -> Result<ParsedSeries, PriceError> {
         raw.push(RawSlot {
             t_start: start,
             buy_all_in,
+            buy_ex_tax: None,
         });
     }
     let step = step.ok_or(PriceError::GasDecoy)?;

@@ -43,6 +43,36 @@ fn repositories() -> Vec<(&'static str, Box<dyn PriceRepository>)> {
 }
 
 #[test]
+fn the_published_no_tax_price_survives_a_round_trip() {
+    for (name, repo) in repositories() {
+        let slots: Vec<_> = support::quarter_hourly(START, &[0.20, 0.21])
+            .into_iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                if index == 0 {
+                    slot.with_ex_tax(Some(0.089152))
+                } else {
+                    slot
+                }
+            })
+            .collect();
+        let book = support::book(slots);
+        repo.save_publication(&book).expect(name);
+        let loaded = repo.load(0, i64::MAX).expect(name);
+        assert_eq!(
+            loaded.first().and_then(|slot| slot.buy_ex_tax),
+            Some(0.089152),
+            "{name}: the published price is stored, not re-derived"
+        );
+        assert_eq!(
+            loaded.last().and_then(|slot| slot.buy_ex_tax),
+            None,
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn saving_the_same_publication_twice_writes_once() {
     for (name, repo) in repositories() {
         let book = book(START, &[0.20, 0.21, 0.19, 0.18]);

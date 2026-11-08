@@ -17,7 +17,8 @@ use energy_price::book::query::{local_midnight, local_naive_to_utc};
 use energy_price::{Contract, Settlement, Slot};
 
 /// The test contract: Zonneplan 2026 constants with the Zonnebonus switched off, so the feed-in
-/// price is exactly `market + 0.02` and the scenarios stay readable.
+/// price is exactly `market + 0.02 / 1.21` (the supplier fee is 2 ct incl. VAT, an exported kWh
+/// carries no VAT) and the scenarios stay readable.
 pub fn contract() -> Contract {
     let mut contract = Contract::zonneplan_2026();
     contract.bonus.pct = 0.0;
