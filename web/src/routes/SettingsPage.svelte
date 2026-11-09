@@ -20,6 +20,7 @@
   import SettingsContract from '../components/settings/SettingsContract.svelte';
   import SettingsHealth from '../components/settings/SettingsHealth.svelte';
   import SettingsLimits from '../components/settings/SettingsLimits.svelte';
+  import SettingsPolicy from '../components/settings/SettingsPolicy.svelte';
   import SettingsProvider from '../components/settings/SettingsProvider.svelte';
   import SettingsRetention from '../components/settings/SettingsRetention.svelte';
   import Badge from '../components/ui/Badge.svelte';
@@ -126,6 +127,15 @@
         <Skeleton rows={5} />
       {:else}
         <SettingsLimits {draft} />
+      {/if}
+    </Panel>
+
+    <Panel title="Export policy" subtitle="Break-even gate, reserves and zero export">
+      {#snippet icon()}<BatteryCharging class="size-4 text-batt" />{/snippet}
+      {#if draft.loading && draft.schema.length === 0}
+        <Skeleton rows={5} />
+      {:else}
+        <SettingsPolicy {draft} />
       {/if}
     </Panel>
 

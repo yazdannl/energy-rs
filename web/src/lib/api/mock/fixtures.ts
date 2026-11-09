@@ -453,6 +453,13 @@ export function makeSettings(now: Date): SettingsResponse {
     asOf: iso(now),
     values: {
       grid_import_limit_w: 0,
+      zero_export: 'off',
+      solar_reserve_pct: 20,
+      peak_reserve_pct: 20,
+      peak_reserve_value_eur_per_kwh: 0.15,
+      wear_eur_per_kwh: 0.02,
+      cost_basis_eur_per_kwh: 0,
+      export_policy: 'legacy',
       grid_export_limit_w: 0,
       reserve_soc_pct: 12,
       max_soc_pct: 97,
@@ -467,6 +474,7 @@ export function makeSettings(now: Date): SettingsResponse {
     },
     schema: [
       { key: 'grid_import_limit_w', kind: 'number', default: 0, min: 0, max: 20000 },
+      { key: 'zero_export', kind: 'choice', default: 'off', options: ['off', 'on'] },
       { key: 'grid_export_limit_w', kind: 'number', default: 0, min: 0, max: 20000 },
       { key: 'reserve_soc_pct', kind: 'number', default: 10, min: 0, max: 60 },
       { key: 'max_soc_pct', kind: 'number', default: 100, min: 50, max: 100 },
