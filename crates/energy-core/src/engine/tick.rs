@@ -35,6 +35,7 @@ impl Engine {
         let pack_w = (!view.packs.is_empty()).then(|| view.power_w());
         let meter = self.meter.reading().await.with_pack_power(pack_w);
         self.mark(now)?;
+        self.refresh_policy(now, &view, &meter);
         self.wire(now, &mut view)?;
         self.mark(now)?;
         let hold = self.maybe_replan(now, &view).await?;

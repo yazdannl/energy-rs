@@ -25,6 +25,7 @@ mod latched_write;
 mod live_latch;
 mod live_write_journal;
 mod persist;
+mod policy;
 mod plan_source;
 mod refusal;
 mod run;

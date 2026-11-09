@@ -18,6 +18,10 @@
 //! measured is stored with `NULL` money and its coverage instead of a fake number.
 
 mod accountant;
+mod pool;
+mod pool_memory;
+mod pool_slot_flow;
+mod pool_store;
 mod annual_seeds;
 mod day_accounting;
 mod day_reading;
@@ -33,6 +37,10 @@ mod source;
 mod statistic_series;
 
 pub use accountant::account;
+pub use pool::advance;
+pub use pool_memory::MemoryPoolStore;
+pub use pool_slot_flow::SlotFlowAc;
+pub use pool_store::PoolStore;
 pub use day_accounting::DayAccounting;
 pub use day_reading::DayReading;
 pub use error::SavingsError;

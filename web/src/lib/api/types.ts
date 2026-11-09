@@ -144,6 +144,18 @@ export interface PlanSummary {
   cycles: number;
   terminalTargetWh: number | null;
   infeasibleReason: string | null;
+  /** The break-even an exported kWh had to clear, EUR/kWh. */
+  exportFloorEurPerKwh: number | null;
+  /** The cost basis the export gate was armed with, EUR/kWh. */
+  costBasisEurPerKwh: number | null;
+  /** The soft peak guideline in force, Wh. */
+  peakReserveWh: number | null;
+  /** Headroom kept free of grid energy, Wh. */
+  solarReserveWh: number;
+  /** PV a ceiling forced out of the pack, Wh. */
+  clippedWh: number;
+  /** Battery energy the export gate kept in the pack, Wh. */
+  gatedWh: number;
 }
 
 export interface PlanSlot {

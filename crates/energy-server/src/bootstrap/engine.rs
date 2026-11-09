@@ -51,16 +51,21 @@ pub fn plan_source(
     settlement: Settlement,
     profiles: Arc<LoadProfiles>,
     policy: energy_core::plan::Policy,
+    handle: Arc<energy_core::plan_source::PolicyHandle>,
 ) -> Arc<dyn PlanSource> {
+    let _ = policy;
     let config = energy_core::plan_source::SourceConfig {
         policy,
         wear_eur_per_kwh: policy.wear_eur_per_kwh,
         ..energy_core::plan_source::SourceConfig::default()
     };
-    Arc::new(LivePlanSource::new(
-        HaPlanSupply::new(connection, prices, settlement).with_load_profiles(profiles),
-        config,
-    ))
+    Arc::new(
+        LivePlanSource::new(
+            HaPlanSupply::new(connection, prices, settlement).with_load_profiles(profiles),
+            config,
+        )
+        .with_policy(handle),
+    )
 }
 
 /// Build the engine over the assembled ports (the caller attaches the API stream).

@@ -26,6 +26,8 @@ mod live;
 mod load_profiles;
 mod profile_build;
 mod quality;
+mod policy_handle;
+mod policy_source;
 mod supply;
 mod supply_port;
 
@@ -35,6 +37,8 @@ pub use ha_supply::HaPlanSupply;
 pub use history::MeasuredHistory;
 pub use live::LivePlanSource;
 pub use load_profiles::LoadProfiles;
+pub use policy_handle::PolicyHandle;
+pub use policy_source::PolicySource;
 pub use profile_build::learn as learn_load_profile;
 pub use quality::ForecastQuality;
 pub use supply::Supply;

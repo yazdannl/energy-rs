@@ -13,6 +13,8 @@ use energy_ledger::{Ledger, LedgerConfig};
 
 use crate::bootstrap::booted::Booted;
 use crate::bootstrap::engine::Ports;
+use crate::bootstrap::pool;
+use crate::bootstrap::settings_policy;
 use crate::bootstrap::site_cache::SiteCache;
 use crate::bootstrap::{
     config, engine, fleet, ha, ha_loop, meter, options, prices, profile, savings,
@@ -127,12 +129,14 @@ async fn wire_engine(
         .connection()
         .await
         .context("Home Assistant connection lost during startup")?;
+    let policy = Arc::new(energy_core::plan_source::PolicyHandle::new(config::policy(ledger)));
     let source = engine::plan_source(
         connection,
         Arc::clone(&prices.repository),
         prices.settlement(),
         Arc::clone(profiles),
-        config::policy(ledger),
+        policy.get(),
+        Arc::clone(&policy),
     );
     Ok(engine::engine(
         Arc::clone(ledger),
@@ -143,6 +147,11 @@ async fn wire_engine(
             meter: meter.port(),
             source,
         },
+    )
+    .with_policy(
+        policy,
+        settings_policy::SettingsPolicy::shared(Arc::clone(ledger)),
+        pool::LedgerPool::shared(Arc::clone(ledger)),
     ))
 }
 

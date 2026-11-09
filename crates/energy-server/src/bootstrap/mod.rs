@@ -18,6 +18,8 @@ pub mod logging;
 pub mod meter;
 mod option_value;
 pub mod options;
+pub mod pool;
+pub mod settings_policy;
 pub mod prices;
 pub mod profile;
 pub mod savings;

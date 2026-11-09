@@ -123,6 +123,18 @@
         <ErrorNote error={plan.error} onretry={() => void plan.load()} />
       {:else}
         <CurrentSlot {slot} hasPlan={plan.data !== null} />
+        {#if plan.data?.summary.exportFloorEurPerKwh != null}
+          <p class="mt-3 text-xs text-muted">
+            Selling needs ≥ €{plan.data.summary.exportFloorEurPerKwh.toFixed(3)}/kWh
+            (stored €{(plan.data.summary.costBasisEurPerKwh ?? 0).toFixed(3)}, wear €0.020)
+            {#if plan.data.summary.gatedWh > 0}
+              · kept {(plan.data.summary.gatedWh / 1000).toFixed(2)} kWh in the pack
+            {/if}
+            {#if plan.data.summary.solarReserveWh > 0}
+              · {(plan.data.summary.solarReserveWh / 1000).toFixed(1)} kWh free for solar
+            {/if}
+          </p>
+        {/if}
       {/if}
     </Panel>
   </div>

@@ -59,6 +59,7 @@ pub mod dispatch;
 pub mod error;
 pub mod event;
 pub mod measurement;
+pub mod pool;
 pub mod pack;
 pub mod plan;
 pub mod retention;

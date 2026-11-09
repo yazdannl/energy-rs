@@ -1,12 +1,13 @@
 //! The real plan source: horizon, refusals, fallbacks and the solve.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use energy_price::PriceBook;
 
 use crate::dispatch::BoxFuture;
 use crate::engine::PlanSource;
 use crate::plan::{Differential, HORIZON_SLOTS, PackState, Plan, PlanError, SLOT_SECONDS};
+use crate::plan_source::PolicyHandle;
 use crate::plan_source::{MIN_HORIZON_SLOTS, PlanSupply, SourceConfig, Supply};
 use crate::replan::Changes;
 
@@ -16,6 +17,7 @@ use crate::replan::Changes;
 /// refuses a stale book or an unusable measured history, builds the EWMA fallback when a provider
 /// has no forecast, and solves. Nothing here reads a clock: `now` is the engine's.
 pub struct LivePlanSource<S: PlanSupply> {
+    policy: Option<Arc<PolicyHandle>>,
     supply: S,
     config: SourceConfig,
     pending: Mutex<Changes>,
@@ -44,12 +46,20 @@ impl<S: PlanSupply> LivePlanSource<S> {
     /// A source over `supply` with the given policy.
     pub fn new(supply: S, config: SourceConfig) -> Self {
         Self {
+            policy: None,
             supply,
             config,
             pending: Mutex::new(Changes::none()),
             last: Mutex::new(None),
             differential: Differential::default(),
         }
+    }
+
+    /// Follow a live policy (settings plus the measured basis).
+    #[must_use]
+    pub fn with_policy(mut self, policy: Arc<PolicyHandle>) -> Self {
+        self.policy = Some(policy);
+        self
     }
 
     /// The policy in force.
@@ -63,11 +73,14 @@ impl<S: PlanSupply> LivePlanSource<S> {
         let slots = horizon_slots(&supply.prices, now)?;
         let from = supply.prices.slot_at(now).map_or(now, |slot| slot.t_start);
         let forecast = self.forecast(&supply, from, slots, now)?;
-        let input = self
+        let mut input = self
             .config
             .input(now, packs, supply.prices, supply.settlement)
             .with_horizon_slots(slots)
             .with_forecasts(forecast.pv_kw, forecast.load_kw, forecast.as_of);
+        if let Some(policy) = &self.policy {
+            input.policy = policy.get();
+        }
         let input = match forecast.note {
             Some(note) => input.with_forecast_note(note),
             None => input,

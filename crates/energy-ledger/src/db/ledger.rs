@@ -135,6 +135,11 @@ impl Ledger {
         Ok(Savings::new(self.lock()?))
     }
 
+    /// The stored-energy cost pool.
+    pub fn pool(&self) -> Result<crate::pool::Pool<'_>, LedgerError> {
+        Ok(crate::pool::Pool::new(self.lock()?))
+    }
+
     pub fn settings(&self) -> Result<Settings<'_>, LedgerError> {
         Ok(Settings::new(self.lock()?))
     }
