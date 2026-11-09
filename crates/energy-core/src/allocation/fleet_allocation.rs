@@ -140,12 +140,7 @@ fn fill(
 /// A live hold beats SoC order — that is the whole point of the latch, so a pack cannot rotate just
 /// because its SoC crossed a neighbour's. SoC differences inside `soc_band_pct` are a tie, so the
 /// order cannot flip on measurement noise either.
-fn rank(
-    packs: &[&PackState],
-    rooms: &[f64],
-    charging: bool,
-    input: &SplitInput<'_>,
-) -> Vec<usize> {
+fn rank(packs: &[&PackState], rooms: &[f64], charging: bool, input: &SplitInput<'_>) -> Vec<usize> {
     let band = input.soc_band_pct.max(0.0);
     let key = |state: &PackState| {
         if band <= 0.0 {
@@ -198,8 +193,7 @@ fn held(
         return None;
     }
     (0..packs.len()).find(|index| {
-        packs[*index].spec.pack_id == hold.holder
-            && rooms[*index] >= input.min_active_w.max(0.0)
+        packs[*index].spec.pack_id == hold.holder && rooms[*index] >= input.min_active_w.max(0.0)
     })
 }
 

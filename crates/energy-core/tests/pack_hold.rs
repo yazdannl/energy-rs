@@ -67,10 +67,18 @@ fn a_sign_flip_releases_the_hold() {
     let packs = vec![state("a", 4.0, 800.0, 80.0), state("b", 4.0, 800.0, 20.0)];
     let held = input("charge", "a", NOW);
     let split = split_of(-700.0, &packs, &held);
-    assert_eq!(split.watts_for("a"), Some(-700.0), "a is the fullest anyway");
+    assert_eq!(
+        split.watts_for("a"),
+        Some(-700.0),
+        "a is the fullest anyway"
+    );
     let held = input("discharge", "a", NOW);
     let split = split_of(-700.0, &packs, &held);
-    assert_eq!(split.watts_for("a"), Some(-700.0), "the discharge hold applies");
+    assert_eq!(
+        split.watts_for("a"),
+        Some(-700.0),
+        "the discharge hold applies"
+    );
 
     // Now the other way round: a charge hold that would pick the wrong pack for a discharge.
     let packs = vec![state("a", 4.0, 800.0, 20.0), state("b", 4.0, 800.0, 80.0)];
@@ -90,7 +98,11 @@ fn a_pack_that_can_no_longer_serve_is_replaced_immediately() {
     let packs = vec![state("a", 4.0, 800.0, 95.0), state("b", 4.0, 800.0, 40.0)];
     let held = input("charge", "a", NOW);
     let split = split_of(700.0, &packs, &held);
-    assert_eq!(split.watts_for("a"), Some(0.0), "a hard limit beats the hold");
+    assert_eq!(
+        split.watts_for("a"),
+        Some(0.0),
+        "a hard limit beats the hold"
+    );
     assert_eq!(split.watts_for("b"), Some(700.0));
 }
 
@@ -107,7 +119,11 @@ fn a_soc_difference_inside_the_band_is_a_tie() {
     // 40 % and 41 %: inside the 2-point band, so it is a tie and the lower id leads.
     let packs = vec![state("b", 4.0, 800.0, 40.0), state("a", 4.0, 800.0, 41.0)];
     let split = split_of(700.0, &packs, &SplitInput::default());
-    assert_eq!(split.watts_for("a"), Some(700.0), "a tie, so the id decides");
+    assert_eq!(
+        split.watts_for("a"),
+        Some(700.0),
+        "a tie, so the id decides"
+    );
     assert_eq!(split.watts_for("b"), Some(0.0));
 
     let packs = vec![state("b", 4.0, 800.0, 36.0), state("a", 4.0, 800.0, 40.0)];

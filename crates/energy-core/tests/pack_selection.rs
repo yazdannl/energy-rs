@@ -16,12 +16,20 @@ use energy_ledger::selection::SelectionRow;
 use support::fakes::{NOW, pack, plan};
 use support::harness;
 
-fn engine(mode: Authority, packs: Vec<energy_core::dispatch::PackReading>, plan: energy_core::plan::Plan) -> harness::Harness {
+fn engine(
+    mode: Authority,
+    packs: Vec<energy_core::dispatch::PackReading>,
+    plan: energy_core::plan::Plan,
+) -> harness::Harness {
     harness::build(mode, packs, plan)
 }
 
 fn stored(h: &harness::Harness) -> Option<SelectionRow> {
-    h.ledger.selection().expect("selection").get().expect("read")
+    h.ledger
+        .selection()
+        .expect("selection")
+        .get()
+        .expect("read")
 }
 
 /// Boot and run the first two ticks: the first one after a boot still holds, the second commands.
@@ -59,7 +67,10 @@ async fn the_hold_survives_further_ticks_without_rewriting_its_start() {
 
     let row = stored(&h).expect("a latched selection");
     assert_eq!(row.holder, "SN-B");
-    assert_eq!(row.selected_at, latched_at, "the hold does not renew itself");
+    assert_eq!(
+        row.selected_at, latched_at,
+        "the hold does not renew itself"
+    );
 }
 
 #[tokio::test]
