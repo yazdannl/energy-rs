@@ -24,10 +24,10 @@ mod ha_supply;
 mod history;
 mod live;
 mod load_profiles;
-mod profile_build;
-mod quality;
 mod policy_handle;
 mod policy_source;
+mod profile_build;
+mod quality;
 mod supply;
 mod supply_port;
 

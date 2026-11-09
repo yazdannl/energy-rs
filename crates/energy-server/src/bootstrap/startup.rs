@@ -129,7 +129,9 @@ async fn wire_engine(
         .connection()
         .await
         .context("Home Assistant connection lost during startup")?;
-    let policy = Arc::new(energy_core::plan_source::PolicyHandle::new(config::policy(ledger)));
+    let policy = Arc::new(energy_core::plan_source::PolicyHandle::new(config::policy(
+        ledger,
+    )));
     let source = engine::plan_source(
         connection,
         Arc::clone(&prices.repository),

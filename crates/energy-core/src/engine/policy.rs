@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-
 use crate::dispatch::{FleetView, MeterReading};
 
 impl crate::engine::Engine {
@@ -66,10 +65,13 @@ impl crate::engine::Engine {
 
     /// The plan slot covering `now`, if a plan is loaded.
     fn current_slot(&self, now: i64) -> Option<energy_ledger::plan::PlanSlot> {
-        self.state
-            .lock()
-            .ok()
-            .and_then(|state| state.plan.as_ref().and_then(|plan| plan.slot_at(now)).cloned())
+        self.state.lock().ok().and_then(|state| {
+            state
+                .plan
+                .as_ref()
+                .and_then(|plan| plan.slot_at(now))
+                .cloned()
+        })
     }
 }
 

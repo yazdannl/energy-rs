@@ -25,7 +25,10 @@ impl LedgerPool {
 
 impl PoolStore for LedgerPool {
     fn load(&self) -> Option<PoolRow> {
-        self.ledger.pool().ok().and_then(|pool| pool.get().ok().flatten())
+        self.ledger
+            .pool()
+            .ok()
+            .and_then(|pool| pool.get().ok().flatten())
     }
 
     fn save(&self, pool: &PoolRow) {

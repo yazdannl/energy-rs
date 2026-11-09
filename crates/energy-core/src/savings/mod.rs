@@ -18,10 +18,6 @@
 //! measured is stored with `NULL` money and its coverage instead of a fake number.
 
 mod accountant;
-mod pool;
-mod pool_memory;
-mod pool_slot_flow;
-mod pool_store;
 mod annual_seeds;
 mod day_accounting;
 mod day_reading;
@@ -29,6 +25,10 @@ mod error;
 mod flow_totals;
 mod ha_source;
 mod measured_day;
+mod pool;
+mod pool_memory;
+mod pool_slot_flow;
+mod pool_store;
 mod rollup;
 mod rollup_report;
 mod settlement_seed;
@@ -37,16 +37,16 @@ mod source;
 mod statistic_series;
 
 pub use accountant::account;
-pub use pool::advance;
-pub use pool_memory::MemoryPoolStore;
-pub use pool_slot_flow::SlotFlowAc;
-pub use pool_store::PoolStore;
 pub use day_accounting::DayAccounting;
 pub use day_reading::DayReading;
 pub use error::SavingsError;
 pub use flow_totals::FlowTotals;
 pub use ha_source::HaSavingsSource;
 pub use measured_day::MeasuredDay;
+pub use pool::advance;
+pub use pool_memory::MemoryPoolStore;
+pub use pool_slot_flow::SlotFlowAc;
+pub use pool_store::PoolStore;
 pub use rollup::{CATCH_UP_DAYS, SavingsRollup};
 pub use rollup_report::RollupReport;
 pub use settlement_seed::SettlementSeed;
