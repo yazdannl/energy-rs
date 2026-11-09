@@ -58,7 +58,9 @@ async fn patching_a_setting_writes_the_ledger_and_returns_the_typed_value() {
     .await;
     assert_eq!(status, 200);
     assert_eq!(body["values"]["grid_import_limit_w"], 2_000.0);
-    assert_eq!(body["values"].as_object().unwrap().len(), 1);
+    // The response carries the whole state so the form can replace its draft with it.
+    assert_eq!(body["values"].as_object().unwrap().len(), 18);
+    assert_eq!(body["values"]["reserve_soc_pct"], 20.0);
     assert_eq!(
         fixture
             .ledger
