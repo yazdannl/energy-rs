@@ -29,6 +29,8 @@ pub fn engine_config(options: &Options, ledger: &Ledger) -> EngineConfig {
         pack_staggering: text(ledger, "pack_staggering").as_deref() != Some("off"),
         pack_switch_soc_pct: number(ledger, "pack_switch_soc_pct", 2.0),
         pack_hold_seconds: seconds(ledger, "pack_hold_seconds", defaults.pack_hold_seconds),
+        grid_react_w: number(ledger, "grid_react_w", 10.0),
+        solar_react_w: number(ledger, "solar_react_w", 10.0),
         max_grid_import_w: number(ledger, "grid_import_limit_w", defaults.max_grid_import_w),
         max_grid_export_w: number(ledger, "grid_export_limit_w", defaults.max_grid_export_w),
         fleet_max_charge_w: max_charge_w,

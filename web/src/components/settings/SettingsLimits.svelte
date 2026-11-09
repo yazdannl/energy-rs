@@ -24,6 +24,18 @@
       unit: 'W',
       hint: 'below this one pack is not worth starting',
     },
+    {
+      key: 'grid_react_w',
+      label: 'Grid reaction',
+      unit: 'W',
+      hint: 'a step this big re-solves at once',
+    },
+    {
+      key: 'solar_react_w',
+      label: 'Solar reaction',
+      unit: 'W',
+      hint: 'a PV step this big re-solves at once',
+    },
     { key: 'replan_seconds', label: 'Replan interval', unit: 's', hint: 'solve cadence' },
     {
       key: 'stale_input_seconds',

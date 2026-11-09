@@ -1,8 +1,10 @@
 # Pack selection, minimum active power and fast power reaction
 
-Status: **§3–§4 built and shipped in 0.3.8** (`pack_staggering`, `min_pack_power_w`); §5 (the
-selection latch), §6 (fast power reaction) and the page for the remaining settings are still to
-come. Target release 0.4.0. Replaces nothing; sits between the plan and the safety ladder.
+Status: **built; shipped from 0.3.8 (§3–§4) through 0.4.0 (§5–§6).** Every setting below is on the
+Settings page. §6 ships with a two-tick confirmation and a `max(10 s, replan_seconds/4)` floor
+between power-triggered solves; the 10 s moving average named in §6 is not built — the
+confirmation covers the same jitter at no cost. Replaces nothing; sits between the plan and the
+safety ladder.
 
 ## 1. Goal
 
@@ -143,10 +145,10 @@ react = |grid_now − plan.grid_at_solve| > grid_react_w
 |---|---|---|---|
 | 1 | **done (0.3.8)** `fix(dispatch)` | the hold path was already sound — `reconcile` + the latch hold an unavailable or vanished pack we own — the four tests only assumed the old proportional split. They now drive both packs on their own merit (a 1.6 kW request, not a 0.8 kW halved one), so ownership no longer depends on the split policy. Discovery is pinned off in `boot`/`doctor`, which had started seeing the real LAN packs. | `an_unavailable_pack_is_held_and_keeps_its_latch`, `a_pack_that_vanished_is_held_and_keeps_its_latch`, `a_failing_tick_holds_what_we_own_and_stops_marking_progress`, `a_bookkeeping_failure_still_holds_every_target` |
 | 2 | **done (0.3.8)** `feat(dispatch)` | SoC ordering (emptiest charges, fullest serves, id breaks ties), greedy fill, `min_pack_power_w`, `SplitInput`, `pack_staggering` switch with the proportional path kept | `discharge_uses_the_fullest_pack_alone`, `charge_uses_the_emptiest_pack_alone`, `a_saturated_pack_spills_into_the_next_in_soc_order`, `a_sliver_never_starts_another_pack`, `a_target_below_the_minimum_runs_nothing`, `a_pack_that_can_only_take_a_sliver_is_skipped`, `the_proportional_split_is_still_available` |
-| 3 | `feat(dispatch): latch the selected pack so SoC drift cannot rotate it` | ledger v7 `pack_selection`, hold timer, cycle-end release, hard-limit release, growth keeps the holder | `a_rising_soc_does_not_rotate_the_pack_within_the_hold`, `the_hold_expires_and_the_emptiest_pack_takes_over`, `the_hold_defaults_to_thirty_minutes`, `an_idle_target_releases_the_hold`, `a_sign_flip_releases_the_hold`, `a_pack_at_its_floor_is_replaced_immediately`, `a_stale_hold_never_pins_a_pack` |
-| 4 | `feat(dispatch): follow the split every tick` | split re-derived per tick from the live grid, independent of the plan's package | `the_split_follows_a_load_step_within_the_tick` |
-| 5 | `feat(plan): re-solve when grid or PV moves more than the threshold` | `grid_react_w`, `solar_react_w`, `plan.grid_at_solve`/`pv_at_solve`, `ReplanReason::PowerChanged`, 10 s floor, moving average | `a_ten_watt_grid_step_replans`, `a_nine_watt_step_does_not`, `pv_and_grid_moving_together_replans_once`, `a_stale_grid_reading_holds_instead_of_replanning`, `the_replan_floor_bounds_solves` |
-| 6 | `feat(web): the five new settings on the Settings page` | `SettingsPolicy`/limits panel rows, mock fixtures | `web-test` fixtures for the new keys |
+| 3 | **done (0.3.9)** `feat(dispatch)` | ledger v7 `pack_selection`, hold timer, cycle-end release, hard-limit release, growth keeps the holder | `a_rising_soc_does_not_rotate_the_pack_within_the_hold`, `the_hold_expires_and_the_emptiest_pack_takes_over`, `the_hold_defaults_to_thirty_minutes`, `an_idle_target_releases_the_hold`, `a_sign_flip_releases_the_hold`, `a_pack_at_its_floor_is_replaced_immediately`, `a_stale_hold_never_pins_a_pack` |
+| 4 | **done by 0.3.9** — the split is re-derived every tick from the live SoC and the live grid (the fleet clamp already ran per tick); no separate change was needed | — | — |
+| 5 | **done (0.4.0)** `feat(plan)` | `grid_react_w`, `solar_react_w`, `plan.grid_at_solve`/`pv_at_solve`, `ReplanReason::PowerChanged`, 10 s floor, moving average | `a_ten_watt_grid_step_replans`, `a_nine_watt_step_does_not`, `pv_and_grid_moving_together_replans_once`, `a_stale_grid_reading_holds_instead_of_replanning`, `the_replan_floor_bounds_solves` |
+| 6 | **done (0.4.0)** `feat(web)` | `SettingsPolicy`/limits panel rows, mock fixtures | `web-test` fixtures for the new keys |
 
 Release 0.4.0 after commit 6; 0.3.8 may ship commits 1–2 alone if 3–6 need more review.
 

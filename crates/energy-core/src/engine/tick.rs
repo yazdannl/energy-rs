@@ -2,12 +2,12 @@
 
 use energy_battery::protection::CellLatch;
 
-use crate::dispatch::{FleetView, Overrides, Progress, TickInput, TickOutcome};
+use crate::dispatch::{FleetView, MeterReading, Overrides, Progress, TickInput, TickOutcome};
 use crate::engine::Engine;
 use crate::engine::error::EngineError;
 use crate::engine::plan_source::plan_states;
 use crate::plan::Plan;
-use crate::replan::{LiveState, ReplanReason};
+use crate::replan::{LiveState, PowerMove, ReplanReason};
 use crate::safety::Authority;
 use energy_ledger::selection::SelectionRow;
 
@@ -40,7 +40,7 @@ impl Engine {
         self.refresh_policy(now, &view, &meter);
         self.wire(now, &mut view)?;
         self.mark(now)?;
-        let hold = self.maybe_replan(now, &view).await?;
+        let hold = self.maybe_replan(now, &view, &meter).await?;
         let prepared = self.prepare(now, &view, hold)?;
         let input = TickInput {
             now,
@@ -71,17 +71,33 @@ impl Engine {
     /// first and then executes the new plan in the same tick. A **refused** solve always holds too:
     /// the previous plan is not a fallback, and the trigger fires again until a plan is accepted
     /// (`PLAN.md` §6).
-    async fn maybe_replan(&self, now: i64, fleet: &FleetView) -> Result<bool, EngineError> {
+    async fn maybe_replan(
+        &self,
+        now: i64,
+        fleet: &FleetView,
+        meter: &MeterReading,
+    ) -> Result<bool, EngineError> {
         let plan = self.current_plan()?;
+        let power = plan
+            .as_ref()
+            .and_then(|plan| plan.slot_at(now))
+            .map_or_else(PowerMove::none, |slot| PowerMove::against(slot, meter));
         let reason = self.trigger.reason(
             now,
             plan.as_ref(),
             &live_state(fleet),
             &self.source.changes(),
+            &power,
         );
         let Some(reason) = reason else {
+            self.reset_power_streak()?;
             return Ok(false);
         };
+        // A single sample must not buy a solve: the deviation has to hold for a second tick, and
+        // two power-triggered solves are never closer than the floor.
+        if reason == ReplanReason::PowerChanged && !self.power_settled(now)? {
+            return Ok(false);
+        }
         let stale = matches!(
             reason,
             ReplanReason::NoPlan | ReplanReason::StaleInput | ReplanReason::PlanExpired

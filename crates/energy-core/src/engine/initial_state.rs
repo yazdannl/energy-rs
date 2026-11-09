@@ -33,5 +33,7 @@ pub(super) fn initial_state(config: &EngineConfig, now: i64) -> EngineState {
         last_refusal_log: None,
         refusal: None,
         latch_dirty: false,
+        power_streak: 0,
+        last_power_replan: None,
     }
 }

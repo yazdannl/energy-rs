@@ -10,7 +10,7 @@
 )]
 #![allow(dead_code)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use energy_core::dispatch::BoxFuture;
 use energy_core::engine::PlanSource;
@@ -22,6 +22,7 @@ pub struct FakeSource {
     plan: Plan,
     refuse: AtomicBool,
     changes: Changes,
+    calls: AtomicUsize,
 }
 
 impl FakeSource {
@@ -30,7 +31,13 @@ impl FakeSource {
             plan,
             refuse: AtomicBool::new(false),
             changes: Changes::none(),
+            calls: AtomicUsize::new(0),
         }
+    }
+
+    /// How many times the engine asked for a plan.
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
     }
 
     pub fn refuse(&self, refuse: bool) {
@@ -44,6 +51,7 @@ impl PlanSource for FakeSource {
         _now: i64,
         _packs: Vec<energy_core::plan::PackState>,
     ) -> BoxFuture<'_, Result<Plan, PlanError>> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
         Box::pin(async move {
             if self.refuse.load(Ordering::Relaxed) {
                 return Err(PlanError::NoPacks);

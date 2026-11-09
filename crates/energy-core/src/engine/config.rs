@@ -35,6 +35,10 @@ pub struct EngineConfig {
     pub pack_switch_soc_pct: f64,
     /// How long a selected pack keeps its slot, seconds.
     pub pack_hold_seconds: i64,
+    /// Grid deviation that forces a re-solve, W.
+    pub grid_react_w: f64,
+    /// PV deviation that forces a re-solve, W.
+    pub solar_react_w: f64,
     /// Grid import ceiling, W (0 = unlimited).
     pub max_grid_import_w: f64,
     /// Grid export ceiling, W (0 = unlimited).
@@ -71,6 +75,8 @@ impl Default for EngineConfig {
             pack_staggering: true,
             pack_switch_soc_pct: 2.0,
             pack_hold_seconds: 1800,
+            grid_react_w: 10.0,
+            solar_react_w: 10.0,
             max_grid_import_w: 0.0,
             max_grid_export_w: 0.0,
             fleet_max_charge_w: 0.0,

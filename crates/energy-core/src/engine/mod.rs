@@ -28,6 +28,7 @@ mod live_write_journal;
 mod persist;
 mod plan_source;
 mod policy;
+mod power_watch;
 mod refusal;
 mod run;
 mod snapshot;
