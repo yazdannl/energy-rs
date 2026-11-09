@@ -4,6 +4,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoverySource {
     Mdns,
+    /// Found by sweeping the LAN for a zenSDK report.
+    Scan,
     Manual,
 }
 
@@ -12,7 +14,8 @@ impl DiscoverySource {
     pub const fn priority(self) -> u8 {
         match self {
             Self::Mdns => 0,
-            Self::Manual => 1,
+            Self::Scan => 1,
+            Self::Manual => 2,
         }
     }
 }

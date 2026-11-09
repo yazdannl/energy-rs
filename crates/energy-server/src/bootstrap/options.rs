@@ -37,6 +37,7 @@ pub struct Options {
     price_entity: Option<String>,
     batteries: Vec<ManualBattery>,
     mdns: bool,
+    scan: bool,
     transport: Transport,
 }
 
@@ -53,6 +54,7 @@ impl fmt::Debug for Options {
             .field("price_entity", &self.price_entity)
             .field("batteries", &self.batteries)
             .field("mdns", &self.mdns)
+            .field("scan", &self.scan)
             .field("transport", &self.transport)
             .finish()
     }
@@ -97,6 +99,7 @@ impl Options {
                 .filter(|entity| !entity.trim().is_empty()),
             batteries,
             mdns: env_string("ENERGY_RS_MDNS").as_deref() != Some("off"),
+            scan: env_string("ENERGY_RS_SCAN").as_deref() != Some("off"),
             transport: transport(),
             data_dir,
         })
@@ -142,6 +145,11 @@ impl Options {
     /// Whether mDNS discovery is enabled.
     pub fn mdns(&self) -> bool {
         self.mdns
+    }
+
+    /// Whether the LAN is swept for batteries (default on: mDNS is often filtered).
+    pub fn scan(&self) -> bool {
+        self.scan
     }
 
     /// The manual batteries, as `(address, serial, port)`.

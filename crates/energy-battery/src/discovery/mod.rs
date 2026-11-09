@@ -9,10 +9,12 @@ pub mod browse;
 pub mod found;
 pub mod hostname;
 pub mod registry;
+mod scan;
 pub mod source;
 
 pub use browse::browse_mdns;
 pub use found::DiscoveredDevice;
 pub use hostname::{SERVICE_TYPE, build_hostname, parse_hostname};
 pub use registry::DiscoveryRegistry;
+pub use scan::scan_lan;
 pub use source::DiscoverySource;

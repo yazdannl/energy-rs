@@ -9,13 +9,16 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use energy_battery::control::{ControlLimits, DeviceController};
-use energy_battery::discovery::{DiscoveredDevice, DiscoveryRegistry, browse_mdns};
+use energy_battery::discovery::{DiscoveredDevice, DiscoveryRegistry, browse_mdns, scan_lan};
 use energy_battery::fleet::FleetClient;
 use energy_battery::transport::HttpTransport;
 
 use crate::bootstrap::options::Options;
 
 /// How long mDNS gets to answer; startup must not hang on a silent LAN.
+/// How long the LAN sweep may take: a /24 at 300 ms per host, 64 at a time.
+const SCAN_WINDOW: std::time::Duration = std::time::Duration::from_secs(6);
+/// How long the LAN sweep may take.
 const MDNS_WINDOW: Duration = Duration::from_secs(2);
 
 /// The assembled fleet: one client for reads, one controller per device for writes.
@@ -62,19 +65,29 @@ async fn discover(
     manual: &[(String, String, u16)],
 ) -> (DiscoveryRegistry, usize) {
     let mut registry = manual_registry(manual);
-    let Some(found) = browse(options).await else {
-        return (registry, 0);
-    };
-    let discovered = found.len();
-    let added = registry.merge_all(found);
-    if added < discovered {
-        tracing::info!(
-            found = discovered,
-            added,
-            "mDNS found batteries; duplicates kept the manual entry"
-        );
+    let mut discovered = 0;
+    if let Some(found) = browse(options).await {
+        discovered += found.len();
+        report(&mut registry, &found, "mDNS");
+    }
+    if options.scan() {
+        match scan_lan(SCAN_WINDOW).await {
+            Ok(found) => {
+                discovered += found.len();
+                report(&mut registry, &found, "LAN scan");
+            }
+            Err(error) => tracing::warn!(%error, "LAN scan is unavailable; using what was found"),
+        }
     }
     (registry, discovered)
+}
+
+/// Merge a discovery round and say what it added.
+fn report(registry: &mut DiscoveryRegistry, found: &[DiscoveredDevice], source: &str) {
+    let added = registry.merge_all(found.iter().cloned());
+    if !found.is_empty() {
+        tracing::info!(source, found = found.len(), added, "batteries discovered");
+    }
 }
 
 /// The operator's entries, always first.

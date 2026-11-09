@@ -33,6 +33,22 @@ impl DiscoveredDevice {
         }
     }
 
+    /// A LAN-scan hit: a verified address that answered the zenSDK report.
+    pub fn scan(
+        sn: impl Into<String>,
+        host: impl Into<String>,
+        port: u16,
+        product: Option<String>,
+    ) -> Self {
+        Self {
+            sn: normalize_sn(&sn.into()),
+            host: host.into(),
+            port,
+            product,
+            source: DiscoverySource::Scan,
+        }
+    }
+
     /// An operator-entered address and serial.
     pub fn manual(host: impl Into<String>, sn: impl Into<String>, port: u16) -> Self {
         Self {

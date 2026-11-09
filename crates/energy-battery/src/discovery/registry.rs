@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 
 use crate::discovery::found::DiscoveredDevice;
-use crate::discovery::source::DiscoverySource;
 
 /// The set of devices worth talking to, keyed by serial.
 ///
@@ -28,26 +27,24 @@ impl DiscoveryRegistry {
                 self.devices.insert(device.sn.clone(), device);
                 true
             }
-            Some(existing) => match existing.source {
-                DiscoverySource::Manual => fill_product(existing, &device),
-                DiscoverySource::Mdns => match device.source {
-                    DiscoverySource::Manual => {
-                        let product = existing.product.clone();
-                        *existing = device;
-                        existing.product = existing.product.clone().or(product);
-                        true
-                    }
-                    // A repeat announcement may carry a new lease; follow the address, keep the hint.
-                    DiscoverySource::Mdns => {
-                        let moved = existing.host != device.host || existing.port != device.port;
-                        if moved {
-                            existing.host.clone_from(&device.host);
-                            existing.port = device.port;
-                        }
-                        fill_product(existing, &device) || moved
-                    }
-                },
-            },
+            Some(existing) => {
+                if device.source.priority() > existing.source.priority() {
+                    // A more authoritative source wins the address; the product hint is kept.
+                    let product = existing.product.clone();
+                    *existing = device;
+                    existing.product = existing.product.clone().or(product);
+                    return true;
+                }
+                // Same or lower authority: follow a moved address, keep the hint. A manual entry is
+                // an operator decision, so it only ever gains a product hint.
+                let moved = existing.host != device.host || existing.port != device.port;
+                let same_source = device.source.priority() == existing.source.priority();
+                if moved && same_source {
+                    existing.host.clone_from(&device.host);
+                    existing.port = device.port;
+                }
+                fill_product(existing, &device) || (moved && same_source)
+            }
         }
     }
 
