@@ -249,4 +249,11 @@ impl Options {
         self.mdns = enabled;
         self
     }
+
+    /// Enable or disable the LAN scan, for a caller that knows exactly which packs exist.
+    #[must_use]
+    pub fn with_scan(mut self, enabled: bool) -> Self {
+        self.scan = enabled;
+        self
+    }
 }

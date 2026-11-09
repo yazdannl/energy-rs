@@ -18,6 +18,12 @@
       unit: 'W',
       hint: 'charge and discharge',
     },
+    {
+      key: 'min_pack_power_w',
+      label: 'Smallest pack start',
+      unit: 'W',
+      hint: 'below this one pack is not worth starting',
+    },
     { key: 'replan_seconds', label: 'Replan interval', unit: 's', hint: 'solve cadence' },
     {
       key: 'stale_input_seconds',

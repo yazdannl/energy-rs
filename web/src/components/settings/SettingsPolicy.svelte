@@ -34,6 +34,7 @@
 
   const policies = $derived(draft.entry('export_policy')?.options ?? ['legacy', 'cost_basis']);
   const zeroExport = $derived(draft.text('zero_export') === 'on');
+  const staggering = $derived(draft.text('pack_staggering') !== 'off');
 
   function update(key: string, event: Event): void {
     const raw = (event.currentTarget as HTMLInputElement).value;
@@ -43,6 +44,34 @@
 </script>
 
 <div class="space-y-2.5">
+  <div class="flex items-center justify-between gap-3">
+    <div class="flex items-start gap-2">
+      <BatteryCharging class="mt-0.5 size-3.5 text-batt" />
+      <div>
+        <p class="text-[11px] text-muted">Stage the packs</p>
+        <p class="text-[10px] text-faint">
+          Fewest packs first: the emptiest charges, the fullest serves.
+        </p>
+      </div>
+    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={staggering}
+      aria-label="Stage the packs"
+      onclick={() => draft.set('pack_staggering', staggering ? 'off' : 'on')}
+      class="relative h-5 w-9 shrink-0 rounded-full border transition-colors {staggering
+        ? 'border-good bg-good/30'
+        : 'border-line bg-panel'}"
+    >
+      <span
+        class="absolute top-0.5 size-3.5 rounded-full transition-all {staggering
+          ? 'left-4.5 bg-good'
+          : 'left-0.5 bg-line-strong'}"
+      ></span>
+    </button>
+  </div>
+
   <div class="flex items-center justify-between gap-3">
     <div class="flex items-start gap-2">
       <BatteryCharging class="mt-0.5 size-3.5 text-batt" />

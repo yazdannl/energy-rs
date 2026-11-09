@@ -88,6 +88,7 @@ async fn doctor_checks_a_fake_install_without_writing_a_device() {
         .expect("the options load")
         .with_direct_ha(ha.base_url(), TOKEN)
         .with_mdns(false)
+        .with_scan(false)
         .with_manual_battery(device.host(), device.serial(), device.port());
 
     let report = energy_server::diag::doctor_report(options, true).await;
@@ -145,6 +146,7 @@ async fn plan_once_solves_from_a_seeded_ledger_and_does_not_change_the_mode() {
         .expect("the options load")
         .with_direct_ha(ha.base_url(), TOKEN)
         .with_mdns(false)
+        .with_scan(false)
         .with_manual_battery(device.host(), device.serial(), device.port());
 
     let (probe, timings) = energy_server::diag::plan_attempt(&options).await;

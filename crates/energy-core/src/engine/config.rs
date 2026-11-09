@@ -27,6 +27,10 @@ pub struct EngineConfig {
     pub reserve_soc_pct: f64,
     /// Headroom kept free of grid energy at dispatch, percent of capacity.
     pub solar_reserve_pct: f64,
+    /// Smallest allocation worth starting a pack for, W.
+    pub min_pack_power_w: f64,
+    /// Run as few packs as the request needs, best SoC first.
+    pub pack_staggering: bool,
     /// Grid import ceiling, W (0 = unlimited).
     pub max_grid_import_w: f64,
     /// Grid export ceiling, W (0 = unlimited).
@@ -59,6 +63,8 @@ impl Default for EngineConfig {
             stale_plan_seconds: 1800,
             reserve_soc_pct: 0.0,
             solar_reserve_pct: 0.0,
+            min_pack_power_w: 50.0,
+            pack_staggering: true,
             max_grid_import_w: 0.0,
             max_grid_export_w: 0.0,
             fleet_max_charge_w: 0.0,

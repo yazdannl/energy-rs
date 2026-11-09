@@ -282,6 +282,8 @@ fn safety_limits(config: &EngineConfig) -> SafetyLimits {
         mode: config.mode,
         reserve_soc_pct: config.reserve_soc_pct,
         solar_reserve_pct: config.solar_reserve_pct,
+        min_pack_power_w: config.min_pack_power_w,
+        pack_staggering: config.pack_staggering,
         tick_seconds: config.tick_seconds as f64,
         ramp_limit_w: RAMP_LIMIT_W,
         max_grid_import_w: config.max_grid_import_w,

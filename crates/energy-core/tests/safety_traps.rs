@@ -12,7 +12,7 @@ mod support;
 
 use chrono::{TimeZone, Utc};
 use energy_battery::protection::{CellLatch, LatchReason};
-use energy_core::allocation::Allocation;
+use energy_core::allocation::{Allocation, SplitInput};
 use energy_core::plan::PackState;
 use energy_core::safety::{Authority, GridFollow, Reason, SafetyLimits, check};
 use support::{NOW, plan_slot, request, spec, state};
@@ -95,7 +95,7 @@ fn a_stale_pack_holds_instead_of_repeating_the_last_setpoint() {
 #[test]
 fn the_ramp_is_per_pack_after_allocation() {
     let packs = vec![state("a", 4.0, 2000.0, 50.0), state("b", 4.0, 2000.0, 50.0)];
-    let split = Allocation::split(4000.0, &packs, 0.0, 30.0 / 3600.0, &[]);
+    let split = split_of(4000.0, &packs, 0.0, 30.0 / 3600.0, &[], true);
     assert_eq!(split.watts_for("a"), Some(2000.0));
     assert_eq!(split.watts_for("b"), Some(2000.0));
     let mut limits = limits();
@@ -287,7 +287,26 @@ fn allocation_respects_each_pack_ceiling_before_the_ramp() {
         spec: spec("a", 4.0, 300.0),
         soc_pct: 50.0,
     }];
-    let split = Allocation::split(-5000.0, &packs, 0.0, 0.25, &[]);
+    let split = split_of(-5000.0, &packs, 0.0, 0.25, &[], true);
     assert_eq!(split.watts_for("a"), Some(-300.0));
     assert_eq!(split.unmet_w, -4700.0);
+}
+
+/// The fleet split with the policy these cases assume.
+fn split_of(
+    target: f64,
+    packs: &[PackState],
+    reserve: f64,
+    hours: f64,
+    blocked: &[&str],
+    staggering: bool,
+) -> Allocation {
+    let input = SplitInput {
+        reserve_soc_pct: reserve,
+        slot_hours: hours,
+        block_discharge: blocked,
+        min_active_w: 50.0,
+        staggering,
+    };
+    Allocation::split(target, packs, &input)
 }

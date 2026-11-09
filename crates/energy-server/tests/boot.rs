@@ -118,6 +118,9 @@ fn options(dir: &TempDir, ha: &FakeHa, devices: &[FakeDevice], mode: Authority) 
         .expect("the options load")
         .with_direct_ha(ha.base_url(), TOKEN)
         .with_mdns(false)
+        // Discovery stays off: the real LAN may well hold packs, and a boot test must not
+        // depend on what else answers on the network it happens to run in.
+        .with_scan(false)
         .with_port(0)
         .with_tick_seconds(1)
         .with_mode(mode);

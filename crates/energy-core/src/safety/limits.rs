@@ -11,6 +11,10 @@ pub struct SafetyLimits {
     pub reserve_soc_pct: f64,
     /// Headroom kept free of grid energy, percent of capacity (0 disables the clause).
     pub solar_reserve_pct: f64,
+    /// Smallest allocation worth starting a pack for, W.
+    pub min_pack_power_w: f64,
+    /// Run as few packs as the request needs, best SoC first (off = proportional spread).
+    pub pack_staggering: bool,
     /// Tick duration, seconds.
     pub tick_seconds: f64,
     /// Per-pack ramp, W/tick.
@@ -39,6 +43,8 @@ impl Default for SafetyLimits {
             mode: Authority::Auto,
             reserve_soc_pct: 0.0,
             solar_reserve_pct: 0.0,
+            min_pack_power_w: 50.0,
+            pack_staggering: true,
             tick_seconds: 30.0,
             ramp_limit_w: RAMP_LIMIT_W,
             max_grid_import_w: 0.0,

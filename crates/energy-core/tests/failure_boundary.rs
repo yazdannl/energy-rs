@@ -22,11 +22,14 @@ use support::fakes::{self, NOW, Sent, pack, plan};
 use support::harness;
 
 /// A two-pack `auto` engine that already drove both packs (so both are latched).
+///
+/// The plan asks for both packs' full 800 W: ownership must not depend on the split policy, so the
+/// fixture drives two packs because the request needs two, not because the target was halved.
 async fn driven() -> harness::Harness {
     let h = harness::build(
         Authority::Auto,
         vec![pack("SN-A", 50.0), pack("SN-B", 50.0)],
-        plan(NOW, -0.8, 0.96),
+        plan(NOW, -1.6, 0.96),
     );
     h.engine.boot(NOW).await.expect("boot");
     h.engine.tick_once(NOW).await.expect("first tick");

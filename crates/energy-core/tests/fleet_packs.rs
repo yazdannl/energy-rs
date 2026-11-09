@@ -218,7 +218,9 @@ async fn four_devices_are_four_packs_with_independent_learning() {
 async fn four_packs_get_four_independent_commands() {
     let four = FourPacks::new();
     let view = four.view().await;
-    let plan = plan(NOW, 0.8, 2.0);
+    // One pack cannot take this: the request needs all four, so each gets its own command no
+    // matter how the fleet is staggered.
+    let plan = plan(NOW, 3.2, 2.0);
     let sink = FakeSink::new();
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
     let overrides = Overrides::none();
