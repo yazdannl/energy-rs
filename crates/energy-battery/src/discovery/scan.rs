@@ -115,17 +115,34 @@ async fn report_body(mut stream: TcpStream, address: Ipv4Addr) -> Option<String>
         .await
         .ok()?
         .ok()?;
+    // The device keeps the connection open, so read in chunks and stop as soon as the body is
+    // complete JSON instead of waiting for a close that never comes.
     let mut raw = Vec::new();
-    tokio::time::timeout(READ_TIMEOUT, stream.read_to_end(&mut raw))
-        .await
-        .ok()?
-        .ok()?;
+    let mut chunk = [0u8; 4096];
+    loop {
+        let read = tokio::time::timeout(READ_TIMEOUT, stream.read(&mut chunk))
+            .await
+            .ok()?
+            .ok()?;
+        if read == 0 {
+            break;
+        }
+        raw.extend_from_slice(&chunk[..read]);
+        let text = String::from_utf8_lossy(&raw);
+        let Some((head, body)) = text.split_once("\r\n\r\n") else {
+            continue;
+        };
+        if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
+            return None;
+        }
+        if serde_json::from_str::<serde_json::Value>(body.trim()).is_ok() {
+            return Some(body.to_owned());
+        }
+    }
     let text = String::from_utf8(raw).ok()?;
     let (head, body) = text.split_once("\r\n\r\n")?;
-    if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
-        return None;
-    }
-    Some(body.to_owned())
+    let ok = head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200");
+    ok.then(|| body.to_owned())
 }
 
 /// Accept only a report that names a serial and a Zendure battery product.
