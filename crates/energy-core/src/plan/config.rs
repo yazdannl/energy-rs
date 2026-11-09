@@ -21,7 +21,7 @@ pub(crate) fn solver_config(
     // The DP's own sell floor is unused: its second clause (`base > 0 && buy < floor`) would block
     // self-consumption below the break-even, which the policy forbids. The gate is a post-solve
     // clamp instead (`plan::clamp`), and the DP may export whenever a break-even is armed.
-    config.allow_export = break_even.is_some();
+    config.allow_export = break_even.is_some() && !input.policy.zero_export;
     config.wear_eur_per_kwh = input.wear_eur_per_kwh;
     config.target_penalty = input.policy.peak_reserve_value_eur_per_kwh;
     config.sell_floor_eur_per_kwh = break_even.is_none().then_some(floor);

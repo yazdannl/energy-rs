@@ -20,12 +20,28 @@ pub struct Policy {
     pub wear_eur_per_kwh: f64,
     /// Average cost of the energy in the pack, EUR per AC kWh; `None` when unknown.
     pub cost_basis_eur_per_kwh: Option<f64>,
+    /// Never export: the battery may charge and discharge for the house, never for the grid.
+    pub zero_export: bool,
 }
 
 impl Policy {
     /// The shipped policy: no export gate, no reserves, no wear (today's behaviour).
     pub fn legacy() -> Self {
         Self::default()
+    }
+
+    /// The floor that closes the gate outright when export is disabled.
+    ///
+    /// A feed-in above 1000 EUR/kWh does not exist, so the same clamp and the same ladder clause
+    /// that refuse a below-break-even sale also refuse every sale, with no second code path.
+    pub const ZERO_EXPORT_FLOOR: f64 = 1.0e3;
+
+    /// The gate in force: the sentinel when export is disabled, else the break-even.
+    pub fn export_floor(&self, eta_rt: f64) -> Option<f64> {
+        if self.zero_export {
+            return Some(Self::ZERO_EXPORT_FLOOR);
+        }
+        self.break_even(eta_rt)
     }
 
     /// The break-even feed-in for an exported kWh: `b / η_rt + w`.

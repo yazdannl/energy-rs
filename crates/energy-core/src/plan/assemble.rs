@@ -18,20 +18,12 @@ pub(crate) fn build(input: &PlanInput, check: Option<&Differential>) -> Result<P
     let slots = horizon::slots(input)?;
     let aggregate = aggregate::aggregate(input);
     let floor = sell_floor(input, &slots);
-    let mut basis = input.policy.cost_basis_eur_per_kwh;
-    if input.policy.export == ExportPolicy::CostBasis
-        && basis.is_none()
-        && !netting_on(input, &slots)
-    {
-        // No measured basis yet: derive it from the plan the battery would run without exporting,
-        // which is the average price it intends to pay for the energy it holds.
-        basis = presolve_basis(input, &slots, &aggregate)?;
-    }
+    let basis = resolve_basis(input, &slots, &aggregate)?;
     let policy = Policy {
         cost_basis_eur_per_kwh: basis,
         ..input.policy
     };
-    let break_even = break_even(input, &slots, &aggregate, &policy);
+    let break_even = export_floor(input, &slots, &aggregate, &policy);
     let config = config::solver_config(input, &aggregate, floor, break_even);
     let solved = solve(input, &slots, &config, check)?;
     let outcome = clamp_solved(input, &slots, &aggregate, policy, break_even, &solved);
@@ -44,7 +36,9 @@ pub(crate) fn build(input: &PlanInput, check: Option<&Differential>) -> Result<P
     )?;
     let rows = with_clamp_reasons(rows, &outcome.flags);
     let mut summary = summary::summarize(&rows, aggregate.capacity_kwh, config.e_target);
-    summary.export_floor_eur_per_kwh = break_even;
+    summary.export_floor_eur_per_kwh =
+        break_even.filter(|floor| *floor < Policy::ZERO_EXPORT_FLOOR);
+    summary.zero_export = policy.zero_export;
     summary.cost_basis_eur_per_kwh = basis;
     summary.peak_reserve_kwh = policy.peak_target_kwh(aggregate.capacity_kwh, aggregate.start_kwh);
     summary.solar_reserve_kwh = policy.solar_reserve_kwh(aggregate.capacity_kwh);
@@ -62,7 +56,7 @@ pub(crate) fn build(input: &PlanInput, check: Option<&Differential>) -> Result<P
         feasible: summary.infeasible_reason.is_none(),
         objective_eur: summary.cost_estimate_eur,
         sell_floor: Some(break_even.unwrap_or(floor)),
-        export_floor_eur_per_kwh: break_even,
+        export_floor_eur_per_kwh: summary.export_floor_eur_per_kwh,
         cost_basis_eur_per_kwh: basis,
         peak_reserve_kwh: policy.peak_target_kwh(aggregate.capacity_kwh, aggregate.start_kwh),
         solar_reserve_kwh: policy.solar_reserve_kwh(aggregate.capacity_kwh),
@@ -148,16 +142,34 @@ fn with_clamp_reasons(
         .collect()
 }
 
+/// The cost basis: the live pool's value, or the no-export plan's own charging price while the pool
+/// has no history yet.
+fn resolve_basis(
+    input: &PlanInput,
+    slots: &[Slot],
+    aggregate: &Aggregate,
+) -> Result<Option<f64>, PlanError> {
+    let basis = input.policy.cost_basis_eur_per_kwh;
+    if basis.is_some() || input.policy.export != ExportPolicy::CostBasis || netting_on(input, slots)
+    {
+        return Ok(basis);
+    }
+    presolve_basis(input, slots, aggregate)
+}
+
 /// The export gate in force: the break-even when the policy is armed and netting is off.
 ///
 /// While netting is on an exported kWh is netted 1:1 against imports, so the settlement's marginal
 /// value is the right number and the gate stays inert.
-fn break_even(
+fn export_floor(
     input: &PlanInput,
     slots: &[Slot],
     aggregate: &Aggregate,
     policy: &Policy,
 ) -> Option<f64> {
+    if policy.zero_export {
+        return Some(Policy::ZERO_EXPORT_FLOOR);
+    }
     if policy.export != ExportPolicy::CostBasis || netting_on(input, slots) {
         return None;
     }

@@ -146,6 +146,8 @@ export interface PlanSummary {
   infeasibleReason: string | null;
   /** The break-even an exported kWh had to clear, EUR/kWh. */
   exportFloorEurPerKwh: number | null;
+  /** Whether export is disabled outright. */
+  zeroExport: boolean;
   /** The cost basis the export gate was armed with, EUR/kWh. */
   costBasisEurPerKwh: number | null;
   /** The soft peak guideline in force, Wh. */

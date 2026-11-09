@@ -151,6 +151,7 @@ fn plan_summary() -> PlanSummary {
         terminal_target_kwh: None,
         infeasible_reason: None,
         export_floor_eur_per_kwh: None,
+        zero_export: false,
         cost_basis_eur_per_kwh: None,
         peak_reserve_kwh: None,
         solar_reserve_kwh: 0.0,

@@ -29,7 +29,7 @@ async fn settings_render_typed_values_and_the_schema() {
     assert_eq!(body["values"]["grid_import_limit_w"], 0.0);
     assert_eq!(body["values"]["full_charge_weekday"], "sun");
     let schema = body["schema"].as_array().unwrap();
-    assert_eq!(schema.len(), 17);
+    assert_eq!(schema.len(), 18);
     assert_eq!(schema[0]["key"], "grid_import_limit_w");
     assert_eq!(schema[0]["kind"], "number");
     assert_eq!(schema[0]["min"], 0.0);

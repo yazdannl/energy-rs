@@ -24,6 +24,7 @@ fn policy(solar: f64) -> Policy {
         peak_reserve_value_eur_per_kwh: 0.0,
         wear_eur_per_kwh: 0.0,
         cost_basis_eur_per_kwh: Some(0.10),
+        zero_export: false,
     }
 }
 

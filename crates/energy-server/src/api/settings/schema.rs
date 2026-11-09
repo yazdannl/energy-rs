@@ -10,9 +10,10 @@ use super::setting_spec::SettingSpec;
 const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const PRICE_PROVIDERS: [&str; 2] = ["zonneplan", "ha_sensor"];
 const EXPORT_POLICIES: [&str; 2] = ["legacy", "cost_basis"];
+const ON_OFF: [&str; 2] = ["off", "on"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 17] = [
+static SPECS: [SettingSpec; 18] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -119,6 +120,11 @@ static SPECS: [SettingSpec; 17] = [
         key: "cost_basis_eur_per_kwh",
         kind: SettingKind::Number { min: 0.0, max: 1.0 },
         default: "0",
+    },
+    SettingSpec {
+        key: "zero_export",
+        kind: SettingKind::Choice(&ON_OFF),
+        default: "off",
     },
     SettingSpec {
         key: "export_policy",

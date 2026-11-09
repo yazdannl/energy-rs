@@ -207,6 +207,7 @@ export function makePlan(now: Date): Plan {
       terminalTargetWh: null,
       infeasibleReason: null,
       exportFloorEurPerKwh: null,
+      zeroExport: false,
       costBasisEurPerKwh: null,
       peakReserveWh: null,
       solarReserveWh: 0,

@@ -45,6 +45,7 @@ pub fn policy(ledger: &Ledger) -> Policy {
         peak_reserve_value_eur_per_kwh: number(ledger, "peak_reserve_value_eur_per_kwh", 0.15),
         wear_eur_per_kwh: number(ledger, "wear_eur_per_kwh", 0.02),
         cost_basis_eur_per_kwh: (basis > 0.0).then_some(basis),
+        zero_export: text(ledger, "zero_export").as_deref() == Some("on"),
     }
 }
 

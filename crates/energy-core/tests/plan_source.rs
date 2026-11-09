@@ -237,6 +237,7 @@ fn policy_source(supply: Supply, basis: f64) -> LivePlanSource<FakeSupply> {
         peak_reserve_value_eur_per_kwh: 0.0,
         wear_eur_per_kwh: 0.0,
         cost_basis_eur_per_kwh: Some(basis),
+        zero_export: false,
     };
     let config = SourceConfig {
         policy,
@@ -283,6 +284,7 @@ async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
         peak_reserve_value_eur_per_kwh: 0.0,
         wear_eur_per_kwh: 0.0,
         cost_basis_eur_per_kwh: None,
+        zero_export: false,
     };
     let config = SourceConfig {
         policy,
@@ -314,6 +316,7 @@ async fn the_peak_guideline_never_forces_an_import() {
         peak_reserve_value_eur_per_kwh: 0.05,
         wear_eur_per_kwh: 0.0,
         cost_basis_eur_per_kwh: None,
+        zero_export: false,
     };
     let config = SourceConfig {
         policy,
@@ -328,4 +331,35 @@ async fn the_peak_guideline_never_forces_an_import() {
         "the guideline held the pack: {}",
         first.battery_kw
     );
+}
+
+#[tokio::test]
+async fn zero_export_never_plans_a_feed_in() {
+    // A feed-in far above any basis: only the zero-export switch can stop the sale.
+    let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.60);
+    let policy = Policy {
+        export: ExportPolicy::CostBasis,
+        solar_reserve_pct: 0.0,
+        peak_reserve_pct: 0.0,
+        peak_reserve_value_eur_per_kwh: 0.0,
+        wear_eur_per_kwh: 0.0,
+        cost_basis_eur_per_kwh: Some(0.01),
+        zero_export: true,
+    };
+    let config = SourceConfig {
+        policy,
+        ..SourceConfig::default()
+    };
+    let source = LivePlanSource::new(FakeSupply::new(supply(prices, NOW)), config);
+    let plan = plan(&source).await;
+    assert!(plan.summary.zero_export);
+    assert_eq!(plan.export_floor_eur_per_kwh, None);
+    for slot in &plan.slots {
+        let base = slot.load_kw - slot.pv_kw;
+        assert!(
+            base + slot.battery_kw >= -1e-9,
+            "slot {} feeds in under zero export",
+            slot.idx
+        );
+    }
 }

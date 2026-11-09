@@ -123,7 +123,11 @@
         <ErrorNote error={plan.error} onretry={() => void plan.load()} />
       {:else}
         <CurrentSlot {slot} hasPlan={plan.data !== null} />
-        {#if plan.data?.summary.exportFloorEurPerKwh != null}
+        {#if plan.data?.summary.zeroExport}
+          <p class="mt-3 text-xs text-muted">
+            Zero export: the battery never sells; PV surplus still flows to the grid.
+          </p>
+        {:else if plan.data?.summary.exportFloorEurPerKwh != null}
           <p class="mt-3 text-xs text-muted">
             Selling needs ≥ €{plan.data.summary.exportFloorEurPerKwh.toFixed(3)}/kWh (stored €{(
               plan.data.summary.costBasisEurPerKwh ?? 0

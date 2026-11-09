@@ -32,6 +32,9 @@ pub struct PlanSummary {
     /// The break-even an exported kWh had to clear, EUR/kWh; `None` when the gate is inert.
     #[serde(default)]
     pub export_floor_eur_per_kwh: Option<f64>,
+    /// Whether export is disabled outright.
+    #[serde(default)]
+    pub zero_export: bool,
     /// The cost basis the gate was armed with, EUR/kWh.
     #[serde(default)]
     pub cost_basis_eur_per_kwh: Option<f64>,
