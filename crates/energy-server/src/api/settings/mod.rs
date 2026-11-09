@@ -225,18 +225,15 @@ pub(crate) async fn patch_settings(
         }
     };
     let writes = validate_body(&body)?;
-    let keys = writes
-        .iter()
-        .map(|(key, _)| key.clone())
-        .collect::<Vec<_>>();
     let stored = with_ledger(&service, move |ledger| {
         write_values(ledger, &writes, at)?;
         read_values(ledger, None)
     })
     .await?;
     service.request_profile_refresh();
-    let mut values = render_values(&stored);
-    values.retain(|key, _| keys.iter().any(|wanted| wanted == key));
+    // The whole state, like GET: the form replaces its draft with this response, so a partial map
+    // would make every untouched setting vanish from the page after one save.
+    let values = render_values(&stored);
     Ok(Json(Settings {
         as_of: Timestamp::from_epoch(at)?,
         values,

@@ -18,7 +18,8 @@ export class SettingsDraft {
   private saved: Record<string, SettingValue> = {};
 
   apply(response: SettingsResponse): void {
-    this.values = { ...response.values };
+    // A PATCH may answer with only the keys it wrote; merging keeps the rest of the form intact.
+    this.values = { ...this.values, ...response.values };
     this.saved = { ...response.values };
     this.schema = response.schema;
     this.asOf = response.asOf;
