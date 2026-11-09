@@ -71,7 +71,7 @@ async fn discover(
         report(&mut registry, &found, "mDNS");
     }
     if options.scan() {
-        match scan_lan(SCAN_WINDOW).await {
+        match scan_lan(SCAN_WINDOW, &seeds(manual)).await {
             Ok(found) => {
                 discovered += found.len();
                 report(&mut registry, &found, "LAN scan");
@@ -80,6 +80,14 @@ async fn discover(
         }
     }
     (registry, discovered)
+}
+
+/// The subnets worth sweeping: the operator's own addresses.
+fn seeds(manual: &[(String, String, u16)]) -> Vec<std::net::Ipv4Addr> {
+    manual
+        .iter()
+        .filter_map(|(address, _, _)| address.parse().ok())
+        .collect()
 }
 
 /// Merge a discovery round and say what it added.

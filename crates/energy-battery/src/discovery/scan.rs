@@ -27,18 +27,41 @@ const PORT: u16 = 80;
 ///
 /// `window` bounds the whole sweep; a shorter window simply probes fewer hosts. Returns every device
 /// whose report carries a serial and a Zendure product string.
-pub async fn scan_lan(window: Duration) -> Result<Vec<DiscoveredDevice>, BatteryError> {
-    let Some(local) = local_ipv4().await else {
+pub async fn scan_lan(
+    window: Duration,
+    seeds: &[Ipv4Addr],
+) -> Result<Vec<DiscoveredDevice>, BatteryError> {
+    let base = local_ipv4()
+        .await
+        .map(|local| u32::from(local) & 0xffff_ff00);
+    // Behind a bridge the container's own address is a docker subnet, so the operator's known
+    // battery addresses supply the real LAN to sweep.
+    let mut subnets: Vec<u32> = seeds
+        .iter()
+        .map(|address| u32::from(*address) & 0xffff_ff00)
+        .collect();
+    if let Some(base) = base {
+        subnets.push(base);
+    }
+    subnets.sort_unstable();
+    subnets.dedup();
+    if subnets.is_empty() {
         return Err(BatteryError::Discovery {
-            reason: "no local IPv4 address to scan from".to_owned(),
+            reason: "no subnet to scan".to_owned(),
         });
-    };
-    let base = u32::from(local) & 0xffff_ff00;
+    }
+    let mut found = Vec::new();
+    for base in subnets {
+        found.extend(sweep(window, base).await);
+    }
+    Ok(found)
+}
+
+/// Sweep one /24 and collect the batteries that answer.
+async fn sweep(window: Duration, base: u32) -> Vec<DiscoveredDevice> {
     let deadline = tokio::time::Instant::now() + window;
     let mut found = Vec::new();
-    let mut hosts = (1..=254u32)
-        .map(|last| Ipv4Addr::from(base | last))
-        .filter(|address| *address != local);
+    let mut hosts = (1..=254u32).map(|last| Ipv4Addr::from(base | last));
     loop {
         if tokio::time::Instant::now() >= deadline {
             break;
@@ -57,7 +80,7 @@ pub async fn scan_lan(window: Duration) -> Result<Vec<DiscoveredDevice>, Battery
             }
         }
     }
-    Ok(found)
+    found
 }
 
 /// The primary local IPv4 address, from a connected UDP socket (no packet is sent).
