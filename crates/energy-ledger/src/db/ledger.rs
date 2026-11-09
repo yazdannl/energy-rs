@@ -140,6 +140,11 @@ impl Ledger {
         Ok(crate::pool::Pool::new(self.lock()?))
     }
 
+    /// The latched pack selection.
+    pub fn selection(&self) -> Result<crate::selection::Selection<'_>, LedgerError> {
+        Ok(crate::selection::Selection::new(self.lock()?))
+    }
+
     pub fn settings(&self) -> Result<Settings<'_>, LedgerError> {
         Ok(Settings::new(self.lock()?))
     }

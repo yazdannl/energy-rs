@@ -15,7 +15,7 @@ use crate::db::migrations::MIGRATIONS;
 use crate::error::LedgerError;
 
 /// Current schema version; adding a migration bumps this and appends to the list.
-pub(crate) const SCHEMA_VERSION: i64 = 6;
+pub(crate) const SCHEMA_VERSION: i64 = 7;
 
 const VERSION_KEY: &str = "schema_version";
 

@@ -31,6 +31,10 @@ pub struct EngineConfig {
     pub min_pack_power_w: f64,
     /// Run as few packs as the request needs, best SoC first.
     pub pack_staggering: bool,
+    /// SoC differences below this count as a tie in the pack order, percent.
+    pub pack_switch_soc_pct: f64,
+    /// How long a selected pack keeps its slot, seconds.
+    pub pack_hold_seconds: i64,
     /// Grid import ceiling, W (0 = unlimited).
     pub max_grid_import_w: f64,
     /// Grid export ceiling, W (0 = unlimited).
@@ -65,6 +69,8 @@ impl Default for EngineConfig {
             solar_reserve_pct: 0.0,
             min_pack_power_w: 50.0,
             pack_staggering: true,
+            pack_switch_soc_pct: 2.0,
+            pack_hold_seconds: 1800,
             max_grid_import_w: 0.0,
             max_grid_export_w: 0.0,
             fleet_max_charge_w: 0.0,

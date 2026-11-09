@@ -29,7 +29,7 @@ async fn settings_render_typed_values_and_the_schema() {
     assert_eq!(body["values"]["grid_import_limit_w"], 0.0);
     assert_eq!(body["values"]["full_charge_weekday"], "sun");
     let schema = body["schema"].as_array().unwrap();
-    assert_eq!(schema.len(), 20);
+    assert_eq!(schema.len(), 22);
     assert_eq!(schema[0]["key"], "grid_import_limit_w");
     assert_eq!(schema[0]["kind"], "number");
     assert_eq!(schema[0]["min"], 0.0);
@@ -59,7 +59,7 @@ async fn patching_a_setting_writes_the_ledger_and_returns_the_typed_value() {
     assert_eq!(status, 200);
     assert_eq!(body["values"]["grid_import_limit_w"], 2_000.0);
     // The response carries the whole state so the form can replace its draft with it.
-    assert_eq!(body["values"].as_object().unwrap().len(), 20);
+    assert_eq!(body["values"].as_object().unwrap().len(), 22);
     assert_eq!(body["values"]["reserve_soc_pct"], 20.0);
     assert_eq!(
         fixture

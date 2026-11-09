@@ -67,6 +67,7 @@ async fn tick(
         overrides: &overrides,
         stale: false,
         progress: None,
+        selection: None,
     };
     let outcome = dispatcher.tick(&input, &sink).await;
     (outcome, sink)

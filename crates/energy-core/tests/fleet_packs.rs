@@ -235,6 +235,7 @@ async fn four_packs_get_four_independent_commands() {
         overrides: &overrides,
         stale: false,
         progress: None,
+        selection: None,
     };
     let outcome = dispatcher.tick(&input, &sink).await;
     assert_eq!(outcome.packs.len(), 4);

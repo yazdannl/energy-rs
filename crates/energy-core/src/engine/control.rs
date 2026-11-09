@@ -3,8 +3,6 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::Utc;
-use energy_battery::protection::CellVoltageGuard;
-use energy_battery::protection::full_charge::{FullChargeAction, FullChargeScheduler};
 use energy_ledger::Ledger;
 
 use crate::dispatch::{
@@ -13,12 +11,10 @@ use crate::dispatch::{
 use crate::engine::config::EngineConfig;
 use crate::engine::error::EngineError;
 use crate::engine::guarded_sink::GuardedSink;
-use crate::engine::instant;
 use crate::engine::live_latch::LiveLatch;
 use crate::engine::live_write_journal::LiveWriteJournal;
 use crate::engine::plan_source::PlanSource;
 use crate::engine::state::EngineState;
-use crate::engine::watchdog::Watchdog;
 use crate::engine::write_gate::WriteGate;
 use crate::plan::Plan;
 use crate::replan::ReplanTrigger;
@@ -79,27 +75,7 @@ impl Engine {
             stale_plan_seconds: config.stale_plan_seconds,
             ..ReplanTrigger::default()
         };
-        let state = EngineState {
-            booted: false,
-            latch_corrupt: None,
-            plan: None,
-            plan_id: None,
-            latch: LiveLatch::new(),
-            overrides: Vec::new(),
-            watchdog: Watchdog::with_stall_after(config.stall_after_s()),
-            cells: CellVoltageGuard::new(),
-            maintenance: FullChargeScheduler::new(config.full_charge, instant(now)),
-            maintenance_action: FullChargeAction::Idle,
-            maintenance_pack: None,
-            last_minute: None,
-            last_session_check: None,
-            pack_ids: std::collections::BTreeMap::new(),
-            known_packs: Vec::new(),
-            last_stale_log: None,
-            last_refusal_log: None,
-            refusal: None,
-            latch_dirty: false,
-        };
+        let state = crate::engine::initial_state::initial_state(&config, now);
         let state = Arc::new(Mutex::new(state));
         let gate = Arc::new(WriteGate::new(config.mode));
         let journal = Arc::new(LiveWriteJournal::new(
@@ -284,6 +260,8 @@ fn safety_limits(config: &EngineConfig) -> SafetyLimits {
         solar_reserve_pct: config.solar_reserve_pct,
         min_pack_power_w: config.min_pack_power_w,
         pack_staggering: config.pack_staggering,
+        pack_switch_soc_pct: config.pack_switch_soc_pct,
+        pack_hold_seconds: config.pack_hold_seconds,
         tick_seconds: config.tick_seconds as f64,
         ramp_limit_w: RAMP_LIMIT_W,
         max_grid_import_w: config.max_grid_import_w,

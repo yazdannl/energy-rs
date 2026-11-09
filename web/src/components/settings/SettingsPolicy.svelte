@@ -17,6 +17,18 @@
       hint: 'kept free of grid energy',
     },
     { key: 'peak_reserve_pct', label: 'Peak reserve', unit: '%', hint: 'guideline, never a floor' },
+    {
+      key: 'pack_switch_soc_pct',
+      label: 'SoC tie band',
+      unit: '%',
+      hint: 'differences this small are a tie',
+    },
+    {
+      key: 'pack_hold_seconds',
+      label: 'Pack hold',
+      unit: 's',
+      hint: 'how long the chosen pack keeps its slot',
+    },
     { key: 'wear_eur_per_kwh', label: 'Wear', unit: '€/kWh', hint: 'per delivered kWh' },
     {
       key: 'peak_reserve_value_eur_per_kwh',

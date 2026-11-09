@@ -78,6 +78,7 @@ impl Engine {
             state.latch.save(&self.ledger, now)?;
             state.latch_dirty = false;
         }
+        note_selection(&self.ledger, &mut state.selection, outcome, now)?;
         Ok(())
     }
 
@@ -199,4 +200,66 @@ fn note_latch(latch: &mut LiveLatch, report: &PackReport, now: i64) -> bool {
 /// Whether a throttled log may fire again.
 fn throttle(last: Option<i64>, now: i64, every_s: i64) -> bool {
     last.is_none_or(|at| now.saturating_sub(at) >= every_s)
+}
+
+/// Latch the pack that took the cycle, or release the hold when the cycle ended.
+///
+/// The hold is what stops SoC drift from rotating the choice on every replan, so it is written once
+/// per cycle and cleared as soon as the fleet is idle or the direction flips
+/// (`docs/PACK_SELECTION.md` §5). A dry-run tick never latches: nothing reached a device.
+fn note_selection(
+    ledger: &energy_ledger::Ledger,
+    stored: &mut Option<energy_ledger::selection::SelectionRow>,
+    outcome: &crate::dispatch::TickOutcome,
+    now: i64,
+) -> Result<(), EngineError> {
+    let Some((pack_id, watts)) = lead(outcome) else {
+        return release(ledger, stored);
+    };
+    let direction = if watts > 0.0 { "charge" } else { "discharge" };
+    if stored
+        .as_ref()
+        .is_some_and(|row| row.holder == pack_id && row.direction == direction)
+    {
+        return Ok(());
+    }
+    if !outcome.mode.may_write() {
+        // In a writing-disabled mode nothing is executed, so there is nothing to remember.
+        return release(ledger, stored);
+    }
+    let row = energy_ledger::selection::SelectionRow {
+        direction: direction.to_owned(),
+        holder: pack_id.to_owned(),
+        selected_at: now,
+        target_w: outcome.target_w,
+    };
+    ledger.selection()?.set(&row)?;
+    *stored = Some(row);
+    Ok(())
+}
+
+/// The pack carrying the tick: the largest magnitude, id order breaking a tie.
+fn lead(outcome: &crate::dispatch::TickOutcome) -> Option<(&str, f64)> {
+    outcome
+        .packs
+        .iter()
+        .filter(|report| report.intended_w.abs() > 0.0)
+        .max_by(|left, right| {
+            left.intended_w
+                .abs()
+                .total_cmp(&right.intended_w.abs())
+                .then_with(|| right.pack_id.cmp(&left.pack_id))
+        })
+        .map(|report| (report.pack_id.as_str(), report.intended_w))
+}
+
+/// Drop the hold: the cycle is over (idle fleet, or nothing was executed).
+fn release(
+    ledger: &energy_ledger::Ledger,
+    stored: &mut Option<energy_ledger::selection::SelectionRow>,
+) -> Result<(), EngineError> {
+    if stored.take().is_some() {
+        ledger.selection()?.clear()?;
+    }
+    Ok(())
 }

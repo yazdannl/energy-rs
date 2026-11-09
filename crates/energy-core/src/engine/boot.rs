@@ -62,7 +62,28 @@ impl Engine {
             )?;
         }
         self.retry_boot_latches(now).await?;
+        self.restore_selection(now)?;
         self.publish_boot(now);
+        Ok(())
+    }
+
+    /// Load the latched pack selection so a restart does not rotate the pack mid-cycle.
+    ///
+    /// A hold older than its own bound is dropped instead of trusted: the row is state, not policy,
+    /// and a stale row must never pin a pack after a long idle.
+    fn restore_selection(&self, now: i64) -> Result<(), EngineError> {
+        let stored = self.ledger.selection()?.get()?;
+        let Some(row) = stored else {
+            return Ok(());
+        };
+        let age = now.saturating_sub(row.selected_at);
+        let mut state = self.lock()?;
+        if self.config.pack_hold_seconds <= 0 || age > self.config.pack_hold_seconds {
+            self.ledger.selection()?.clear()?;
+            state.selection = None;
+            return Ok(());
+        }
+        state.selection = Some(row);
         Ok(())
     }
 

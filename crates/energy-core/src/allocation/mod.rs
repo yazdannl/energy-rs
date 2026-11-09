@@ -1,11 +1,13 @@
 //! Split one fleet setpoint across the packs, respecting each pack's own limits.
 
 mod fleet_allocation;
+mod hold;
 mod pack_allocation;
 mod split_input;
 
 pub use fleet_allocation::Allocation;
 pub use pack_allocation::PackAllocation;
+pub use hold::Hold;
 pub use split_input::SplitInput;
 
 /// Fleet demand below this many watts is a deadband, not a setpoint.

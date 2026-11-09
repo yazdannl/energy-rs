@@ -33,6 +33,7 @@ mod snapshot;
 mod state;
 mod supervise;
 mod tick;
+mod initial_state;
 mod watchdog;
 mod write_gate;
 mod write_intent;

@@ -9,6 +9,7 @@ use crate::engine::plan_source::plan_states;
 use crate::plan::Plan;
 use crate::replan::{LiveState, ReplanReason};
 use crate::safety::Authority;
+use energy_ledger::selection::SelectionRow;
 
 /// The per-tick view of the engine's own state.
 pub(crate) struct Prepared {
@@ -17,6 +18,7 @@ pub(crate) struct Prepared {
     pub(crate) stale: bool,
     pub(crate) overrides: Overrides,
     pub(crate) latches: Vec<CellLatch>,
+    pub(crate) selection: Option<SelectionRow>,
 }
 
 impl Engine {
@@ -50,6 +52,7 @@ impl Engine {
             overrides: &prepared.overrides,
             stale: prepared.stale,
             progress: Some(self),
+            selection: prepared.selection.as_ref(),
         };
         let sink = self.guarded(token, now);
         let outcome = self.dispatcher.tick(&input, &sink).await;
@@ -146,6 +149,7 @@ impl Engine {
             stale,
             overrides: Overrides::new(entries),
             latches: state.latches(),
+            selection: state.selection.clone(),
         })
     }
 

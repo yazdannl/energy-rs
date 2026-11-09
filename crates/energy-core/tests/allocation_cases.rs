@@ -142,6 +142,7 @@ fn split_of(
         block_discharge: blocked,
         min_active_w: 50.0,
         staggering,
+        ..SplitInput::default()
     };
     Allocation::split(target, packs, &input)
 }

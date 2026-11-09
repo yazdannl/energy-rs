@@ -13,7 +13,7 @@ const EXPORT_POLICIES: [&str; 2] = ["legacy", "cost_basis"];
 const ON_OFF: [&str; 2] = ["off", "on"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 20] = [
+static SPECS: [SettingSpec; 22] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -133,6 +133,22 @@ static SPECS: [SettingSpec; 20] = [
         key: "pack_staggering",
         kind: SettingKind::Choice(&ON_OFF),
         default: "on",
+    },
+    SettingSpec {
+        key: "pack_switch_soc_pct",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 20.0,
+        },
+        default: "2",
+    },
+    SettingSpec {
+        key: "pack_hold_seconds",
+        kind: SettingKind::Number {
+            min: 60.0,
+            max: 14_400.0,
+        },
+        default: "1800",
     },
     SettingSpec {
         key: "zero_export",

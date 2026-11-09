@@ -40,14 +40,7 @@ impl Allocation {
         let rooms = headrooms(&ordered, charging, input);
         let mut allocated = vec![0.0; ordered.len()];
         if input.staggering {
-            fill(
-                &ordered,
-                &rooms,
-                &mut allocated,
-                demand,
-                charging,
-                input.min_active_w,
-            );
+            fill(&ordered, &rooms, &mut allocated, demand, charging, input);
         } else {
             spread(&rooms, &mut allocated, demand);
             redistribute(&ordered, &rooms, &mut allocated, demand, charging);
@@ -121,11 +114,11 @@ fn fill(
     allocated: &mut [f64],
     demand: f64,
     charging: bool,
-    min_active_w: f64,
+    input: &SplitInput<'_>,
 ) {
-    let floor = min_active_w.max(0.0);
+    let floor = input.min_active_w.max(0.0);
     let mut remaining = demand;
-    for index in rank(packs, charging) {
+    for index in rank(packs, rooms, charging, input) {
         if remaining < floor || remaining <= 0.0 {
             // Whatever is left is inside the allowed deviation: the grid covers it, and no pack is
             // woken for a sliver it could not run efficiently anyway.
@@ -143,19 +136,71 @@ fn fill(
 }
 
 /// The pack order for this direction: emptiest first while charging, fullest first while serving.
-fn rank(packs: &[&PackState], charging: bool) -> Vec<usize> {
+///
+/// A live hold beats SoC order — that is the whole point of the latch, so a pack cannot rotate just
+/// because its SoC crossed a neighbour's. SoC differences inside `soc_band_pct` are a tie, so the
+/// order cannot flip on measurement noise either.
+fn rank(
+    packs: &[&PackState],
+    rooms: &[f64],
+    charging: bool,
+    input: &SplitInput<'_>,
+) -> Vec<usize> {
+    let band = input.soc_band_pct.max(0.0);
+    let key = |state: &PackState| {
+        if band <= 0.0 {
+            state.soc_pct
+        } else {
+            (state.soc_pct / band).floor()
+        }
+    };
+    let holder = held(packs, rooms, charging, input);
     let mut order: Vec<usize> = (0..packs.len()).collect();
     order.sort_by(|a, b| {
-        let lhs = packs[*a].soc_pct;
-        let rhs = packs[*b].soc_pct;
+        let held_first = hold_order(holder == Some(*a), holder == Some(*b));
+        let lhs = key(packs[*a]);
+        let rhs = key(packs[*b]);
         let by_soc = if charging {
             lhs.total_cmp(&rhs)
         } else {
             rhs.total_cmp(&lhs)
         };
-        by_soc.then_with(|| packs[*a].spec.pack_id.cmp(&packs[*b].spec.pack_id))
+        held_first
+            .then(by_soc)
+            .then_with(|| packs[*a].spec.pack_id.cmp(&packs[*b].spec.pack_id))
     });
     order
+}
+
+/// The held pack goes first; everything else keeps its SoC order.
+fn hold_order(left: bool, right: bool) -> std::cmp::Ordering {
+    match (left, right) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => std::cmp::Ordering::Equal,
+    }
+}
+
+/// The index of the held pack, if the hold is still valid for this tick.
+fn held(
+    packs: &[&PackState],
+    rooms: &[f64],
+    charging: bool,
+    input: &SplitInput<'_>,
+) -> Option<usize> {
+    let hold = input.hold?;
+    let wanted = if charging { "charge" } else { "discharge" };
+    if hold.direction != wanted {
+        return None;
+    }
+    // Zero disables the latch: the operator asked for a fresh SoC order every tick.
+    if input.hold_seconds <= 0 || input.now.saturating_sub(hold.since) > input.hold_seconds {
+        return None;
+    }
+    (0..packs.len()).find(|index| {
+        packs[*index].spec.pack_id == hold.holder
+            && rooms[*index] >= input.min_active_w.max(0.0)
+    })
 }
 
 /// The pre-0.4 split: every pack in proportion to its headroom.

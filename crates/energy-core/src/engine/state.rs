@@ -25,6 +25,8 @@ pub(crate) struct EngineState {
     pub(crate) plan: Option<Plan>,
     pub(crate) plan_id: Option<i64>,
     pub(crate) latch: LiveLatch,
+    /// The latched pack selection, loaded at boot and refreshed after every tick.
+    pub(crate) selection: Option<energy_ledger::selection::SelectionRow>,
     pub(crate) overrides: Vec<ManualOverride>,
     pub(crate) watchdog: Watchdog,
     pub(crate) cells: CellVoltageGuard,

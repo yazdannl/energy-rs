@@ -61,6 +61,7 @@ impl Fixture {
             overrides: &self.overrides,
             stale,
             progress: None,
+        selection: None,
         };
         dispatcher.tick(&input, sink).await
     }

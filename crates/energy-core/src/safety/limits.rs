@@ -15,6 +15,10 @@ pub struct SafetyLimits {
     pub min_pack_power_w: f64,
     /// Run as few packs as the request needs, best SoC first (off = proportional spread).
     pub pack_staggering: bool,
+    /// SoC differences below this count as a tie in the pack order, percent.
+    pub pack_switch_soc_pct: f64,
+    /// How long a selected pack keeps its slot, seconds.
+    pub pack_hold_seconds: i64,
     /// Tick duration, seconds.
     pub tick_seconds: f64,
     /// Per-pack ramp, W/tick.
@@ -45,6 +49,8 @@ impl Default for SafetyLimits {
             solar_reserve_pct: 0.0,
             min_pack_power_w: 50.0,
             pack_staggering: true,
+            pack_switch_soc_pct: 2.0,
+            pack_hold_seconds: 1800,
             tick_seconds: 30.0,
             ramp_limit_w: RAMP_LIMIT_W,
             max_grid_import_w: 0.0,

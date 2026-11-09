@@ -6,6 +6,7 @@ pub(crate) mod v3;
 pub(crate) mod v4;
 pub(crate) mod v5;
 pub(crate) mod v6;
+pub(crate) mod v7;
 
 use crate::db::migration::Migration;
 
@@ -16,4 +17,5 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     v4::MIGRATION,
     v5::MIGRATION,
     v6::MIGRATION,
+    v7::MIGRATION,
 ];

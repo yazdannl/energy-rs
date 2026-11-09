@@ -62,6 +62,7 @@ pub mod measurement;
 pub mod pack;
 pub mod plan;
 pub mod pool;
+pub mod selection;
 pub mod retention;
 pub mod savings;
 pub mod session;

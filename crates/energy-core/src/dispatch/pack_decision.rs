@@ -3,7 +3,7 @@
 use energy_battery::protection::CellLatch;
 use energy_ledger::plan::PlanSlot;
 
-use crate::allocation::{Allocation, SplitInput};
+use crate::allocation::{Allocation, Hold, SplitInput};
 use crate::dispatch::pack_context::PackContext;
 use crate::dispatch::{PackReading, TickInput, fleet_grid, grid_telemetry};
 use crate::plan::PackState;
@@ -25,12 +25,21 @@ pub(crate) fn allocate(
         .collect();
     let blocked = crate::dispatch::pack_context::blocked_discharge(input.latches);
     let hours = limits.tick_seconds.max(1.0) / 3600.0;
+    let hold = input.selection.map(|row| Hold {
+        holder: row.holder.as_str(),
+        direction: row.direction.as_str(),
+        since: row.selected_at,
+    });
     let split = SplitInput {
         reserve_soc_pct: limits.reserve_soc_pct,
         slot_hours: hours,
         block_discharge: &blocked,
         min_active_w: limits.min_pack_power_w,
         staggering: limits.pack_staggering,
+        hold,
+        soc_band_pct: limits.pack_switch_soc_pct,
+        now: input.now,
+        hold_seconds: limits.pack_hold_seconds,
     };
     let mut allocation = Allocation::split(target, &states, &split);
     let base = grid_telemetry::base(input, slot, limits);

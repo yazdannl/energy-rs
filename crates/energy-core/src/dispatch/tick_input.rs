@@ -31,6 +31,8 @@ pub struct TickInput<'a> {
     pub stale: bool,
     /// Heartbeat advanced after every write; `None` in tests.
     pub progress: Option<&'a dyn Progress>,
+    /// The latched pack selection for this cycle, if one is persisted.
+    pub selection: Option<&'a energy_ledger::selection::SelectionRow>,
 }
 
 impl std::fmt::Debug for TickInput<'_> {

@@ -71,17 +71,22 @@ fn the_cli_keeps_the_add_on_when_no_subcommand_is_given() {
     assert!(matches!(plan.command, Some(Command::PlanOnce(_))));
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn doctor_checks_a_fake_install_without_writing_a_device() {
-    let ha = FakeHa::spawn().await;
+/// A fake device with a current clock and an empty ledger directory.
+async fn fake_device(soc_pct: f64) -> (FakeDevice, tempfile::TempDir) {
     let state = FakeState::new(SERIAL)
-        .with_soc(55.0)
+        .with_soc(soc_pct)
         .with_packs(vec![FakePack::ab2000(SERIAL)]);
     let device = FakeDevice::spawn(state).await.expect("the fake device");
     device
         .with_state(|state| state.timestamp = Utc::now().timestamp())
         .expect("the device clock is now");
-    let dir = tempfile::tempdir().expect("a temp dir");
+    (device, tempfile::tempdir().expect("a temp dir"))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn doctor_checks_a_fake_install_without_writing_a_device() {
+    let ha = FakeHa::spawn().await;
+    let (device, dir) = fake_device(55.0).await;
     seed(&dir, &[SERIAL]);
 
     let options = Options::at(dir.path())
