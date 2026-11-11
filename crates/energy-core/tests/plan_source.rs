@@ -231,6 +231,7 @@ async fn a_forecast_rebuilt_on_every_read_does_not_ask_for_a_replan() {
 /// A source with the post-net-metering policy armed and a known cost basis.
 fn policy_source(supply: Supply, basis: f64) -> LivePlanSource<FakeSupply> {
     let policy = Policy {
+        net_metering: energy_price::settlement::NetMetering::DateDriven,
         export: ExportPolicy::CostBasis,
         solar_reserve_pct: 0.0,
         peak_reserve_pct: 0.0,
@@ -278,6 +279,7 @@ async fn an_above_break_even_export_is_planned_when_it_pays() {
 async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
     let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.02);
     let policy = Policy {
+        net_metering: energy_price::settlement::NetMetering::DateDriven,
         export: ExportPolicy::Legacy,
         solar_reserve_pct: 50.0,
         peak_reserve_pct: 0.0,
@@ -310,6 +312,7 @@ async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
 async fn the_peak_guideline_never_forces_an_import() {
     let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.40);
     let policy = Policy {
+        net_metering: energy_price::settlement::NetMetering::DateDriven,
         export: ExportPolicy::Legacy,
         solar_reserve_pct: 0.0,
         peak_reserve_pct: 50.0,
@@ -338,6 +341,7 @@ async fn zero_export_never_plans_a_feed_in() {
     // A feed-in far above any basis: only the zero-export switch can stop the sale.
     let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.60);
     let policy = Policy {
+        net_metering: energy_price::settlement::NetMetering::DateDriven,
         export: ExportPolicy::CostBasis,
         solar_reserve_pct: 0.0,
         peak_reserve_pct: 0.0,

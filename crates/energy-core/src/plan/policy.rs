@@ -5,6 +5,8 @@
 
 use crate::plan::ExportPolicy;
 
+use energy_price::settlement::NetMetering;
+
 /// The policy in force for one plan.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Policy {
@@ -22,6 +24,8 @@ pub struct Policy {
     pub cost_basis_eur_per_kwh: Option<f64>,
     /// Never export: the battery may charge and discharge for the house, never for the grid.
     pub zero_export: bool,
+    /// Whether 1:1 net metering (saldering) prices the export.
+    pub net_metering: NetMetering,
 }
 
 impl Policy {

@@ -188,3 +188,47 @@ async fn the_fixture_ledger_starts_with_one_row_per_pack() {
     let ledger = fakes::ledger_with(&["SN-A", "SN-B"]);
     assert_eq!(ledger.packs().expect("packs").all().expect("rows").len(), 2);
 }
+
+/// A pack that keeps reporting something else than it was told is a control fault: it is held and
+/// left alone, instead of being commanded all day by a loop that cannot see the disagreement.
+#[tokio::test]
+async fn a_pack_that_ignores_its_command_is_held_and_backed_off() {
+    let h = harness::build(
+        Authority::Auto,
+        vec![pack("SN-A", 50.0)],
+        plan(NOW, -0.8, 0.96),
+    );
+    h.engine.boot(NOW).await.expect("boot");
+    h.engine.tick_once(NOW).await.expect("first tick");
+    // From here the pack reports 0 W while being told to discharge, tick after tick.
+    for offset in 0..4 {
+        h.engine
+            .tick_once(NOW + 5 * (offset + 1))
+            .await
+            .expect("tick");
+    }
+    let events = h
+        .ledger
+        .events()
+        .expect("events")
+        .range(NOW, NOW + 60)
+        .expect("range");
+    assert!(
+        events.iter().any(|event| event.kind == "dispatch.readback"),
+        "the disagreement must be reported: {:?}",
+        events
+            .iter()
+            .map(|event| event.kind.clone())
+            .collect::<Vec<_>>()
+    );
+    // The next tick leaves the pack alone: it is inside the fault backoff the readback armed.
+    let before = h.sink.len();
+    h.engine.tick_once(NOW + 21).await.expect("backoff tick");
+    let after: Vec<(String, Sent)> = h.sink.commands().into_iter().skip(before).collect();
+    assert!(
+        !after
+            .iter()
+            .any(|(pack_id, sent)| pack_id == "SN-A" && *sent != Sent::Hold),
+        "a pack that ignores its command is not commanded again: {after:?}"
+    );
+}

@@ -73,13 +73,20 @@ impl<S: PlanSupply> LivePlanSource<S> {
         let slots = horizon_slots(&supply.prices, now)?;
         let from = supply.prices.slot_at(now).map_or(now, |slot| slot.t_start);
         let forecast = self.forecast(&supply, from, slots, now)?;
+        // The net-metering regime is a setting, not an installation constant: today it is on, the
+        // date turns it off in 2027, and the operator can override either way.
+        let mut settlement = supply.settlement;
+        let policy = self.policy.as_ref().map(|handle| handle.get());
+        if let Some(policy) = policy {
+            settlement.set_regime(policy.net_metering);
+        }
         let mut input = self
             .config
-            .input(now, packs, supply.prices, supply.settlement)
+            .input(now, packs, supply.prices, settlement)
             .with_horizon_slots(slots)
             .with_forecasts(forecast.pv_kw, forecast.load_kw, forecast.as_of);
-        if let Some(policy) = &self.policy {
-            input.policy = policy.get();
+        if let Some(policy) = policy {
+            input.policy = policy;
         }
         let input = match forecast.note {
             Some(note) => input.with_forecast_note(note),

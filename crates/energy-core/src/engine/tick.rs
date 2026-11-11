@@ -73,6 +73,8 @@ impl Engine {
         self.record(&outcome, now)?;
         // Packs we own but could not command this tick are held before the tick is called done.
         self.reconcile(now, &outcome).await?;
+        // And a pack that says it is doing something else is a control fault, not a transport one.
+        self.check_readback(now, &outcome, &view)?;
         self.publish_tick(now, &view, &meter);
         Ok(outcome)
     }

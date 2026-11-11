@@ -18,6 +18,7 @@ fn spec() -> energy_opt::BatterySpec {
 
 fn policy(solar: f64) -> Policy {
     Policy {
+        net_metering: energy_price::settlement::NetMetering::Off,
         export: ExportPolicy::CostBasis,
         solar_reserve_pct: solar,
         peak_reserve_pct: 0.0,

@@ -28,6 +28,7 @@ mod live_write_journal;
 mod persist;
 mod plan_source;
 mod policy;
+mod readback;
 mod refusal;
 mod refusal_backoff;
 mod run;

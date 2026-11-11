@@ -11,9 +11,10 @@ const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const PRICE_PROVIDERS: [&str; 2] = ["zonneplan", "ha_sensor"];
 const EXPORT_POLICIES: [&str; 2] = ["legacy", "cost_basis"];
 const ON_OFF: [&str; 2] = ["off", "on"];
+const NET_METERING: [&str; 3] = ["auto", "on", "off"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 23] = [
+static SPECS: [SettingSpec; 24] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -157,6 +158,11 @@ static SPECS: [SettingSpec; 23] = [
             max: 500.0,
         },
         default: "10",
+    },
+    SettingSpec {
+        key: "net_metering",
+        kind: SettingKind::Choice(&NET_METERING),
+        default: "auto",
     },
     SettingSpec {
         key: "zero_export",

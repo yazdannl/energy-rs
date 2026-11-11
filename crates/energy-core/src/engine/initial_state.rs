@@ -34,5 +34,6 @@ pub(super) fn initial_state(config: &EngineConfig, now: i64) -> EngineState {
         refusal: None,
         latch_dirty: false,
         last_pool_save: None,
+        readback: crate::engine::readback::ReadbackMap::new(),
     }
 }

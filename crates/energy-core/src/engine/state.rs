@@ -45,6 +45,8 @@ pub(crate) struct EngineState {
     pub(crate) latch_dirty: bool,
     /// When the cost pool was last written, UTC epoch seconds.
     pub(crate) last_pool_save: Option<i64>,
+    /// Per-pack readback streaks: a device that keeps ignoring its command.
+    pub(crate) readback: crate::engine::readback::ReadbackMap,
 }
 
 impl EngineState {

@@ -31,6 +31,12 @@
   });
 
   const flow = $derived(batteryFlow(slot?.batteryPowerW ?? null));
+  // While saldering is on, an exported kWh is worth the all-in import price, so the two lines match.
+  const netted = $derived(
+    slot !== null &&
+      slot.buyEurPerKwh > 0 &&
+      Math.abs(slot.feedInEurPerKwh - slot.buyEurPerKwh) < 0.0005,
+  );
 </script>
 
 {#if slot === null}
@@ -71,7 +77,12 @@
       </div>
       <div>
         <dt class="text-[10px] uppercase tracking-[0.07em] text-faint">Feed-in</dt>
-        <dd class="num text-[13px] font-medium text-ink">{fmtEurPerKwh(slot.feedInEurPerKwh)}</dd>
+        <dd class="num text-[13px] font-medium text-ink">
+          {fmtEurPerKwh(slot.feedInEurPerKwh)}
+          {#if netted}
+            <span class="text-[9.5px] font-normal text-faint">· netted 1:1</span>
+          {/if}
+        </dd>
       </div>
       <div>
         <dt class="text-[10px] uppercase tracking-[0.07em] text-faint">Planned battery</dt>

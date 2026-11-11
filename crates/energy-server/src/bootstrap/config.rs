@@ -51,6 +51,7 @@ pub fn policy(ledger: &Ledger) -> Policy {
         wear_eur_per_kwh: number(ledger, "wear_eur_per_kwh", 0.02),
         cost_basis_eur_per_kwh: (basis > 0.0).then_some(basis),
         zero_export: text(ledger, "zero_export").as_deref() == Some("on"),
+        net_metering: net_metering(text(ledger, "net_metering").as_deref()),
     }
 }
 
@@ -105,4 +106,14 @@ fn seconds(ledger: &Ledger, key: &str, fallback: i64) -> i64 {
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(fallback)
+}
+
+/// The net-metering regime: date-driven unless the operator forced it.
+fn net_metering(value: Option<&str>) -> energy_price::settlement::NetMetering {
+    use energy_price::settlement::NetMetering;
+    match value {
+        Some("on") => NetMetering::On,
+        Some("off") => NetMetering::Off,
+        _ => NetMetering::DateDriven,
+    }
 }

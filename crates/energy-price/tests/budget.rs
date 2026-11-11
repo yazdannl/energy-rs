@@ -100,20 +100,38 @@ fn an_import_reading_starts_a_new_year_and_a_new_budget() {
 }
 
 #[test]
-fn without_a_budget_or_import_the_export_is_never_netted() {
-    // No budget configured: the 2026 regime cannot credit 1:1, so it pays the feed-in price.
+fn without_a_tracked_budget_the_regime_still_nets_one_to_one() {
+    // No export budget tracked: the household has not told us its annual consumption, but 2026 is
+    // still a netting year. Pricing its exports at the post-saldering feed-in would make the plan
+    // refuse to export at all -- which is exactly what put the 2027 price on a 2026 screen.
     let settlement = Settlement::on(contract(), support::date("2026-11-20"));
     let slot = slot_at("2026-11-20T12:00:00+01:00", BUY);
-    assert!(!settlement.saldering_active(&slot));
-    assert_eq!(settlement.budget_remaining(&slot), 0.0);
-    // Battery export: the plain feed-in price, and settlement moves no counters.
+    assert!(settlement.saldering_active(&slot));
+    assert!(
+        settlement.budget_remaining(&slot) > 1.0e6,
+        "uncapped, but finite"
+    );
     assert!(close(
         settlement.export_price(&slot, ExportSource::Battery),
-        FEED_IN
+        BUY
     ));
     assert!(close(
         settlement.revenue(&slot, 2.0, ExportSource::Other),
-        2.0 * FEED_IN
+        2.0 * BUY
+    ));
+}
+
+#[test]
+fn the_regime_can_be_forced_off_even_in_a_netting_year() {
+    // The operator's switch: with saldering off, an export earns the feed-in price whatever the date.
+    let mut settlement = Settlement::on(contract(), support::date("2026-11-20"));
+    settlement.set_regime(energy_price::settlement::NetMetering::Off);
+    let slot = slot_at("2026-11-20T12:00:00+01:00", BUY);
+    assert!(!settlement.saldering_active(&slot));
+    assert_eq!(settlement.budget_remaining(&slot), 0.0);
+    assert!(close(
+        settlement.export_price(&slot, ExportSource::Battery),
+        FEED_IN
     ));
 }
 

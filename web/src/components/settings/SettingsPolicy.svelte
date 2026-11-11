@@ -47,6 +47,8 @@
   const policies = $derived(draft.entry('export_policy')?.options ?? ['legacy', 'cost_basis']);
   const zeroExport = $derived(draft.text('zero_export') === 'on');
   const staggering = $derived(draft.text('pack_staggering') !== 'off');
+  const netMetering = $derived(draft.text('net_metering', 'auto') !== 'off');
+  const netMeteringAuto = $derived(draft.text('net_metering', 'auto') === 'auto');
 
   function update(key: string, event: Event): void {
     const raw = (event.currentTarget as HTMLInputElement).value;
@@ -56,6 +58,35 @@
 </script>
 
 <div class="space-y-2.5">
+  <div class="flex items-center justify-between gap-3">
+    <div class="flex items-start gap-2">
+      <BatteryCharging class="mt-0.5 size-3.5 text-batt" />
+      <div>
+        <p class="text-[11px] text-muted">Net metering</p>
+        <p class="text-[10px] text-faint">
+          An exported kWh offsets an imported one at the buy price.
+          {netMeteringAuto ? 'Following the date: on until 2027.' : ''}
+        </p>
+      </div>
+    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={netMetering}
+      aria-label="Net metering"
+      onclick={() => draft.set('net_metering', netMetering ? 'off' : 'on')}
+      class="relative h-5 w-9 shrink-0 rounded-full border transition-colors {netMetering
+        ? 'border-good bg-good/30'
+        : 'border-line bg-panel'}"
+    >
+      <span
+        class="absolute top-0.5 size-3.5 rounded-full transition-all {netMetering
+          ? 'left-4.5 bg-good'
+          : 'left-0.5 bg-line-strong'}"
+      ></span>
+    </button>
+  </div>
+
   <div class="flex items-center justify-between gap-3">
     <div class="flex items-start gap-2">
       <BatteryCharging class="mt-0.5 size-3.5 text-batt" />

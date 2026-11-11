@@ -8,6 +8,9 @@ use crate::book::Slot;
 use crate::book::query::{TARIFF_TZ, local_date_of, local_year_of};
 use crate::settlement::{Contract, ExportSource, NetMetering, Saldering};
 
+/// What "no export budget tracked" answers: effectively infinite netting, but finite.
+const UNTRACKED_BUDGET_KWH: f64 = 1.0e9;
+
 /// Contract, regime, budget and bonus counters: everything needed to price a slot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settlement {
@@ -103,9 +106,14 @@ impl Settlement {
     }
 
     /// Whether 1:1 netting applies to this slot's tariff date.
+    ///
+    /// With the regime on and **no budget tracked**, netting is uncapped: a household that never
+    /// told us its annual consumption still nets every exported kWh 1:1 against an import, and
+    /// pricing its exports at the post-saldering feed-in would make the plan refuse to export at
+    /// all. An exhausted (or absent) budget used to mean "netting off" for every slot, which is how
+    /// the app ended up showing the 2027 price in 2026.
     pub fn saldering_active(&self, slot: &Slot) -> bool {
-        let date = self.slot_date(slot);
-        self.regime.is_active(date) && self.budget.is_some_and(|budget| budget.year == date.year())
+        self.regime.is_active(self.slot_date(slot))
     }
 
     /// kWh of export still netted 1:1 in this slot's tariff year.
@@ -114,8 +122,11 @@ impl Settlement {
         if !self.regime.is_active(date) {
             return 0.0;
         }
-        self.budget
-            .map_or(0.0, |budget| budget.budget_remaining(date.year()))
+        match self.budget {
+            Some(budget) => budget.budget_remaining(date.year()),
+            // Uncapped: finite on purpose, so no product of this can turn into a NaN downstream.
+            None => UNTRACKED_BUDGET_KWH,
+        }
     }
 
     /// The published all-in import price, EUR/kWh.
