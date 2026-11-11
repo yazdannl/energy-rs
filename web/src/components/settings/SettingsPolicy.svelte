@@ -63,8 +63,8 @@
       <div>
         <p class="text-[11px] text-muted">Net metering</p>
         <p class="text-[10px] text-faint">
-          An exported kWh offsets an imported one at the buy price. Switch it off when the
-          contract stops netting.
+          An exported kWh offsets an imported one at the buy price. Switch it off when the contract
+          stops netting.
         </p>
       </div>
     </div>
