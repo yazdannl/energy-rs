@@ -456,7 +456,7 @@ export function makeSettings(now: Date): SettingsResponse {
     asOf: iso(now),
     values: {
       grid_import_limit_w: 0,
-      net_metering: 'auto',
+      net_metering: 'on',
       zero_export: 'off',
       solar_reserve_pct: 20,
       peak_reserve_pct: 20,
@@ -481,8 +481,8 @@ export function makeSettings(now: Date): SettingsResponse {
       {
         key: 'net_metering',
         kind: 'choice',
-        default: 'auto',
-        options: ['auto', 'on', 'off'],
+        default: 'on',
+        options: ['on', 'off'],
       },
       { key: 'zero_export', kind: 'choice', default: 'off', options: ['off', 'on'] },
       { key: 'grid_export_limit_w', kind: 'number', default: 0, min: 0, max: 20000 },

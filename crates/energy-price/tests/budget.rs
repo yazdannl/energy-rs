@@ -15,9 +15,18 @@
 
 mod support;
 
+use chrono::NaiveDate;
 use energy_price::Contract;
 use energy_price::settlement::{BonusRules, ExportSource, Saldering, Settlement};
 use support::{contract, slot_at};
+
+/// A post-netting settlement: the product default is netting *on* (the 2026 contract), so a test
+/// that means "saldering has ended" has to say so instead of relying on the date.
+fn post_netting(on: NaiveDate) -> Settlement {
+    let mut settlement = Settlement::on(contract(), on);
+    settlement.set_regime(energy_price::settlement::NetMetering::Off);
+    settlement
+}
 
 const BUY: f64 = 0.20;
 /// Feed-in without the Zonnebonus for the fixture slot (`market + fee_ex`, ex-VAT).
@@ -124,7 +133,7 @@ fn without_a_tracked_budget_the_regime_still_nets_one_to_one() {
 #[test]
 fn the_regime_can_be_forced_off_even_in_a_netting_year() {
     // The operator's switch: with saldering off, an export earns the feed-in price whatever the date.
-    let mut settlement = Settlement::on(contract(), support::date("2026-11-20"));
+    let mut settlement = post_netting(support::date("2026-11-20"));
     settlement.set_regime(energy_price::settlement::NetMetering::Off);
     let slot = slot_at("2026-11-20T12:00:00+01:00", BUY);
     assert!(!settlement.saldering_active(&slot));
@@ -138,7 +147,7 @@ fn the_regime_can_be_forced_off_even_in_a_netting_year() {
 #[test]
 fn a_non_positive_market_price_earns_no_bonus() {
     // market = -0.0255: `market + fee` is negative, so the daylight PV guard refuses the bonus.
-    let settlement = Settlement::on(contract(), support::date("2027-06-01"));
+    let settlement = post_netting(support::date("2027-06-01"));
     let slot = slot_at("2027-06-01T13:00:00+02:00", 0.10);
     assert!(settlement.feed_in_post(&slot, ExportSource::Pv) < 0.0);
     assert_eq!(settlement.export_price(&slot, ExportSource::Pv), 0.0);
@@ -146,7 +155,7 @@ fn a_non_positive_market_price_earns_no_bonus() {
 
 #[test]
 fn the_bonus_needs_daylight_pv_and_budget_left_under_the_cap() {
-    let mut settlement = Settlement::on(contract(), support::date("2027-06-01"));
+    let mut settlement = post_netting(support::date("2027-06-01"));
     let midday = slot_at("2027-06-01T13:00:00+02:00", BUY);
     let night = slot_at("2027-06-01T03:00:00+02:00", BUY);
     let feed_in = settlement.feed_in_post(&midday, ExportSource::Battery);
@@ -210,7 +219,7 @@ fn settlement_advances_the_bonus_counter_by_the_un_netted_export() {
 
 #[test]
 fn the_bonus_counter_starts_over_in_a_new_year() {
-    let mut settlement = Settlement::on(contract(), support::date("2026-12-31"));
+    let mut settlement = post_netting(support::date("2026-12-31"));
     settlement.set_bonus_ytd_kwh(2026, 7_000.0);
     // Settling a 2027 slot moves the annual counter forward instead of carrying 7 000 kWh into it.
     let new_year = slot_at("2027-01-05T13:00:00+01:00", BUY);
@@ -234,9 +243,10 @@ fn the_bonus_counter_starts_over_in_a_new_year() {
 
 #[test]
 fn a_contract_without_a_bonus_never_multiplies_the_feed_in() {
-    let mut contract: Contract = contract();
-    contract.bonus = BonusRules::none();
-    let settlement = Settlement::on(contract, support::date("2027-06-01"));
+    let mut tweaked: Contract = contract();
+    tweaked.bonus = BonusRules::none();
+    let mut settlement = Settlement::on(tweaked, support::date("2027-06-01"));
+    settlement.set_regime(energy_price::settlement::NetMetering::Off);
     let midday = slot_at("2027-06-01T13:00:00+02:00", BUY);
     assert!(close(
         settlement.export_price(&midday, ExportSource::Pv),

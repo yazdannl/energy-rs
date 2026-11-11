@@ -20,8 +20,13 @@ pub(crate) fn solver_config(
     config.allow_grid_charge = true;
     // The DP's own sell floor is unused: its second clause (`base > 0 && buy < floor`) would block
     // self-consumption below the break-even, which the policy forbids. The gate is a post-solve
-    // clamp instead (`plan::clamp`), and the DP may export whenever a break-even is armed.
-    config.allow_export = break_even.is_some() && !input.policy.zero_export;
+    // clamp instead (`plan::clamp`).
+    //
+    // Export is allowed unless the operator banned it. It must NOT be tied to the gate being armed:
+    // while net metering is on there is no break-even floor (an exported kWh is netted), and tying
+    // the two meant the solver could not export at all -- so it self-consumed forever and never
+    // sold at a peak that is worth more than the energy will cost later.
+    config.allow_export = !input.policy.zero_export;
     config.wear_eur_per_kwh = input.wear_eur_per_kwh;
     config.target_penalty = input.policy.peak_reserve_value_eur_per_kwh;
     config.sell_floor_eur_per_kwh = break_even.is_none().then_some(floor);

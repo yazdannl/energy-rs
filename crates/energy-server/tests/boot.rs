@@ -206,9 +206,12 @@ async fn boots_serves_and_publishes_a_snapshot() {
     // The plan source read HA statistics, the solar forecast and the price book and solved.
     let plan = snapshot.plan.expect("the first tick produced a plan");
     assert!(plan.plan_id > 0, "the plan was not persisted");
+    // A smoke test, not a shape test: with net metering on the solver trades through the horizon,
+    // so more constraints bind than a pure self-consumption plan would.
     assert!(
-        plan.binding_reasons.len() < 8,
-        "implausible binding reasons"
+        plan.binding_reasons.len() < 16,
+        "implausible binding reasons: {:?}",
+        plan.binding_reasons
     );
     // The boot learned a load profile from the fake dashboard, so the plan is not degraded by the
     // residential fallback any more.

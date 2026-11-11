@@ -231,7 +231,7 @@ async fn a_forecast_rebuilt_on_every_read_does_not_ask_for_a_replan() {
 /// A source with the post-net-metering policy armed and a known cost basis.
 fn policy_source(supply: Supply, basis: f64) -> LivePlanSource<FakeSupply> {
     let policy = Policy {
-        net_metering: energy_price::settlement::NetMetering::DateDriven,
+        net_metering: energy_price::settlement::NetMetering::Off,
         export: ExportPolicy::CostBasis,
         solar_reserve_pct: 0.0,
         peak_reserve_pct: 0.0,
@@ -279,7 +279,7 @@ async fn an_above_break_even_export_is_planned_when_it_pays() {
 async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
     let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.02);
     let policy = Policy {
-        net_metering: energy_price::settlement::NetMetering::DateDriven,
+        net_metering: energy_price::settlement::NetMetering::Off,
         export: ExportPolicy::Legacy,
         solar_reserve_pct: 50.0,
         peak_reserve_pct: 0.0,
@@ -312,7 +312,7 @@ async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
 async fn the_peak_guideline_never_forces_an_import() {
     let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.40);
     let policy = Policy {
-        net_metering: energy_price::settlement::NetMetering::DateDriven,
+        net_metering: energy_price::settlement::NetMetering::Off,
         export: ExportPolicy::Legacy,
         solar_reserve_pct: 0.0,
         peak_reserve_pct: 50.0,
@@ -341,7 +341,7 @@ async fn zero_export_never_plans_a_feed_in() {
     // A feed-in far above any basis: only the zero-export switch can stop the sale.
     let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.60);
     let policy = Policy {
-        net_metering: energy_price::settlement::NetMetering::DateDriven,
+        net_metering: energy_price::settlement::NetMetering::Off,
         export: ExportPolicy::CostBasis,
         solar_reserve_pct: 0.0,
         peak_reserve_pct: 0.0,
@@ -366,4 +366,57 @@ async fn zero_export_never_plans_a_feed_in() {
             slot.idx
         );
     }
+}
+
+/// Under net metering, an exported kWh is worth the buy price of *its own* slot, so a peak that is
+/// worth more than the energy will cost later must be sold -- and bought back when it is cheap.
+///
+/// The solver could not do this while `allow_export` was tied to the export gate being armed: with
+/// netting on there is no gate floor, so it was not armed, so no export existed at all and the
+/// fleet self-consumed through every peak.
+#[tokio::test]
+async fn a_peak_is_sold_under_net_metering_and_bought_back_cheaper() {
+    // Peak, valley, peak: there is something to sell into, something cheap to buy back, and a
+    // second peak to sell the bought energy into.
+    let prices = book(NOW, HORIZON_SLOTS, |index| match index {
+        0..=3 | 12..=15 => 0.62,
+        _ => 0.30,
+    });
+    let policy = Policy {
+        net_metering: energy_price::settlement::NetMetering::On,
+        export: ExportPolicy::CostBasis,
+        solar_reserve_pct: 0.0,
+        peak_reserve_pct: 0.0,
+        peak_reserve_value_eur_per_kwh: 0.0,
+        wear_eur_per_kwh: 0.0,
+        cost_basis_eur_per_kwh: Some(0.20),
+        zero_export: false,
+    };
+    let source = LivePlanSource::new(
+        FakeSupply::new(supply(prices, NOW)),
+        SourceConfig {
+            policy,
+            ..SourceConfig::default()
+        },
+    );
+    let plan = plan(&source).await;
+    let exported: f64 = plan
+        .slots
+        .iter()
+        .take(4)
+        .map(|slot| (slot.load_kw - slot.pv_kw + slot.battery_kw).min(0.0).abs())
+        .sum();
+    assert!(
+        exported > 0.05,
+        "the peak must be sold, exported {exported} kWh-ish"
+    );
+    let charged: f64 = plan
+        .slots
+        .iter()
+        .skip(4)
+        .take(8)
+        .filter(|slot| slot.battery_kw > 0.0)
+        .map(|slot| slot.battery_kw)
+        .sum();
+    assert!(charged > 0.05, "and bought back when it is cheap");
 }

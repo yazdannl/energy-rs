@@ -47,8 +47,7 @@
   const policies = $derived(draft.entry('export_policy')?.options ?? ['legacy', 'cost_basis']);
   const zeroExport = $derived(draft.text('zero_export') === 'on');
   const staggering = $derived(draft.text('pack_staggering') !== 'off');
-  const netMetering = $derived(draft.text('net_metering', 'auto') !== 'off');
-  const netMeteringAuto = $derived(draft.text('net_metering', 'auto') === 'auto');
+  const netMetering = $derived(draft.text('net_metering', 'on') !== 'off');
 
   function update(key: string, event: Event): void {
     const raw = (event.currentTarget as HTMLInputElement).value;
@@ -64,8 +63,8 @@
       <div>
         <p class="text-[11px] text-muted">Net metering</p>
         <p class="text-[10px] text-faint">
-          An exported kWh offsets an imported one at the buy price.
-          {netMeteringAuto ? 'Following the date: on until 2027.' : ''}
+          An exported kWh offsets an imported one at the buy price. Switch it off when the
+          contract stops netting.
         </p>
       </div>
     </div>

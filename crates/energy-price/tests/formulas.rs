@@ -35,9 +35,11 @@ fn saldering_2026(import_kwh: f64) -> Settlement {
     settlement
 }
 
-/// 2027 (saldering off by date) with no annual netting.
+/// 2027 with saldering switched off by the operator (the product default is now `On`).
 fn post_saldering_2027() -> Settlement {
-    Settlement::on(contract(), support::date("2027-06-01"))
+    let mut settlement = Settlement::on(contract(), support::date("2027-06-01"));
+    settlement.set_regime(NetMetering::Off);
+    settlement
 }
 
 #[test]
@@ -210,42 +212,37 @@ fn the_marginal_export_value_is_the_displacement_of_later_pv() {
 }
 
 #[test]
-fn the_regime_is_date_driven_with_a_manual_override() {
-    let contract = contract();
+fn the_regime_is_the_operators_switch_not_the_calendar() {
+    // Netting is on by default (the 2026 contract) and stays on across a new year: the date no
+    // longer flips the price model under a running plan.
     let on_2026 = slot_at("2026-12-31T23:45:00+01:00", BUY);
     let on_2027 = slot_at("2027-01-01T00:00:00+01:00", BUY);
-
     let mut settlement = saldering_2026(100.0);
+    assert_eq!(settlement.regime(), NetMetering::On);
     assert!(settlement.saldering_active(&on_2026));
+    assert!(close(
+        settlement.export_price(&on_2026, ExportSource::Pv),
+        BUY
+    ));
+    // The budget is per year: the 2026 allowance does not net a 2027 export, so that one is priced
+    // at the feed-in -- but the *regime* is still on, so the gate stays inert for the plan.
     assert!(!settlement.saldering_active(&on_2027));
-    // 2027 has no budget, so export is the post-saldering price.
     assert!(close(
         settlement.export_price(&on_2027, ExportSource::Pv),
         FEED_IN_AT_0_20
     ));
 
-    // A legacy contract can force netting on; forcing it off in 2026 flips the price.
-    settlement.set_regime(NetMetering::On);
-    settlement.set_budget(Some(Saldering::new(100.0, 0.0, 2027)));
-    assert!(settlement.saldering_active(&on_2027));
-
-    let mut off = saldering_2026(100.0);
-    off.set_regime(NetMetering::Off);
-    assert!(!off.saldering_active(&on_2026));
+    // Forcing it off prices exports at the published feed-in instead.
+    settlement.set_regime(NetMetering::Off);
+    assert!(!settlement.saldering_active(&on_2026));
     assert!(close(
-        off.export_price(&on_2026, ExportSource::Pv),
+        settlement.export_price(&on_2026, ExportSource::Pv),
         FEED_IN_AT_0_20
     ));
     assert!(close(
-        off.marginal_export(&on_2026, ExportSource::Pv),
+        settlement.marginal_export(&on_2026, ExportSource::Pv),
         FEED_IN_AT_0_20
     ));
-
-    let mut date_driven = Settlement::on(contract, support::date("2026-11-20"));
-    assert_eq!(date_driven.today(), support::date("2026-11-20"));
-    date_driven.set_today(support::date("2027-01-02"));
-    assert_eq!(date_driven.today(), support::date("2027-01-02"));
-    assert_eq!(date_driven.regime(), NetMetering::DateDriven);
 }
 
 #[test]

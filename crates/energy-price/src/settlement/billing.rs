@@ -33,7 +33,7 @@ impl Settlement {
     pub fn on(contract: Contract, today: NaiveDate) -> Self {
         Self {
             contract,
-            regime: NetMetering::DateDriven,
+            regime: NetMetering::On,
             budget: None,
             bonus_ytd_kwh: 0.0,
             bonus_year: today.year(),
@@ -113,7 +113,7 @@ impl Settlement {
     /// all. An exhausted (or absent) budget used to mean "netting off" for every slot, which is how
     /// the app ended up showing the 2027 price in 2026.
     pub fn saldering_active(&self, slot: &Slot) -> bool {
-        self.regime.is_active(self.slot_date(slot))
+        self.regime.is_active(self.slot_date(slot)) && self.budget_remaining(slot) > 0.0
     }
 
     /// kWh of export still netted 1:1 in this slot's tariff year.

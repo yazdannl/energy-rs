@@ -38,7 +38,11 @@ pub fn state(id: &str, capacity_kwh: f64, max_w: f64, soc_pct: f64) -> PackState
 
 pub fn settlement() -> Settlement {
     let date = NaiveDate::from_ymd_opt(2027, 1, 1).expect("valid date");
-    Settlement::on(Contract::zonneplan_2026(), date)
+    let mut settlement = Settlement::on(Contract::zonneplan_2026(), date);
+    // The fixture market is a post-netting one: the product default is now `On` (the 2026 reality)
+    // so a test that wants the post-2027 prices has to say so.
+    settlement.set_regime(energy_price::settlement::NetMetering::Off);
+    settlement
 }
 
 /// A contiguous book of `count` quarter-hour slots from `start`.

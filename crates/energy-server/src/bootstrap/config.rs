@@ -108,12 +108,15 @@ fn seconds(ledger: &Ledger, key: &str, fallback: i64) -> i64 {
         .unwrap_or(fallback)
 }
 
-/// The net-metering regime: date-driven unless the operator forced it.
+/// The net-metering regime: the operator's switch, on unless it was turned off.
+///
+/// Not date-driven on purpose: whether a contract still nets 1:1 is the contract's business, and a
+/// calendar that flips the price model under the plan is a trap. The default is on, which is the
+/// 2026 reality; turn it off when the contract does.
 fn net_metering(value: Option<&str>) -> energy_price::settlement::NetMetering {
     use energy_price::settlement::NetMetering;
     match value {
-        Some("on") => NetMetering::On,
         Some("off") => NetMetering::Off,
-        _ => NetMetering::DateDriven,
+        _ => NetMetering::On,
     }
 }
