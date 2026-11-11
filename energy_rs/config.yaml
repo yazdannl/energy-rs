@@ -1,5 +1,5 @@
 name: "Energy RS"
-version: "0.5.0"
+version: "0.5.1"
 slug: "energy_rs"
 description: "Plans and drives home battery dispatch from the Home Assistant Energy dashboard."
 url: "https://github.com/yazdannl/energy-rs"

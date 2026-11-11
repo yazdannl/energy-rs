@@ -54,6 +54,11 @@ impl ReplanTrigger {
         if now >= plan.horizon_end {
             return Some(ReplanReason::PlanExpired);
         }
+        // The clock the plan runs on: `replan_seconds` is a refresh cadence, not only a staleness
+        // bound. Without this a quiet day would keep one plan until the next slot boundary.
+        if self.replan_seconds > 0 && now.saturating_sub(plan.generated_at) >= self.replan_seconds {
+            return Some(ReplanReason::Due);
+        }
         if changes.prices {
             return Some(ReplanReason::PriceChanged);
         }

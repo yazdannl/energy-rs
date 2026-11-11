@@ -16,6 +16,9 @@ pub enum ReplanReason {
     ForecastChanged,
     /// The plan is older than `max(2 × replan, stale_plan_seconds)`.
     StaleInput,
+    /// The plan has been in force for its normal interval: it is refreshed even when nothing
+    /// measurable changed, so a slow drift cannot survive for ever.
+    Due,
     /// The horizon no longer covers `now`.
     PlanExpired,
 }
@@ -30,6 +33,7 @@ impl ReplanReason {
             Self::PriceChanged => "price_changed",
             Self::ForecastChanged => "forecast_changed",
             Self::StaleInput => "stale_input",
+            Self::Due => "due",
             Self::PlanExpired => "plan_expired",
         }
     }
