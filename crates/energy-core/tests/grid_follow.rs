@@ -114,9 +114,9 @@ async fn a_surplus_is_absorbed_rather_than_exported() {
 }
 
 #[tokio::test]
-async fn a_deliberate_grid_charge_keeps_its_import() {
-    // The slot plans to import 200 W to charge 300 W (load 500 W): that import is a decision, so
-    // the house drawing more must not cancel it.
+async fn a_deliberate_grid_charge_keeps_the_plan_rate() {
+    // The slot plans to import 200 W to charge 300 W (load 500 W): that is a battery decision, so
+    // the meter does not get to trade the charge for a net-import target.
     let h = harness::build(
         Authority::DryRun,
         vec![pack("SN-A", 25.0), pack("SN-B", 25.0)],
@@ -126,10 +126,45 @@ async fn a_deliberate_grid_charge_keeps_its_import() {
     h.engine.boot(NOW).await.expect("boot");
     h.engine.tick_once(NOW).await.expect("first tick");
     let tick = h.engine.tick_once(NOW + 1).await.expect("second tick");
-    // Planned grid 200 W, measured 700 W: the fleet takes 500 W out of the import, keeping 200 W.
+    assert_eq!(tick.target_w, 300.0, "the plan's charge rate stands");
+}
+
+/// The loop must settle, not alternate: the correction is added to the battery's own output, and
+/// the deadband keeps that output instead of snapping back to the plan.
+#[test]
+fn the_grid_follow_settles_instead_of_alternating() {
+    use energy_core::safety::{FollowRequest, GridFollow};
+
+    let follow = GridFollow::default();
+    // A steady 1.5 kW of unwanted import on a 1.6 kW fleet, no PV, no plan.
+    let (load_w, capability) = (1_500.0, 1_600.0);
+    // The device answers one tick late, which is the hard case for a feedback loop.
+    let mut measured = 0.0;
+    let mut previous_target = 0.0;
+    let mut targets = Vec::new();
+    for _ in 0..8 {
+        let grid = load_w + measured;
+        let target = follow.correct(&FollowRequest {
+            plan_w: 0.0,
+            battery_w: measured,
+            desired_grid_w: 0.0,
+            measured_grid_w: grid,
+            capability_w: capability,
+        });
+        targets.push(target);
+        measured = previous_target;
+        previous_target = target;
+    }
+    assert_eq!(targets[0], -1_500.0, "one tick is enough for a clear error");
     assert!(
-        (tick.target_w + 200.0).abs() < 1.0,
-        "keep the planned 200 W import, got {}",
-        tick.target_w
+        !targets.iter().any(|target| *target > 0.0),
+        "the loop must never reverse: {targets:?}"
+    );
+    let settled = targets[1..]
+        .windows(2)
+        .all(|pair| (pair[0] - pair[1]).abs() < 1e-9);
+    assert!(
+        settled,
+        "the target must hold once the meter is where it belongs: {targets:?}"
     );
 }

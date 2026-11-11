@@ -14,5 +14,11 @@ pub use trigger::ReplanTrigger;
 pub const SOC_DEVIATION_PCT: f64 = 3.0;
 /// Natural replan interval, seconds: the plan is refreshed, the meter is followed every tick.
 pub const REPLAN_SECONDS: i64 = 300;
+/// How long a refused solve holds off before the next attempt, seconds.
+///
+/// A refusal is usually an upstream problem (a stale price book, a statistics gap). The trigger
+/// keeps firing while it lasts, so without a floor a one-second tick would try to solve every second
+/// and read HA for nothing.
+pub const REFUSAL_BACKOFF_S: i64 = 30;
 /// Default absolute stale bound, seconds.
 pub const STALE_PLAN_SECONDS: i64 = 1800;

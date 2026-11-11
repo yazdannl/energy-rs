@@ -82,6 +82,10 @@ impl Engine {
         let Some(reason) = reason else {
             return Ok(false);
         };
+        // A refusal holds; retrying it every tick would be a solve storm, so the next attempt waits.
+        if self.refusal_holds_off(now)? {
+            return Ok(true);
+        }
         let stale = matches!(
             reason,
             ReplanReason::NoPlan | ReplanReason::StaleInput | ReplanReason::PlanExpired

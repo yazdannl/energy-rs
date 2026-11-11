@@ -1,14 +1,21 @@
-//! The grid-follow correction: a bounded move towards the measured grid flow.
+//! The grid-follow correction: one bounded move towards the desired grid flow.
 
-use crate::safety::{GRID_FOLLOW_DEADBAND_W, GRID_FOLLOW_MIN_BUDGET_W};
+use crate::safety::{FollowRequest, GRID_FOLLOW_DEADBAND_W, GRID_FOLLOW_MIN_BUDGET_W};
 
 /// Grid-follow policy (survey §7 trap 11).
 ///
-/// The correction is bounded by the batteries' own capability, never by a fraction of the plan
-/// power (a planned hold is exactly when a deviation needs correcting) and never by a fraction of
-/// the capability either: the correction is a setpoint recomputed from the plan target every tick,
-/// so any budget below the capability would cap the same move on every tick and leave the residual
-/// standing for good. Rate is bounded by the ladder's per-pack ramp, not by this number.
+/// The correction is **incremental**: it adds the meter's error to the battery's own measured
+/// output, not to the plan's setpoint. Adding it to the plan re-applies a correction the meter
+/// already reflects, which alternates between over- and under-shooting on every tick instead of
+/// settling. With the measured output as the base, commanding `battery + error` makes the resulting
+/// grid exactly the desired one, whatever the house and the sun are doing.
+///
+/// Inside the deadband the battery stays where it is: there is nothing to correct, and returning the
+/// plan's setpoint instead would stop the very battery whose output is holding the meter where it
+/// is — the loop would then correct again on the next tick, alternating for ever.
+///
+/// The plan's setpoint is what the caller uses when there is no follow at all (a stale tick, no
+/// slot, no meter) or when the slot is deliberately exchanging energy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GridFollow {
     /// Ignore deviations at or below this many watts.
@@ -27,19 +34,21 @@ impl Default for GridFollow {
 }
 
 impl GridFollow {
-    /// The corrected target, or `target_w` unchanged inside the deadband.
-    pub fn correct(
-        &self,
-        target_w: f64,
-        measured_grid_w: f64,
-        planned_grid_kw: f64,
-        capability_w: f64,
-    ) -> f64 {
-        let delta = -(measured_grid_w / 1000.0 - planned_grid_kw) * 1000.0;
-        if !delta.is_finite() || delta.abs() <= self.deadband_w {
-            return target_w;
+    /// The corrected target: the plan's setpoint inside the deadband, one bounded incremental move
+    /// outside it.
+    pub fn correct(&self, request: &FollowRequest) -> f64 {
+        // The error is a grid move; the same number moves the battery the other way (a fleet that
+        // charges one more watt imports one more watt).
+        let base = if request.battery_w.is_finite() {
+            request.battery_w
+        } else {
+            request.plan_w
+        };
+        let error = request.desired_grid_w - request.measured_grid_w;
+        if !error.is_finite() || error.abs() <= self.deadband_w {
+            return base;
         }
-        let budget = capability_w.max(self.min_budget_w);
-        target_w + delta.clamp(-budget, budget)
+        let budget = request.capability_w.max(self.min_budget_w);
+        (base + error).clamp(-budget, budget)
     }
 }
