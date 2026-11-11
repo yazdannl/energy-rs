@@ -234,15 +234,19 @@ impl Dispatcher {
         } else {
             sink.write(pack_id, watts).await
         };
-        advance(progress, now);
         match result {
-            Ok(receipt) => Sent {
-                written: true,
-                verified: receipt.verified,
-                applied_w: receipt.applied_w,
-                fail_safe: false,
-                error: None,
-            },
+            Ok(receipt) => {
+                // Progress means work happened: a failed write is the watchdog's business, not a
+                // heartbeat.
+                advance(progress, now);
+                Sent {
+                    written: true,
+                    verified: receipt.verified,
+                    applied_w: receipt.applied_w,
+                    fail_safe: false,
+                    error: None,
+                }
+            }
             // The gate withdrew the command (mode change, emergency hold) before it was written.
             // Nothing reached the device, so there is no fault to back off from either.
             Err(error @ SinkError::Fenced { .. }) => Sent {

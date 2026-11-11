@@ -1,6 +1,6 @@
 # Grid follow: close the loop on the meter, and let the plan sit still
 
-Status: **built and shipped in 0.5.0.** Replaces the power-deviation replan trigger shipped in
+Status: **built and shipped in 0.5.0**, corrected in 0.5.2 (see the decision note at the end). Replaces the power-deviation replan trigger shipped in
 0.4.0. One refinement against §3 as first written: the desired grid is not simply the slot's
 `load − pv − battery`. That number is only a decision when the plan is *exchanging energy on
 purpose* (charging from the grid, or selling); everywhere else it is an artefact of the load and PV
@@ -129,3 +129,26 @@ per second. The read becomes targeted:
 Release 0.5.0. Everything lands in `dry_run` first: the dispatch log then shows `planPowerW`
 versus `targetW` per tick, which is exactly the follow's contribution, so the loop can be judged on
 real data before `auto`.
+
+## 7. Decision note (0.5.2): the controller, and what it may decide
+
+**The loop is incremental, not positional.** The first version added the error to the *plan*
+setpoint. Since the meter already reflects the previous correction, a steady 500 W error produced
+1000 → 500 → 1000 → 500 W instead of settling. The correction is now added to the battery's own
+measured output, which makes the resulting grid the desired one in a single tick whatever the house
+and the sun are doing; `the_grid_follow_settles_instead_of_alternating` simulates a device that
+answers one tick late and asserts the target never reverses and then holds.
+
+**Inside the deadband the battery stays where it is.** Returning the plan's setpoint there stopped
+the very pack that was holding the meter, and the next tick corrected from scratch again — the same
+oscillation from the other side.
+
+**Authority: the follow may not buy or sell on its own.** It only ever holds the site at zero
+exchange. A slot that deliberately exchanges energy — charging from the grid, or selling — is not
+followed at all: its number is a *battery rate*, and following the grid there would trade the
+planned charge for a net-import target. So the economy-sensitive directions stay with the plan:
+the follow can never import to charge, and it can never export to sell, beyond what the plan already
+chose. What it does do is self-consume — absorb the surplus, cover the house — including turning a
+planned charge into a discharge when the sun does not arrive, which is the stated policy ("never
+force an import"). Missing telemetry, a stale plan, a missing slot or a slot with non-finite inputs
+all mean no follow at all.

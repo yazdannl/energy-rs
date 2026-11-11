@@ -43,6 +43,8 @@ pub(crate) struct EngineState {
     /// Why the last solve was refused; cleared by the next plan that is accepted.
     pub(crate) refusal: Option<Refusal>,
     pub(crate) latch_dirty: bool,
+    /// When the cost pool was last written, UTC epoch seconds.
+    pub(crate) last_pool_save: Option<i64>,
 }
 
 impl EngineState {

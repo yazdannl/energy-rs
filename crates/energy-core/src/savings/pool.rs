@@ -20,10 +20,24 @@ pub fn advance(pool: PoolRow, at: i64, flow: SlotFlowAc) -> PoolRow {
         discharge_ac,
         buy,
         feed_in,
+        eta_charge,
+        eta_discharge,
     } = flow;
+    // AC in, stored out: the pool only ever holds stored energy.
+    let eta_in = if eta_charge.is_finite() {
+        eta_charge.clamp(0.05, 1.0)
+    } else {
+        1.0
+    };
+    let eta_out = if eta_discharge.is_finite() {
+        eta_discharge.clamp(0.05, 1.0)
+    } else {
+        1.0
+    };
     let charge = charge_ac.max(0.0);
     let pv = pv_ac.clamp(0.0, charge);
     let grid = charge - pv;
+    // What it cost is what was paid at the meter, whatever survives the conversion.
     let inflow = if grid.is_finite() && buy.is_finite() {
         grid * buy
     } else {
@@ -33,13 +47,15 @@ pub fn advance(pool: PoolRow, at: i64, flow: SlotFlowAc) -> PoolRow {
     } else {
         0.0
     };
+    let stored_in = (grid + pv) * eta_in;
     let relief = if pool.kwh > 0.0 {
         pool.cost_eur / pool.kwh
     } else {
         0.0
     };
-    let out = discharge_ac.max(0.0).min(pool.kwh.max(0.0));
-    let kwh = (pool.kwh + charge - out).max(0.0);
+    // AC out removes stored energy at the discharge efficiency.
+    let out = (discharge_ac.max(0.0) / eta_out).min(pool.kwh.max(0.0));
+    let kwh = (pool.kwh + stored_in - out).max(0.0);
     let cost_eur = (pool.cost_eur + inflow - out * relief).max(0.0);
     PoolRow {
         kwh,
@@ -60,6 +76,8 @@ mod tests {
             discharge_ac: discharge,
             buy,
             feed_in,
+            eta_charge: 1.0,
+            eta_discharge: 1.0,
         }
     }
 
@@ -96,5 +114,54 @@ mod tests {
     #[test]
     fn an_empty_pool_has_no_basis() {
         assert!(pool(0.0, 0.0).basis().is_none());
+    }
+}
+
+#[cfg(test)]
+mod efficiency {
+    use super::{PoolRow, SlotFlowAc, advance};
+
+    fn flow(charge: f64, discharge: f64, eta: f64) -> SlotFlowAc {
+        SlotFlowAc {
+            charge_ac: charge,
+            pv_ac: 0.0,
+            discharge_ac: discharge,
+            buy: 0.20,
+            feed_in: 0.05,
+            eta_charge: eta,
+            eta_discharge: eta,
+        }
+    }
+
+    #[test]
+    fn a_round_trip_does_not_create_energy() {
+        let mut pool = PoolRow::default();
+        // 1 kWh AC in at 95 %, then 1 kWh AC out at 95 %: 0.9025 in, 1.0526 out -- the pool empties
+        // and the basis rises, exactly as the pack does.
+        pool = advance(pool, 1, flow(1.0, 0.0, 0.95));
+        assert!((pool.kwh - 0.95).abs() < 1e-9, "{}", pool.kwh);
+        assert!((pool.cost_eur - 0.20).abs() < 1e-9, "{}", pool.cost_eur);
+        let basis_before = pool.cost_eur / pool.kwh;
+        assert!((basis_before - 0.20 / 0.95).abs() < 1e-9);
+
+        pool = advance(pool, 2, flow(0.0, 0.95, 0.95));
+        assert!(
+            pool.kwh.abs() < 1e-9,
+            "the pack is empty, not negative: {}",
+            pool.kwh
+        );
+        assert!(
+            pool.cost_eur.abs() < 1e-9,
+            "and it owes nothing: {}",
+            pool.cost_eur
+        );
+    }
+
+    #[test]
+    fn the_cost_is_what_was_paid_not_what_survived_the_loss() {
+        // 1 kWh AC at 0.20 with a 90 % charge: the basis is 0.20 per stored kWh, not 0.18.
+        let pool = advance(PoolRow::default(), 1, flow(1.0, 0.0, 0.90));
+        let basis = pool.cost_eur / pool.kwh;
+        assert!((basis - 0.20 / 0.90).abs() < 1e-9, "{basis}");
     }
 }

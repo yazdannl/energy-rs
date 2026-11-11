@@ -56,9 +56,13 @@ impl crate::engine::Engine {
                 discharge_ac: discharge,
                 buy: slot.buy_all_in,
                 feed_in: slot.feed_in,
+                eta_charge: fleet_eta(view, true),
+                eta_discharge: fleet_eta(view, false),
             },
         );
-        if next != stored {
+        // One write per minute, not one per tick: at a one-second tick the pool would otherwise
+        // write SQLite 3600 times an hour for a number nobody reads that often.
+        if next != stored && self.pool_save_due(now) {
             pool.save(&next);
         }
     }
@@ -78,4 +82,52 @@ impl crate::engine::Engine {
 /// The fleet's measured AC power, W: the packs' own reading, never the plan.
 fn meter_battery_ac(view: &FleetView) -> f64 {
     view.power_w()
+}
+
+/// The fleet's average efficiency in one direction, for the pool's AC-to-stored conversion.
+///
+/// Capacity-weighted, like the SoC: a small pack must not speak for a large one, and a pack that
+/// reports no capacity simply does not vote.
+fn fleet_eta(view: &FleetView, charging: bool) -> f64 {
+    let mut weighted = 0.0;
+    let mut capacity = 0.0;
+    for pack in &view.packs {
+        let kwh = pack.spec.capacity_kwh;
+        if !kwh.is_finite() || kwh <= 0.0 {
+            continue;
+        }
+        let eta = if charging {
+            pack.spec.eta_charge
+        } else {
+            pack.spec.eta_discharge
+        };
+        if eta.is_finite() && eta > 0.0 {
+            weighted += eta * kwh;
+            capacity += kwh;
+        }
+    }
+    if capacity > 0.0 {
+        weighted / capacity
+    } else {
+        1.0
+    }
+}
+
+/// How often the cost pool is written, seconds.
+const POOL_SAVE_S: i64 = 60;
+
+impl crate::engine::Engine {
+    /// Whether the pool may be written now, remembering when it last was.
+    fn pool_save_due(&self, now: i64) -> bool {
+        let Ok(mut state) = self.lock() else {
+            return false;
+        };
+        match state.last_pool_save {
+            Some(at) if now.saturating_sub(at) < POOL_SAVE_S => false,
+            _ => {
+                state.last_pool_save = Some(now);
+                true
+            }
+        }
+    }
 }

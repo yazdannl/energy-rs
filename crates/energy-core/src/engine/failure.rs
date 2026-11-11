@@ -43,6 +43,22 @@ impl Engine {
     /// A pack that disappears from the fleet read, or reports itself unavailable, is not a pack that
     /// keeps its last setpoint: it is hardware we drove and can no longer see, so it gets a
     /// best-effort hold and keeps its latch entry until a device confirms.
+    /// Hold every pack we own, without a tick outcome to say which were commanded.
+    ///
+    /// Used when the tick itself failed: nothing was sent, so every latched pack is an orphan.
+    pub(crate) async fn hold_orphans(&self, now: i64) {
+        let owned = self
+            .lock()
+            .map(|state| state.latch.pack_ids())
+            .unwrap_or_default();
+        if owned.is_empty() {
+            return;
+        }
+        if let Err(error) = self.hold_all(now, Reason::OrphanHold, Some(&owned)).await {
+            tracing::warn!(%error, "orphan hold after a failed tick did not reach the devices");
+        }
+    }
+
     pub(crate) async fn reconcile(
         &self,
         now: i64,

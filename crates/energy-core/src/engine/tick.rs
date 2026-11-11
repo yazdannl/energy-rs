@@ -29,6 +29,19 @@ impl Engine {
     /// looking like work. The generation captured here fences every write of the tick: a hold or a
     /// mode change that lands mid-tick makes the remaining commands no-ops.
     pub async fn tick_once(&self, now: i64) -> Result<TickOutcome, EngineError> {
+        match self.tick_inner(now).await {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                // The tick died before it could command anything: packs we drove earlier are held
+                // now rather than left at their last setpoint until the next lucky tick.
+                self.hold_orphans(now).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// One tick, without the orphan recovery the caller adds on failure.
+    async fn tick_inner(&self, now: i64) -> Result<TickOutcome, EngineError> {
         let token = self.gate.token();
         let mut view = self.fleet.view(now).await?;
         self.mark(now)?;

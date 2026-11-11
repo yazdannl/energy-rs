@@ -1,6 +1,7 @@
 # Dispatch policy after net metering
 
-Status: **spec, not implemented**. Applies from the moment `Settlement` reports netting off
+Status: **built** (0.2.0 onward, §6 simplified in 0.6.0 — see the decision note below). Applies from
+the moment `Settlement` reports netting off
 (`NetMetering::is_active` false: date-driven from 2027-01-01, or the manual override). While netting
 is on (2026 today) every rule here is inert and today's behaviour is unchanged.
 
@@ -68,55 +69,36 @@ f(t) ≥ break_even          break_even = b / η_rt + w          f(t) > 0
 One exported AC kWh empties `1/η_d` DC kWh, which costs `1/(η_c·η_d)` AC kWh to replace; if the
 replacement costs more than the feed-in earns, exporting destroys value.
 
-**Mechanism: a post-solve export clamp with a bounded capture exemption.**
+**Mechanism: a post-solve export clamp, with no exemption.**
 
 The DP runs unchanged (`sell = f(t)` everywhere, so PV valuation and PV export are untouched). The
-clamp then works in two passes over the plan's own action path.
-
-**Pass 1 — what would actually be curtailed.** Simulate the **clamped, no-exemption** path (the
-reserve ceiling and the absolute export gate applied, exemption zero) and record, per slot, the
-surplus the pack cannot take:
+clamp then walks the plan's own action path once:
 
 ```
-surplus_ac(u) = max(0, pv(u) − load(u)) · Δt
-chargeable(u) = min(surplus_ac(u), room_dc(u) / η_c, p_charge · Δt)
-curtailed(u)  = surplus_ac(u) − chargeable(u)                        # AC kWh thrown away
-rescuable(u)  = max(0, curtailed(u) − max(0, surplus_ac(u) − p_charge · Δt))
+if f(t) < break_even and power(t) < 0 and base(t) + power(t) < 0:
+    power(t) = max(power(t), −max(0, base(t)))
 ```
 
-`rescuable` keeps only the **room-limited** part: surplus above the charge power is lost whatever the
-SoC, so extra room cannot rescue it and it must not license a sale. The baseline is the clamped path,
-not the raw DP path: if the DP already sells below break-even to make room, that sale is not in the
-baseline, so its PV shows up as curtailment and can be licensed once — not zero times.
+A below-break-even discharge is allowed exactly up to the house's own need and not one watt further.
+`gated_kwh` reports what the gate kept in the pack.
 
-**Budget — no reuse.** A single curtailed kWh must not license a sale in two earlier slots. Walk the
-horizon **backwards** once and hand each slot a budget:
+**Decision note (0.6.0): the capture exemption is gone.** Two earlier drafts licensed a below-floor
+sale to make room for later PV ("the capture budget"). It was removed for three reasons:
 
-```
-budget(last) = 0
-for t from last−1 down to 0:
-    budget(t) = budget(t+1) + rescuable(t+1)
-```
+1. **It contradicted dispatch.** The safety ladder refuses *every* below-floor battery export on the
+   measured flow (§7). A plan that booked such a sale was booking a saving the fleet would never
+   make, and the plan's summary then lied about its own value.
+2. **It could be spent twice.** The licence was a per-slot bound built from the cumulative future
+   curtailment, and nothing decremented it, so each of several slots could sell against the same
+   prospective PV. (The spec above demanded the opposite; the implementation never did it.)
+3. **It bought nothing.** The solar ceiling only limits the *grid* portion of a charge — the PV
+   portion survives it up to the pack's physical limit. So refusing to dump stored energy below its
+   cost loses no PV: the surplus either enters the pack or is exported. What the exemption really
+   traded was a below-cost sale for a marginally higher SoC, which is exactly what rule R5 forbids.
 
-then walk forward applying the clamp; a slot that uses `x` AC of exemption consumes `x/η_rt` AC of
-the budget, and `x` may never exceed `budget(t) · η_rt`.
+If the reserve ceiling ever needs relief, the honest lever is the ceiling (`solar_reserve_pct`), not
+a below-floor sale: lowering the reserve captures more PV at zero opportunity cost.
 
-**Pass 2 — clamp, with the exemption bounded by the budget.**
-
-```
-if f(t) < break_even and power(t) < 0 and base + power(t) < 0:
-    power(t) = max(power(t), −(max(0, base) + budget(t) · η_rt / Δt))
-```
-
-The conversion keeps the bound honest in both directions: selling `x` AC frees `x/η_d` DC of room,
-which absorbs `x/η_rt` AC of PV, so rescuing `a` AC of PV licenses `a · η_rt` AC of sale. At sunset
-the budget is zero and the gate is absolute; on a day the pack can absorb, the budget is zero too.
-
-The budget is conservative in the safe direction: a sale lowers SoC, which can only reduce later
-curtailment, so the no-exemption baseline is an upper bound on what a sale can rescue. The DP still
-decides *whether* to sell (`sell = f` is its true input); the clamp only declines to forbid up to the
-budget. It never touches a slot that serves the house, never touches PV export, and never increases a
-discharge.
 
 Why not the DP's `sell_floor_eur_per_kwh`: its second clause (`base > 0 && buy < floor → no
 discharge`, `core_solver.c:229`) blocks self-consumption whenever the buy price is below the
@@ -301,14 +283,22 @@ once per settled slot from the measured flows (`SlotFlow`, the savings accountan
 price_pv   = f(t)                                    # PV stored instead of sold: the forgone feed-in
 pv_to_batt = min(charge_kwh, max(0, pv_kwh − load_kwh))
 grid_to_batt = charge_kwh − pv_to_batt
-cost_in    = grid_to_batt · p(t) + pv_to_batt · price_pv
-kwh_in     = charge_kwh
+cost_in    = grid_to_batt · p(t) + pv_to_batt · price_pv      # what was PAID at the meter
+kwh_in     = charge_kwh · η_c                                 # what SURVIVED into the pack
+out_dc     = discharge_kwh / η_d                               # what left the pack
 
 relief     = if pool.kwh > 0 { pool.cost / pool.kwh } else { 0.0 }   # average-cost relief
-pool.kwh  += kwh_in − discharge_kwh
-pool.cost += cost_in − discharge_kwh · relief
+pool.kwh  += kwh_in − out_dc
+pool.cost += cost_in − out_dc · relief
 b          = if pool.kwh > 0 { pool.cost / pool.kwh } else { None }
 ```
+
+The pool is a **stored-energy** account, so every AC flow crosses an efficiency on the way in or
+out. Adding AC charge to a DC stock and subtracting AC discharge from it (the 0.2–0.5 version) drifts
+the quantity by the round-trip loss and quietly inflates `b`: 1 kWh in and 1 kWh out at 95 % would
+leave 0.1 kWh "free" energy in a pack that is empty. Cost is what the meter charged; quantity is what
+the pack holds. The fleet's capacity-weighted efficiency is used (`eta_charge`/`eta_discharge` in
+`SlotFlowAc`).
 
 `pv_to_batt` subtracts the **load**, not the export: with 3 kWh PV, 3 kWh load and 1 kWh charging,
 the pack charged from the grid, and `max(0, pv − load)` is the PV that was actually available for the
