@@ -43,10 +43,6 @@ pub(crate) struct EngineState {
     /// Why the last solve was refused; cleared by the next plan that is accepted.
     pub(crate) refusal: Option<Refusal>,
     pub(crate) latch_dirty: bool,
-    /// Consecutive ticks whose power deviation crossed a threshold.
-    pub(crate) power_streak: u8,
-    /// When a power-triggered solve last ran, UTC epoch seconds.
-    pub(crate) last_power_replan: Option<i64>,
 }
 
 impl EngineState {

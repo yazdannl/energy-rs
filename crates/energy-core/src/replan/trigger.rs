@@ -2,8 +2,7 @@
 
 use crate::plan::{Plan, SLOT_SECONDS};
 use crate::replan::{
-    Changes, GRID_REACT_W, LiveState, PowerMove, REPLAN_SECONDS, ReplanReason, SOC_DEVIATION_PCT,
-    SOLAR_REACT_W, STALE_PLAN_SECONDS,
+    Changes, LiveState, REPLAN_SECONDS, ReplanReason, SOC_DEVIATION_PCT, STALE_PLAN_SECONDS,
 };
 
 /// Replan policy.
@@ -15,10 +14,6 @@ pub struct ReplanTrigger {
     pub stale_plan_seconds: i64,
     /// SoC deviation threshold, percent.
     pub soc_deviation_pct: f64,
-    /// Grid deviation that forces a re-solve, W.
-    pub grid_react_w: f64,
-    /// PV deviation that forces a re-solve, W.
-    pub solar_react_w: f64,
     /// Clock slot length, seconds.
     pub slot_seconds: i64,
 }
@@ -29,8 +24,6 @@ impl Default for ReplanTrigger {
             replan_seconds: REPLAN_SECONDS,
             stale_plan_seconds: STALE_PLAN_SECONDS,
             soc_deviation_pct: SOC_DEVIATION_PCT,
-            grid_react_w: GRID_REACT_W,
-            solar_react_w: SOLAR_REACT_W,
             slot_seconds: SLOT_SECONDS,
         }
     }
@@ -47,7 +40,6 @@ impl ReplanTrigger {
         plan: Option<&Plan>,
         live: &LiveState,
         changes: &Changes,
-        power: &PowerMove,
     ) -> Option<ReplanReason> {
         let Some(plan) = plan else {
             return Some(ReplanReason::NoPlan);
@@ -67,9 +59,6 @@ impl ReplanTrigger {
         }
         if changes.forecast {
             return Some(ReplanReason::ForecastChanged);
-        }
-        if power.crossed(self.grid_react_w, self.solar_react_w) {
-            return Some(ReplanReason::PowerChanged);
         }
         if self.soc_deviated(now, plan, live) {
             return Some(ReplanReason::SocDeviation);

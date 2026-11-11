@@ -73,8 +73,6 @@ impl Engine {
         let trigger = ReplanTrigger {
             replan_seconds: config.replan_seconds,
             stale_plan_seconds: config.stale_plan_seconds,
-            grid_react_w: config.grid_react_w,
-            solar_react_w: config.solar_react_w,
             ..ReplanTrigger::default()
         };
         let state = crate::engine::initial_state::initial_state(&config, now);

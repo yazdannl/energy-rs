@@ -13,7 +13,7 @@ const EXPORT_POLICIES: [&str; 2] = ["legacy", "cost_basis"];
 const ON_OFF: [&str; 2] = ["off", "on"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 25] = [
+static SPECS: [SettingSpec; 23] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -70,7 +70,7 @@ static SPECS: [SettingSpec; 25] = [
             min: 60.0,
             max: 3_600.0,
         },
-        default: "900",
+        default: "300",
     },
     SettingSpec {
         key: "stale_input_seconds",
@@ -152,22 +152,6 @@ static SPECS: [SettingSpec; 25] = [
     },
     SettingSpec {
         key: "grid_follow_deadband_w",
-        kind: SettingKind::Number {
-            min: 0.0,
-            max: 500.0,
-        },
-        default: "10",
-    },
-    SettingSpec {
-        key: "grid_react_w",
-        kind: SettingKind::Number {
-            min: 0.0,
-            max: 500.0,
-        },
-        default: "10",
-    },
-    SettingSpec {
-        key: "solar_react_w",
         kind: SettingKind::Number {
             min: 0.0,
             max: 500.0,

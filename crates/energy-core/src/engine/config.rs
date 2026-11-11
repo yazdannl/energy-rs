@@ -35,10 +35,6 @@ pub struct EngineConfig {
     pub pack_switch_soc_pct: f64,
     /// How long a selected pack keeps its slot, seconds.
     pub pack_hold_seconds: i64,
-    /// Grid deviation that forces a re-solve, W.
-    pub grid_react_w: f64,
-    /// PV deviation that forces a re-solve, W.
-    pub solar_react_w: f64,
     /// Grid-follow deadband, W: a smaller import error is left alone.
     pub grid_follow_deadband_w: f64,
     /// Grid import ceiling, W (0 = unlimited).
@@ -69,7 +65,7 @@ impl Default for EngineConfig {
             mode: Authority::DryRun,
             tick_seconds: 5,
             failsafe_on_error: true,
-            replan_seconds: 900,
+            replan_seconds: 300,
             stale_plan_seconds: 1800,
             reserve_soc_pct: 0.0,
             solar_reserve_pct: 0.0,
@@ -77,8 +73,6 @@ impl Default for EngineConfig {
             pack_staggering: true,
             pack_switch_soc_pct: 2.0,
             pack_hold_seconds: 1800,
-            grid_react_w: 10.0,
-            solar_react_w: 10.0,
             grid_follow_deadband_w: 10.0,
             max_grid_import_w: 0.0,
             max_grid_export_w: 0.0,

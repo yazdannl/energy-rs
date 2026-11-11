@@ -14,8 +14,6 @@ pub enum ReplanReason {
     PriceChanged,
     /// A forecast input changed.
     ForecastChanged,
-    /// Measured grid or PV moved further than its threshold from what the plan expected.
-    PowerChanged,
     /// The plan is older than `max(2 × replan, stale_plan_seconds)`.
     StaleInput,
     /// The horizon no longer covers `now`.
@@ -31,7 +29,6 @@ impl ReplanReason {
             Self::SocDeviation => "soc_deviation",
             Self::PriceChanged => "price_changed",
             Self::ForecastChanged => "forecast_changed",
-            Self::PowerChanged => "power_changed",
             Self::StaleInput => "stale_input",
             Self::PlanExpired => "plan_expired",
         }
