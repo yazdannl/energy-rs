@@ -1,4 +1,4 @@
-//! Resolve a pack reference (serial or name) against the ledger.
+//! Resolve a pack reference (serial, alias or name) against the ledger.
 
 use energy_ledger::Pack;
 
@@ -6,7 +6,7 @@ use crate::api::blocking::with_ledger;
 use crate::api::error::ApiError;
 use crate::service::Service;
 
-/// Look one pack up by serial number or display name.
+/// Look one pack up by serial number, operator alias or display name.
 pub(crate) async fn resolve_pack(service: &Service, reference: &str) -> Result<Pack, ApiError> {
     let reference = reference.trim().to_owned();
     let wanted = reference.clone();
@@ -17,9 +17,11 @@ pub(crate) async fn resolve_pack(service: &Service, reference: &str) -> Result<P
             .all()
             .map_err(|err| ApiError::internal("look up pack", err))
             .map(|packs| {
-                packs
-                    .into_iter()
-                    .find(|pack| pack.sn == wanted || pack.name.as_deref() == Some(&wanted))
+                packs.into_iter().find(|pack| {
+                    pack.sn == wanted
+                        || pack.alias.as_deref() == Some(&wanted)
+                        || pack.name.as_deref() == Some(&wanted)
+                })
             })
     })
     .await?;

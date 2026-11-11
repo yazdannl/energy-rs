@@ -158,7 +158,12 @@
 
     <Panel title="Batteries" subtitle="Discovered packs and their identity">
       {#snippet icon()}<BatteryCharging class="size-4 text-batt" />{/snippet}
-      <SettingsBatteryList packs={site.packs} configured={site.configured} loading={siteLoading} />
+      <SettingsBatteryList
+        packs={site.packs}
+        configured={site.configured}
+        loading={siteLoading}
+        onchanged={() => void loadSite()}
+      />
     </Panel>
 
     <Panel title="Retention" subtitle="What the API keeps and for how long">

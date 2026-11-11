@@ -36,6 +36,7 @@ export interface SiteSource {
 export interface SitePack {
   sn: string;
   name: string | null;
+  alias: string | null;
   labelCapacityKwh: number | null;
   reportedCapacityKwh: number | null;
   maxChargeW: number | null;
@@ -101,6 +102,7 @@ export interface PackOverride {
 export interface Pack {
   sn: string;
   name: string | null;
+  alias: string | null;
   labelCapacityKwh: number | null;
   reportedCapacityKwh: number | null;
   limits: PackLimits;
@@ -114,6 +116,12 @@ export interface Pack {
 
 export interface PacksResponse {
   packs: Pack[];
+}
+
+/** The pack identity after `PATCH /packs/{sn}`: `alias` is `null` when the label was cleared. */
+export interface PackAlias {
+  sn: string;
+  alias: string | null;
 }
 
 export interface PriceSlot {

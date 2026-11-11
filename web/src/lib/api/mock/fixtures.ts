@@ -228,6 +228,7 @@ export function makePacks(now: Date): PacksResponse {
     {
       sn: 'AB2000-A1',
       name: 'Attic A',
+      alias: null,
       labelCapacityKwh: 1.92,
       reportedCapacityKwh: 1.88,
       limits: { maxChargeW: 800, maxDischargeW: 800 },
@@ -269,6 +270,7 @@ export function makePacks(now: Date): PacksResponse {
     {
       sn: 'AB2000-B2',
       name: 'Attic B',
+      alias: null,
       labelCapacityKwh: 1.92,
       reportedCapacityKwh: null,
       limits: { maxChargeW: 800, maxDischargeW: 800 },
@@ -330,6 +332,7 @@ export function makeSite(now: Date): Site {
     packs: makePacks(now).packs.map((pack) => ({
       sn: pack.sn,
       name: pack.name,
+      alias: pack.alias,
       labelCapacityKwh: pack.labelCapacityKwh,
       reportedCapacityKwh: pack.reportedCapacityKwh,
       maxChargeW: pack.limits.maxChargeW,

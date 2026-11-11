@@ -6,14 +6,16 @@
   import { ago } from '../../lib/format/time';
   import Badge from '../ui/Badge.svelte';
   import EmptyNote from '../ui/EmptyNote.svelte';
+  import SettingsPackAlias from './SettingsPackAlias.svelte';
 
   interface Props {
     packs: SitePack[];
     configured: boolean;
     loading: boolean;
+    onchanged: () => void;
   }
 
-  let { packs, configured, loading }: Props = $props();
+  let { packs, configured, loading, onchanged }: Props = $props();
 
   function seenAgo(pack: SitePack): string {
     return ago(pack.lastSeenAt);
@@ -38,7 +40,9 @@
       <li class="rounded-lg border border-line bg-panel-soft/50 px-2.5 py-2">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0">
-            <p class="truncate text-[11.5px] font-medium text-ink">{pack.name ?? 'unnamed pack'}</p>
+            <p class="truncate text-[11.5px] font-medium text-ink">
+              {pack.alias ?? pack.name ?? 'unnamed pack'}
+            </p>
             <p class="truncate font-mono text-[10px] text-faint">serial {pack.sn}</p>
           </div>
           <BatteryCharging class="size-3.5 shrink-0 text-batt" aria-hidden="true" />
@@ -56,11 +60,13 @@
           </Badge>
           <span class="text-[9.5px] text-faint">first seen {ago(pack.firstSeenAt)}</span>
         </div>
+        <SettingsPackAlias sn={pack.sn} alias={pack.alias} {onchanged} />
       </li>
     {/each}
   </ul>
   <p class="mt-1.5 text-[9.5px] leading-relaxed text-faint">
-    The v1 contract exposes the serial as the pack identity; a device address is not part of it, so
-    none is shown. Discovery status comes from `lastSeenAt` and the live sample's stale flag.
+    The serial is the pack identity in the v1 contract; the alias is your own label and may also be
+    used to address the pack in overrides and commands. Discovery status comes from `lastSeenAt` and
+    the live sample's stale flag.
   </p>
 {/if}

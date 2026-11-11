@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { LivePack, Pack } from '../../lib/api/types';
   import { fmtW } from '../../lib/format/energy';
+  import { packLabel } from '../../lib/format/pack';
   import { flowVerb, batteryFlow } from '../../lib/format/sign';
   import Badge from '../ui/Badge.svelte';
   import EmptyNote from '../ui/EmptyNote.svelte';
@@ -19,7 +20,7 @@
       const stream = live.find((item) => item.sn === pack.sn);
       return {
         sn: pack.sn,
-        name: pack.name ?? pack.sn,
+        name: packLabel(pack),
         socPct: stream?.socPct ?? pack.state?.socPct ?? null,
         powerW: stream?.powerW ?? pack.state?.powerW ?? null,
         stale: stream?.stale ?? pack.state?.stale ?? false,

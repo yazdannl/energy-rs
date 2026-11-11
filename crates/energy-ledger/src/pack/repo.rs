@@ -2,7 +2,8 @@
 //!
 //! Discovery may re-register the same serial every poll; the upsert keeps `first_seen`, only moves
 //! `last_seen` forward, and never blanks a known capacity or limit with a `NULL` from a later
-//! report.
+//! report. The operator's `alias` is not part of the upsert at all: only [`Packs::set_alias`] writes
+//! it, so a re-registration cannot rename a pack back.
 
 use std::sync::MutexGuard;
 
@@ -12,7 +13,7 @@ use crate::error::LedgerError;
 use crate::measurement::Measurement;
 use crate::pack::{Pack, PackState};
 
-const COLUMNS: &str = "id, sn, name, label_capacity_kwh, reported_capacity_kwh, max_charge_w, max_discharge_w, \
+const COLUMNS: &str = "id, sn, name, alias, label_capacity_kwh, reported_capacity_kwh, max_charge_w, max_discharge_w, \
      first_seen, last_seen, learned_capacity_kwh, learned_round_trip, learned_confidence, learned_at";
 
 /// Repository for the `packs` table, holding the ledger connection guard for the duration of a
@@ -76,6 +77,19 @@ impl<'a> Packs<'a> {
             params![id, capacity_kwh, round_trip, confidence, at],
         )?;
         Ok(())
+    }
+
+    /// Set or clear the operator's alias, returning the stored row (`None` for an unknown serial).
+    ///
+    /// The alias is the only pack field the API writes; discovery never passes one here, so a
+    /// later upsert leaves it in place.
+    pub fn set_alias(&self, sn: &str, alias: Option<&str>) -> Result<Option<Pack>, LedgerError> {
+        let sql = format!("UPDATE packs SET alias = ?2 WHERE sn = ?1 RETURNING {COLUMNS}");
+        let pack = self
+            .conn
+            .query_row(&sql, params![sn, alias], Pack::from_row)
+            .optional()?;
+        Ok(pack)
     }
 
     pub fn get(&self, id: i64) -> Result<Option<Pack>, LedgerError> {

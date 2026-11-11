@@ -92,6 +92,32 @@ fn a_pack_upsert_keeps_the_first_seen_and_known_limits() {
 }
 
 #[test]
+fn an_alias_survives_discovery_and_can_be_cleared() {
+    let db = TempDatabase::new();
+    let ledger = db.ledger();
+    let packs = ledger.packs().unwrap();
+    packs
+        .upsert(&energy_ledger::Pack::new("ABC123", 1.92, 100))
+        .unwrap();
+    let renamed = packs.set_alias("ABC123", Some("Attic A")).unwrap().unwrap();
+    assert_eq!(renamed.alias.as_deref(), Some("Attic A"));
+
+    // Discovery re-registers the pack on every poll; it must not take the alias away.
+    let again = energy_ledger::Pack::new("ABC123", 1.92, 200).with_name("Zendure");
+    let stored = packs.upsert(&again).unwrap();
+    assert_eq!(stored.name.as_deref(), Some("Zendure"));
+    assert_eq!(stored.alias.as_deref(), Some("Attic A"));
+    assert_eq!(
+        packs.by_sn("ABC123").unwrap().unwrap().alias.as_deref(),
+        Some("Attic A")
+    );
+
+    assert!(packs.set_alias("ABC999", Some("nope")).unwrap().is_none());
+    let cleared = packs.set_alias("ABC123", None).unwrap().unwrap();
+    assert_eq!(cleared.alias, None);
+}
+
+#[test]
 fn a_plan_round_trips_with_its_slots_and_becomes_current() {
     let db = TempDatabase::new();
     let ledger = db.ledger();

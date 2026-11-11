@@ -43,7 +43,7 @@ are safe to surface in the UI.
 | `invalid_query` | 400 | a query parameter is missing, malformed or out of range |
 | `invalid_body` | 400 | the JSON body is malformed or not the documented shape |
 | `not_found` | 404 | no such resource or endpoint (also: no current plan) |
-| `unknown_pack` | 404 | the pack serial/name is not in the ledger |
+| `unknown_pack` | 404 | the pack serial/alias/name is not in the ledger |
 | `stale_write` | 409 | the timestamped settings write would rewrite history |
 | `validation_failed` | 422 | a well-formed value the API refuses (mode, override, action, timestamps) |
 | `invalid_setting` | 422 | a known setting with an out-of-range/typed-wrong value |
@@ -59,6 +59,7 @@ are safe to surface in the UI.
 | GET | `/api/v1/health` | — | 200 `health` | — |
 | GET | `/api/v1/site` | — | 200 `site` | — |
 | GET | `/api/v1/packs` | — | 200 `packs` | — |
+| PATCH | `/api/v1/packs/{sn}` | `{alias}` | 200 `{sn, alias}` | 400, 404, 422 |
 | GET | `/api/v1/prices` | `from?`, `to?` (RFC3339) | 200 `prices` | 400 |
 | GET | `/api/v1/plan/current` | — | 200 `plan` | 404, 500 |
 | GET | `/api/v1/plans` | `limit?` (1–200, default 50) | 200 `plans` | 400 |
@@ -91,10 +92,13 @@ The discovered energy dashboard, the known packs (identity) and the capability s
 { "configured": true, "mode": "dry_run", "lastTickAt": "...",
   "capabilities": ["battery_control", "savings"],
   "sources": [{ "kind": "grid", "entityId": "sensor.grid_energy", "label": "Grid" }],
-  "packs": [{ "sn": "AB2000-ONE", "name": null, "labelCapacityKwh": 1.92,
+  "packs": [{ "sn": "AB2000-ONE", "name": null, "alias": "Attic A", "labelCapacityKwh": 1.92,
               "reportedCapacityKwh": null, "maxChargeW": 800, "maxDischargeW": 800,
               "firstSeenAt": "...", "lastSeenAt": "..." }] }
 ```
+
+`name` is what discovery registered (Home Assistant's device name); `alias` is the operator's own
+label and `null` until one is set. The UI shows `alias`, then `name`, then the serial.
 
 `configured:false` means HA has no energy dashboard; every list may still hold ledger packs.
 
@@ -106,7 +110,8 @@ override.
 
 ```json
 { "packs": [{
-  "sn": "AB2000-ONE", "name": null, "labelCapacityKwh": 1.92, "reportedCapacityKwh": null,
+  "sn": "AB2000-ONE", "name": null, "alias": "Attic A",
+  "labelCapacityKwh": 1.92, "reportedCapacityKwh": null,
   "limits": { "maxChargeW": 800, "maxDischargeW": 800 },
   "firstSeenAt": "...", "lastSeenAt": "...",
   "state": { "socPct": 60.0, "powerW": 120.0, "sampledAt": "...", "stale": false },
@@ -125,6 +130,25 @@ override.
 `learned`, `latch` and `override` are `null` when the engine has no value for them.
 `capacityDecision` is the learner's provenance slug (`capacity_learned*`); `latch.reason` is the
 protection slug (`cell_*`).
+
+### `PATCH /packs/{sn}`
+
+```json
+{ "alias": "Attic A" }
+```
+
+Sets the operator's label for one pack, identified by serial. The alias is presentation only: the
+engine never reads it, and it is separate from `name`, which discovery rewrites from Home
+Assistant — a re-registration never touches the alias. `"alias": null` or a blank string clears
+it; the key itself must be present (`{}` is a `422`).
+
+* Trimmed, 1–40 characters, no control characters; longer or malformed values are `422`.
+* Unique across the fleet: an alias another pack holds is a `422 validation_failed` whose
+  `details.sn` names the holder.
+* An unknown serial is `404 unknown_pack`; writing the stored value again is a no-op `200`.
+* The alias is another way to name a pack in `/override`, `/protection` and `/learning`.
+
+The answer is the stored identity: `{ "sn": "AB2000-ONE", "alias": "Attic A" }`.
 
 ### `GET /prices?from&to`
 

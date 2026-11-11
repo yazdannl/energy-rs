@@ -5,6 +5,7 @@
 
   import type { Pack } from '../../lib/api/types';
   import { fmtKwh, fmtW } from '../../lib/format/energy';
+  import { packLabel } from '../../lib/format/pack';
   import { ago } from '../../lib/format/time';
   import { batteryFlow, flowVerb } from '../../lib/format/sign';
   import Badge from '../ui/Badge.svelte';
@@ -27,7 +28,7 @@
 <article class="card p-3.5">
   <header class="flex items-start justify-between gap-2">
     <div class="min-w-0">
-      <h2 class="truncate text-[13px] font-semibold text-ink">{pack.name ?? pack.sn}</h2>
+      <h2 class="truncate text-[13px] font-semibold text-ink">{packLabel(pack)}</h2>
       <p class="truncate font-mono text-[10px] text-faint">{pack.sn}</p>
     </div>
     <div class="flex shrink-0 flex-wrap justify-end gap-1">

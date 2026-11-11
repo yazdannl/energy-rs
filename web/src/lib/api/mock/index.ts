@@ -14,6 +14,7 @@ import type {
   ModeResponse,
   OverrideAction,
   OverrideResponse,
+  PackAlias,
   PacksResponse,
   Plan,
   PlansResponse,
@@ -47,6 +48,14 @@ async function latency(): Promise<void> {
 /** Mode is shared between the command endpoints and the stream so the mock stays coherent. */
 const shared: { mode: Mode } = { mode: MOCK_MODE };
 
+/** Aliases the mock remembers, keyed by serial; `null` is a cleared label. */
+const aliases = new Map<string, string | null>();
+
+function rememberedAlias<T extends { sn: string; alias: string | null }>(pack: T): T {
+  if (!aliases.has(pack.sn)) return pack;
+  return { ...pack, alias: aliases.get(pack.sn) ?? null };
+}
+
 export class MockApi implements ApiPort {
   readonly kind = 'mock' as const;
 
@@ -57,12 +66,22 @@ export class MockApi implements ApiPort {
 
   async site(): Promise<Site> {
     await latency();
-    return { ...makeSite(new Date()), mode: shared.mode };
+    const site = makeSite(new Date());
+    return { ...site, mode: shared.mode, packs: site.packs.map(rememberedAlias) };
   }
 
   async packs(): Promise<PacksResponse> {
     await latency();
-    return makePacks(new Date());
+    const response = makePacks(new Date());
+    return { packs: response.packs.map(rememberedAlias) };
+  }
+
+  async setPackAlias(sn: string, alias: string | null): Promise<PackAlias> {
+    await latency();
+    const trimmed = alias?.trim() ?? '';
+    const stored = trimmed === '' ? null : trimmed.slice(0, 40);
+    aliases.set(sn, stored);
+    return { sn, alias: stored };
   }
 
   async prices(from?: string, to?: string): Promise<PricesResponse> {

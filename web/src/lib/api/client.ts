@@ -15,6 +15,7 @@ import type {
   ModeResponse,
   OverrideAction,
   OverrideResponse,
+  PackAlias,
   PacksResponse,
   Plan,
   PlansResponse,
@@ -33,6 +34,8 @@ export interface ApiPort {
   health(): Promise<Health>;
   site(): Promise<Site>;
   packs(): Promise<PacksResponse>;
+  /** Set or clear the operator's alias; the answer is the stored `{sn, alias}`. */
+  setPackAlias(sn: string, alias: string | null): Promise<PackAlias>;
   prices(from?: string, to?: string): Promise<PricesResponse>;
   /** `null` when the API answers `404 not_found`: no plan has been solved yet. */
   currentPlan(): Promise<Plan | null>;
@@ -121,6 +124,10 @@ export class HttpApi implements ApiPort {
 
   packs(): Promise<PacksResponse> {
     return this.get<PacksResponse>('packs');
+  }
+
+  setPackAlias(sn: string, alias: string | null): Promise<PackAlias> {
+    return this.command<PackAlias>(`packs/${encodeURIComponent(sn)}`, 'PATCH', { alias });
   }
 
   prices(from?: string, to?: string): Promise<PricesResponse> {

@@ -4,6 +4,7 @@
 
   import { describeError } from '../../lib/api/errors';
   import type { Pack } from '../../lib/api/types';
+  import { packLabel } from '../../lib/format/pack';
   import { api } from '../../lib/state/runtime';
   import { toasts } from '../../lib/state/toast.svelte';
   import Button from '../ui/Button.svelte';
@@ -31,7 +32,7 @@
       toasts.push(
         'ok',
         action === 'full_charge' ? 'Full charge queued' : 'Relearn queued',
-        pack.name ?? pack.sn,
+        packLabel(pack),
       );
       onchanged();
     } catch (cause) {

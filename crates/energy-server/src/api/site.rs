@@ -29,6 +29,7 @@ struct SourceDto {
 struct PackDto {
     sn: String,
     name: Option<String>,
+    alias: Option<String>,
     label_capacity_kwh: f64,
     reported_capacity_kwh: Option<f64>,
     max_charge_w: Option<f64>,
@@ -53,6 +54,7 @@ fn pack_dto(pack: &Pack) -> Result<PackDto, ApiError> {
     Ok(PackDto {
         sn: pack.sn.clone(),
         name: pack.name.clone(),
+        alias: pack.alias.clone(),
         label_capacity_kwh: pack.label_capacity_kwh,
         reported_capacity_kwh: pack.reported_capacity_kwh,
         max_charge_w: pack.max_charge_w,

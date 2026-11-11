@@ -6,13 +6,17 @@
 /// is what the pack itself reports (if anything), and the maxima are the device limits known from
 /// discovery. `first_seen` is preserved by the upsert; `last_seen` moves forward.
 ///
-/// The `id` is assigned by the database: it is ignored when a pack is upserted and returned on the
-/// stored row.
+/// `name` is what discovery registered (Home Assistant's device name); `alias` is the operator's
+/// own label, written only through the pack alias endpoint, so a re-registration never overwrites
+/// it. The `id` is assigned by the database: it is ignored when a pack is upserted and returned on
+/// the stored row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pack {
     pub id: i64,
     pub sn: String,
     pub name: Option<String>,
+    /// The operator's label; `None` when nobody renamed the pack.
+    pub alias: Option<String>,
     pub label_capacity_kwh: f64,
     pub reported_capacity_kwh: Option<f64>,
     pub max_charge_w: Option<f64>,
@@ -36,6 +40,7 @@ impl Pack {
             id: 0,
             sn: sn.into(),
             name: None,
+            alias: None,
             label_capacity_kwh,
             reported_capacity_kwh: None,
             max_charge_w: None,
@@ -73,16 +78,17 @@ impl Pack {
             id: row.get(0)?,
             sn: row.get(1)?,
             name: row.get(2)?,
-            label_capacity_kwh: row.get(3)?,
-            reported_capacity_kwh: row.get(4)?,
-            max_charge_w: row.get(5)?,
-            max_discharge_w: row.get(6)?,
-            first_seen: row.get(7)?,
-            last_seen: row.get(8)?,
-            learned_capacity_kwh: row.get(9)?,
-            learned_round_trip: row.get(10)?,
-            learned_confidence: row.get(11)?,
-            learned_at: row.get(12)?,
+            alias: row.get(3)?,
+            label_capacity_kwh: row.get(4)?,
+            reported_capacity_kwh: row.get(5)?,
+            max_charge_w: row.get(6)?,
+            max_discharge_w: row.get(7)?,
+            first_seen: row.get(8)?,
+            last_seen: row.get(9)?,
+            learned_capacity_kwh: row.get(10)?,
+            learned_round_trip: row.get(11)?,
+            learned_confidence: row.get(12)?,
+            learned_at: row.get(13)?,
         })
     }
 }

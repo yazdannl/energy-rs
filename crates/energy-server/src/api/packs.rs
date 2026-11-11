@@ -79,6 +79,7 @@ struct OverrideDto {
 struct PackDto {
     sn: String,
     name: Option<String>,
+    alias: Option<String>,
     label_capacity_kwh: f64,
     reported_capacity_kwh: Option<f64>,
     limits: LimitsDto,
@@ -174,6 +175,7 @@ fn pack_dto(stored: &PackState, live: Option<&PackSnapshot>) -> Result<PackDto, 
     Ok(PackDto {
         sn: pack.sn.clone(),
         name: pack.name.clone(),
+        alias: pack.alias.clone(),
         label_capacity_kwh: pack.label_capacity_kwh,
         reported_capacity_kwh: pack.reported_capacity_kwh,
         limits: LimitsDto {

@@ -4,6 +4,7 @@
   import { describeError } from '../../lib/api/errors';
   import type { OverrideAction, Pack } from '../../lib/api/types';
   import { fmtW } from '../../lib/format/energy';
+  import { packLabel } from '../../lib/format/pack';
   import { clock } from '../../lib/format/time';
   import { api } from '../../lib/state/runtime';
   import { toasts } from '../../lib/state/toast.svelte';
@@ -48,7 +49,7 @@
       });
       toasts.push(
         'ok',
-        `Override accepted for ${pack.name ?? pack.sn}`,
+        `Override accepted for ${packLabel(pack)}`,
         `${result.action} until ${clock(result.expiresAt)}`,
       );
       onchanged();
