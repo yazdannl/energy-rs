@@ -100,7 +100,15 @@ impl Dispatcher {
         } else {
             input.plan.and_then(|plan| slot_power(plan, input.now))
         };
-        let target_w = plan_power_w.unwrap_or(0.0);
+        // The plan's setpoint, corrected from the meter: the grid is what we actually hold.
+        let target_w = crate::dispatch::follow_target::target(
+            plan_power_w.unwrap_or(0.0),
+            slot.as_ref(),
+            input.meter,
+            input.fleet,
+            limits,
+            stale,
+        );
         let (allocation, grid_limit) = allocate(input, limits, target_w, slot.as_ref());
         let grid_hold = grid_limit == Some(Reason::GridTelemetryMissing);
         let grid_base = grid_telemetry::base(input, slot.as_ref(), limits);

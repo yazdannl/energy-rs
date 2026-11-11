@@ -274,11 +274,23 @@ fn lo_above_hi_blocks_with_every_binding_reason() {
 #[test]
 fn the_grid_follow_deadband_and_budget_are_pinned() {
     let follow = GridFollow::default();
-    assert_eq!(follow.correct(0.0, 20.0, 0.0, 1000.0), 0.0);
+    assert_eq!(follow.deadband_w, 10.0);
+    assert_eq!(
+        follow.correct(0.0, 10.0, 0.0, 1000.0),
+        0.0,
+        "inside the band"
+    );
     assert_eq!(follow.correct(0.0, 100.0, 0.0, 1000.0), -100.0);
-    // Capability 600 W -> 300 W, below the 500 W floor.
-    assert_eq!(follow.correct(0.0, 2000.0, 0.0, 600.0), -500.0);
+    // The budget is the fleet's own capability, not a fraction of it: a 4 kW fleet corrects a
+    // 2 kW step in full, a 600 W fleet corrects what it physically can.
+    assert_eq!(follow.correct(0.0, 2000.0, 0.0, 600.0), -600.0);
     assert_eq!(follow.correct(0.0, 2000.0, 0.0, 4000.0), -2000.0);
+    // A tiny (or unknown) fleet still gets the minimum budget, so one tick is not useless.
+    assert_eq!(follow.correct(0.0, 900.0, 0.0, 100.0), -500.0);
+    assert_eq!(follow.correct(0.0, 900.0, 0.0, 0.0), -500.0);
+    // A planned import is held, not cancelled: the desired grid is the plan's, not zero.
+    assert_eq!(follow.correct(800.0, 1200.0, 1.2, 2000.0), 800.0);
+    assert_eq!(follow.correct(800.0, 300.0, 0.3, 2000.0), 800.0);
 }
 
 #[test]

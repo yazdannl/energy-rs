@@ -116,6 +116,8 @@ async fn the_fleet_grid_check_bounds_the_sum_after_allocation() {
     let sink = FakeSink::new();
     let dispatcher = dispatcher(SafetyLimits {
         max_grid_import_w: 1000.0,
+        // The follow is inert here: these cases are about the clamp, not the meter loop.
+        grid_follow_deadband_w: 1.0e9,
         ..SafetyLimits::default()
     });
 
@@ -229,6 +231,8 @@ async fn the_fleet_grid_check_uses_the_corrected_measured_base() {
     let sink = FakeSink::new();
     let dispatcher = dispatcher(SafetyLimits {
         max_grid_import_w: 1000.0,
+        // The follow is inert here: these cases are about the clamp, not the meter loop.
+        grid_follow_deadband_w: 1.0e9,
         ..SafetyLimits::default()
     });
 
@@ -252,6 +256,8 @@ async fn missing_grid_telemetry_fails_the_fleet_check_closed() {
     let sink = FakeSink::new();
     let dispatcher = dispatcher(SafetyLimits {
         max_grid_import_w: 1000.0,
+        // The follow is inert here: these cases are about the clamp, not the meter loop.
+        grid_follow_deadband_w: 1.0e9,
         ..SafetyLimits::default()
     });
 
@@ -281,6 +287,8 @@ async fn a_stale_fleet_reading_fails_the_fleet_check_closed() {
     let sink = FakeSink::new();
     let dispatcher = dispatcher(SafetyLimits {
         max_grid_import_w: 1000.0,
+        // The follow is inert here: these cases are about the clamp, not the meter loop.
+        grid_follow_deadband_w: 1.0e9,
         ..SafetyLimits::default()
     });
 

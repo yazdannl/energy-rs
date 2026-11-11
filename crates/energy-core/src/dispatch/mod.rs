@@ -26,6 +26,7 @@ mod fleet_clamp;
 mod fleet_error;
 mod fleet_grid;
 mod fleet_view;
+mod follow_target;
 mod grid_telemetry;
 mod manual_override;
 mod meter_reading;

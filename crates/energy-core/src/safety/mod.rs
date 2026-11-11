@@ -25,11 +25,9 @@ pub use request::CommandRequest;
 
 /// A per-pack write step bound, W/tick (survey §7 trap 6).
 pub const RAMP_LIMIT_W: f64 = 1000.0;
-/// Deadband for the grid-follow correction, W (survey §7 trap 11).
-pub const GRID_FOLLOW_DEADBAND_W: f64 = 30.0;
+/// Default deadband for the grid-follow correction, W.
+pub const GRID_FOLLOW_DEADBAND_W: f64 = 10.0;
 /// Minimum grid-follow budget, W (survey §7 trap 11).
 pub const GRID_FOLLOW_MIN_BUDGET_W: f64 = 500.0;
-/// Grid-follow budget as a share of the fleet's own capability.
-pub const GRID_FOLLOW_BUDGET_RATIO: f64 = 0.5;
 /// Values below this many watts are treated as zero.
 pub(crate) const EPS_W: f64 = 0.5;

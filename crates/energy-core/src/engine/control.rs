@@ -264,6 +264,7 @@ fn safety_limits(config: &EngineConfig) -> SafetyLimits {
         pack_staggering: config.pack_staggering,
         pack_switch_soc_pct: config.pack_switch_soc_pct,
         pack_hold_seconds: config.pack_hold_seconds,
+        grid_follow_deadband_w: config.grid_follow_deadband_w,
         tick_seconds: config.tick_seconds as f64,
         ramp_limit_w: RAMP_LIMIT_W,
         max_grid_import_w: config.max_grid_import_w,

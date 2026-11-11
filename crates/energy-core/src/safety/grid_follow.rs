@@ -1,20 +1,20 @@
 //! The grid-follow correction: a bounded move towards the measured grid flow.
 
-use crate::safety::{GRID_FOLLOW_BUDGET_RATIO, GRID_FOLLOW_DEADBAND_W, GRID_FOLLOW_MIN_BUDGET_W};
+use crate::safety::{GRID_FOLLOW_DEADBAND_W, GRID_FOLLOW_MIN_BUDGET_W};
 
 /// Grid-follow policy (survey §7 trap 11).
 ///
-/// The correction is bounded by the batteries' own capability (`max(500 W, 0.5 × capability)`),
-/// never by a fraction of the plan power: a planned hold is exactly when a deviation needs
-/// correcting, so a fraction of zero would freeze the loop.
+/// The correction is bounded by the batteries' own capability, never by a fraction of the plan
+/// power (a planned hold is exactly when a deviation needs correcting) and never by a fraction of
+/// the capability either: the correction is a setpoint recomputed from the plan target every tick,
+/// so any budget below the capability would cap the same move on every tick and leave the residual
+/// standing for good. Rate is bounded by the ladder's per-pack ramp, not by this number.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GridFollow {
     /// Ignore deviations at or below this many watts.
     pub deadband_w: f64,
-    /// Minimum correction budget, W.
+    /// Minimum correction budget, W (a fleet smaller than this still corrects this much).
     pub min_budget_w: f64,
-    /// Budget as a share of the fleet's capability.
-    pub budget_ratio: f64,
 }
 
 impl Default for GridFollow {
@@ -22,7 +22,6 @@ impl Default for GridFollow {
         Self {
             deadband_w: GRID_FOLLOW_DEADBAND_W,
             min_budget_w: GRID_FOLLOW_MIN_BUDGET_W,
-            budget_ratio: GRID_FOLLOW_BUDGET_RATIO,
         }
     }
 }
@@ -40,7 +39,7 @@ impl GridFollow {
         if !delta.is_finite() || delta.abs() <= self.deadband_w {
             return target_w;
         }
-        let budget = (capability_w * self.budget_ratio).max(self.min_budget_w);
+        let budget = capability_w.max(self.min_budget_w);
         target_w + delta.clamp(-budget, budget)
     }
 }
