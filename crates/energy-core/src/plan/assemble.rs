@@ -198,4 +198,3 @@ fn salvage(input: &PlanInput, slots: &[Slot], aggregate: &Aggregate) -> f64 {
         0.0
     }
 }
-

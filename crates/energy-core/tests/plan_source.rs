@@ -249,13 +249,13 @@ fn policy_source(supply: Supply, basis: f64) -> LivePlanSource<FakeSupply> {
 async fn an_export_below_the_old_break_even_is_allowed_when_the_horizon_pays() {
     // The stored cost is 0.10 (break-even 0.11) and the feed-in is 0.30 in the peak slots, so a
     // sale earns more than the energy cost -- and there is no static floor to forbid it.
-    let prices = support::book(NOW, HORIZON_SLOTS, |index| {
-        if index < 4 {
-            0.30
-        } else {
-            0.25
-        }
-    });
+    let prices = support::book(
+        NOW,
+        HORIZON_SLOTS,
+        |index| {
+            if index < 4 { 0.30 } else { 0.25 }
+        },
+    );
     let source = policy_source(supply(prices, NOW), 0.10);
     let plan = plan(&source).await;
     assert!(plan.sell_floor.is_none(), "no static floor");

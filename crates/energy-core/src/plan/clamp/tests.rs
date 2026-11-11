@@ -111,5 +111,3 @@ fn the_gate_is_off_without_a_basis() {
     assert!((outcome.powers[0] + 2.0).abs() < 1e-9);
     assert_eq!(outcome.flags[0], Flags::default());
 }
-
-
