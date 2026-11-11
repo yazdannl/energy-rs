@@ -263,3 +263,13 @@ fn contract_constants_are_versioned_by_year_and_refuse_an_unknown_year() {
     assert!(contract.market_from_buy(BUY, 2028).is_err());
     assert!(contract.all_in(0.05, 2028).is_err());
 }
+
+#[test]
+fn an_uncapped_export_is_fully_netted_and_earns_no_bonus() {
+    // With no budget tracked, `revenue` credits the export at the all-in price; `settle` must
+    // classify it the same way, or the surplus-bonus counter advances on energy that was netted.
+    let mut settlement = Settlement::on(contract(), support::date("2026-11-20"));
+    let slot = slot_at("2026-11-20T12:00:00+01:00", BUY);
+    settlement.settle(&slot, 5.0, ExportSource::Pv);
+    assert_eq!(settlement.bonus_ytd_kwh(), 0.0);
+}

@@ -193,10 +193,13 @@ impl Settlement {
         }
         let date = self.slot_date(slot);
         let mut netted = 0.0;
-        if self.regime.is_active(date)
-            && let Some(budget) = self.budget.as_mut()
-        {
-            netted = budget.consume(date.year(), kwh);
+        if self.regime.is_active(date) {
+            match self.budget.as_mut() {
+                Some(budget) => netted = budget.consume(date.year(), kwh),
+                // Uncapped netting: the whole export is credited 1:1, so none of it is an
+                // un-netted remainder that could earn the bonus.
+                None => netted = kwh,
+            }
         }
         let rest = kwh - netted;
         self.roll_bonus_year(slot);

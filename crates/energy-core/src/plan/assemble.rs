@@ -190,7 +190,10 @@ fn presolve_basis(
     slots: &[Slot],
     aggregate: &Aggregate,
 ) -> Result<Option<f64>, PlanError> {
-    let config = config::solver_config(input, aggregate, 0.0, None);
+    // The basis is "what the energy would cost if nothing were ever exported", so this pre-solve
+    // must not export -- `solver_config` now allows export whenever the operator does.
+    let mut config = config::solver_config(input, aggregate, 0.0, None);
+    config.allow_export = false;
     let solved = solve(input, slots, &config, None)?;
     let mut energy = 0.0;
     let mut cost = 0.0;
