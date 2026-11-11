@@ -111,7 +111,9 @@ fn the_plan_is_a_deterministic_120_slot_timeline() {
     assert_eq!(first.horizon_end, NOW + 120 * 900);
     assert_eq!(first.slots[0].t_start, NOW);
     assert_eq!(first.slots[1].idx, 1);
-    assert!(first.sell_floor.is_some());
+    // No static sale floor any more: whether an export pays is the solver's horizon question. The
+    // floor only exists as the zero-export sentinel.
+    assert!(first.sell_floor.is_none());
     for slot in &first.slots {
         assert!(slot.battery_kw.is_finite());
         assert!(slot.soc_kwh.is_finite());

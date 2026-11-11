@@ -1,6 +1,7 @@
 # Dispatch policy after net metering
 
-Status: **built** (0.2.0 onward, §6 simplified in 0.6.0 — see the decision note below). Applies from
+Status: **built** (0.2.0 onward; §6 simplified in 0.6.0 and the gate removed in 0.8.0 — see the
+decision notes below). Applies from
 the moment `Settlement` reports netting off
 (`NetMetering::is_active` false: date-driven from 2027-01-01, or the manual override). While netting
 is on (2026 today) every rule here is inert and today's behaviour is unchanged.
@@ -68,6 +69,17 @@ f(t) ≥ break_even          break_even = b / η_rt + w          f(t) > 0
 
 One exported AC kWh empties `1/η_d` DC kWh, which costs `1/(η_c·η_d)` AC kWh to replace; if the
 replacement costs more than the feed-in earns, exporting destroys value.
+
+**Decision note (0.8.0): the export gate is gone; the solver decides.**
+
+Whether an export pays is a horizon question: sell a peak at 0.446 and buy the same energy back at
+0.30 (0.353 after the round trip) is profitable, and a static "never below the stored cost of
+0.507" rule forbids exactly that. So the planner no longer gates exports at all: it prices every
+slot (buy, feed-in), values stored PV at the feed-in it gave up, and values energy left at the end
+of the horizon at its replacement cost (`min buy / η_c + wear`) so it cannot sell what it never
+replaces. `zero_export` remains the operator's ban and is enforced in the solver and by the ladder;
+the ladder also keeps its measured-flow rules for exports that go beyond the plan's intent (ramp,
+per-pack ceilings, grid export limit). `sell_floor` is now only the zero-export sentinel.
 
 **Mechanism: a post-solve export clamp, with no exemption.**
 

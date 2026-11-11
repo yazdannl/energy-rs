@@ -7,13 +7,12 @@
 //!
 //! Nothing here can increase a charge, deepen a discharge, or touch a slot that serves the house.
 //!
-//! The export gate has **no exemption**. An earlier version licensed a below-break-even battery
-//! sale when the pack was too full to take later PV ("the capture budget"), and it was wrong twice
-//! over: the ladder's floor rule refuses every below-floor battery export, so the plan booked sales
-//! the dispatch would never make; and the licence was a plain per-slot bound that several slots
-//! could spend at once. It was also unnecessary — the ceiling only limits the *grid* portion of a
-//! charge, while the PV portion survives up to the pack's physical limit, so no PV is lost by
-//! refusing to dump stored energy below its cost.
+//! The clamp has **no export gate**. Whether an export pays is a horizon question — sell at a peak,
+//! buy the energy back in a cheaper valley — and the solver already prices every slot, so a static
+//! "never sell below the cost of the energy in the pack" rule would forbid sales the plan has
+//! already proved profitable (0.446 now against 0.353 to replace it). `zero_export` is the
+//! operator's ban and is enforced by the planner config and the ladder. What is left here is the
+//! part a solver cannot express: the solar ceiling on *grid* charging, and the hardware floor.
 
 use energy_opt::BatterySpec;
 
@@ -27,8 +26,6 @@ pub(crate) struct Flags {
     pub ceiling: bool,
     /// The discharge was shortened at the hardware floor.
     pub floor: bool,
-    /// A below-break-even battery export was shortened.
-    pub gate: bool,
     /// A later charge had to be clipped at the ceiling.
     pub clip: bool,
 }
@@ -42,8 +39,6 @@ impl Flags {
             "pv_clipped"
         } else if self.floor {
             "hardware_floor"
-        } else if self.gate {
-            "export_below_floor"
         } else {
             ""
         }
@@ -60,14 +55,10 @@ pub(crate) struct Request<'a> {
     pub pv_kw: &'a [f64],
     /// Load forecast, kW.
     pub load_kw: &'a [f64],
-    /// Feed-in price per slot, EUR/kWh.
-    pub feed_in: &'a [f64],
     /// The aggregate battery.
     pub spec: BatterySpec,
     /// The policy in force.
     pub policy: Policy,
-    /// The export gate, when it is armed.
-    pub break_even: Option<f64>,
 }
 
 /// The clamped path.
@@ -80,8 +71,6 @@ pub(crate) struct Outcome {
     pub flags: Vec<Flags>,
     /// PV a ceiling forced out of the pack, kWh.
     pub clipped_kwh: f64,
-    /// Battery energy the export gate kept in the pack, kWh.
-    pub gated_kwh: f64,
 }
 
 const HOURS: f64 = SLOT_MINUTES / 60.0;
@@ -90,23 +79,17 @@ const HOURS: f64 = SLOT_MINUTES / 60.0;
 pub(crate) fn clamp(request: &Request<'_>) -> Outcome {
     let ceilings = ceilings(request);
     let (powers, energies, flags) = pass(request, &ceilings);
-    let mut clipped_kwh = 0.0;
-    let mut gated_kwh = 0.0;
-    for (index, flag) in flags.iter().enumerate() {
-        let planned = request.powers[index];
-        if flag.clip {
-            clipped_kwh += (planned - powers[index]).max(0.0) * HOURS;
-        }
-        if flag.gate {
-            gated_kwh += (powers[index] - planned).max(0.0) * HOURS;
-        }
-    }
+    let clipped_kwh = flags
+        .iter()
+        .enumerate()
+        .filter(|(_, flag)| flag.clip)
+        .map(|(index, _)| (request.powers[index] - powers[index]).max(0.0) * HOURS)
+        .sum();
     Outcome {
         powers,
         energies,
         flags,
         clipped_kwh,
-        gated_kwh,
     }
 }
 
@@ -157,7 +140,6 @@ fn pass(request: &Request<'_>, ceilings: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<Fla
             power = power.max((spec.e_min_kwh - start) * spec.eta_discharge / HOURS);
             flag.floor = true;
         }
-        power = bound_export(request, index, power, base, &mut flag);
         energy = step(spec, start, power);
         if energy > spec.e_max_kwh {
             power = (spec.e_max_kwh - start) / (HOURS * spec.eta_charge);
@@ -188,31 +170,6 @@ fn bound_charge(
     let bounded = pv_part + grid_part.min(room);
     if bounded < power - 1e-9 {
         flag.ceiling = true;
-    }
-    bounded
-}
-
-/// A discharge that would export battery energy below the break-even, bounded to the house's need.
-///
-/// Serving the house is never gated, however cheap the feed-in is; only the part that would be sold
-/// at a loss is. The ladder enforces the same floor on the measured flow, so the plan and the
-/// dispatch finally agree.
-fn bound_export(
-    request: &Request<'_>,
-    index: usize,
-    power: f64,
-    base: f64,
-    flag: &mut Flags,
-) -> f64 {
-    let Some(break_even) = request.break_even else {
-        return power;
-    };
-    if power >= 0.0 || base + power >= 0.0 || request.feed_in[index] >= break_even {
-        return power;
-    }
-    let bounded = power.max(-base.max(0.0));
-    if bounded > power + 1e-9 {
-        flag.gate = true;
     }
     bounded
 }

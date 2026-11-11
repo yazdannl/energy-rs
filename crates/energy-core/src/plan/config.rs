@@ -6,30 +6,26 @@ use crate::plan::aggregate::Aggregate;
 use crate::plan::{PlanInput, SLOT_MINUTES};
 
 /// The shipped solver policy for a quarter-hour plan.
-pub(crate) fn solver_config(
-    input: &PlanInput,
-    aggregate: &Aggregate,
-    floor: f64,
-    break_even: Option<f64>,
-) -> Config {
+pub(crate) fn solver_config(input: &PlanInput, aggregate: &Aggregate, salvage: f64) -> Config {
     let mut config = Config::new(aggregate.spec, aggregate.start_kwh);
     config.slot_minutes = SLOT_MINUTES;
     config.soc_step_kwh = 0.05;
     config.power_steps = 24;
     config.max_states = 400;
     config.allow_grid_charge = true;
-    // The DP's own sell floor is unused: its second clause (`base > 0 && buy < floor`) would block
-    // self-consumption below the break-even, which the policy forbids. The gate is a post-solve
-    // clamp instead (`plan::clamp`).
-    //
-    // Export is allowed unless the operator banned it. It must NOT be tied to the gate being armed:
-    // while net metering is on there is no break-even floor (an exported kWh is netted), and tying
-    // the two meant the solver could not export at all -- so it self-consumed forever and never
-    // sold at a peak that is worth more than the energy will cost later.
+    // Export is allowed unless the operator banned it. There is no static price floor: whether a
+    // sale pays is a horizon question the DP answers itself (sell the peak, buy the valley), and a
+    // "never below stored cost" rule forbids sales that are demonstrably profitable once the
+    // replacement is cheaper. `zero_export` is the only ban, enforced here and by the ladder.
     config.allow_export = !input.policy.zero_export;
+    config.refuse_battery_export = input.policy.zero_export;
+    // Energy left at the horizon is worth what it would cost to put back at the cheapest known
+    // slot, grossed up for the charge efficiency: without a salvage value the DP happily sells
+    // energy it never replaces, which is the one thing this policy must not do.
+    config.salvage = salvage.max(0.0);
     config.wear_eur_per_kwh = input.wear_eur_per_kwh;
     config.target_penalty = input.policy.peak_reserve_value_eur_per_kwh;
-    config.sell_floor_eur_per_kwh = break_even.is_none().then_some(floor);
+    config.sell_floor_eur_per_kwh = None;
     config.e_target = terminal_target(input, aggregate);
     config
 }

@@ -86,10 +86,8 @@ async fn a_full_book_plans_the_whole_horizon() {
     assert_eq!(plan.slots[0].pv_kw, 0.4);
     assert_eq!(plan.slots[0].load_kw, 0.6);
     assert!(plan.degraded.is_none());
-    let floor = plan.sell_floor.expect("floor");
-    // The fixture market is 0.08 and the supplier fee is 2 ct incl. VAT, i.e. 2/1.21 ex-VAT:
-    // an exported kWh carries no VAT, so the floor is 0.08 + 0.02/1.21.
-    assert!((floor - (0.08 + 0.02 / 1.21)).abs() < 1e-9, "floor {floor}");
+    // No static sale floor: the only one left is the zero-export sentinel.
+    assert!(plan.sell_floor.is_none());
     for slot in &plan.slots {
         assert!(slot.battery_kw.is_finite());
     }
@@ -248,30 +246,20 @@ fn policy_source(supply: Supply, basis: f64) -> LivePlanSource<FakeSupply> {
 }
 
 #[tokio::test]
-async fn a_below_break_even_export_is_not_planned() {
-    // Break-even 0.10/0.9025 = 0.1108; the feed-in is 0.05, so the plan never exports.
-    let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.30);
+async fn an_export_below_the_old_break_even_is_allowed_when_the_horizon_pays() {
+    // The stored cost is 0.10 (break-even 0.11) and the feed-in is 0.30 in the peak slots, so a
+    // sale earns more than the energy cost -- and there is no static floor to forbid it.
+    let prices = support::book(NOW, HORIZON_SLOTS, |index| {
+        if index < 4 {
+            0.30
+        } else {
+            0.25
+        }
+    });
     let source = policy_source(supply(prices, NOW), 0.10);
     let plan = plan(&source).await;
-    assert!(plan.export_floor_eur_per_kwh.is_some());
-    for slot in &plan.slots {
-        let base = slot.load_kw - slot.pv_kw;
-        assert!(
-            base + slot.battery_kw >= -1e-9,
-            "slot {} exports below the floor: {}",
-            slot.idx,
-            slot.feed_in
-        );
-    }
-}
-
-#[tokio::test]
-async fn an_above_break_even_export_is_planned_when_it_pays() {
-    // A free basis makes the break-even the wear only, so a high feed-in licenses an export.
-    let prices = support::book(NOW, HORIZON_SLOTS, |_| 0.60);
-    let source = policy_source(supply(prices, NOW), 0.01);
-    let plan = plan(&source).await;
-    assert!(plan.export_floor_eur_per_kwh.unwrap() < 0.02);
+    assert!(plan.sell_floor.is_none(), "no static floor");
+    assert_eq!(plan.export_floor_eur_per_kwh, None);
     assert!(plan.summary.discharged_kwh > 0.0);
 }
 
@@ -357,7 +345,11 @@ async fn zero_export_never_plans_a_feed_in() {
     let source = LivePlanSource::new(FakeSupply::new(supply(prices, NOW)), config);
     let plan = plan(&source).await;
     assert!(plan.summary.zero_export);
-    assert_eq!(plan.export_floor_eur_per_kwh, None);
+    // Zero export keeps the sentinel floor: the ladder refuses every measured export with it.
+    assert_eq!(
+        plan.export_floor_eur_per_kwh,
+        Some(energy_core::plan::Policy::ZERO_EXPORT_FLOOR)
+    );
     for slot in &plan.slots {
         let base = slot.load_kw - slot.pv_kw;
         assert!(
