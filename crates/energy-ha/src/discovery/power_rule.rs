@@ -104,4 +104,23 @@ impl PowerRule {
                 .or_else(|| fallback.resolve(readings)),
         }
     }
+    /// Append every entity id this rule reads.
+    pub fn collect_ids(&self, ids: &mut Vec<String>) {
+        match self {
+            Self::Direct(id) | Self::Inverted(id) => ids.push(id.clone()),
+            Self::Difference { from, to } => {
+                ids.push(from.clone());
+                ids.push(to.clone());
+            }
+            Self::Sum(rules) => {
+                for rule in rules {
+                    rule.collect_ids(ids);
+                }
+            }
+            Self::Preferred { primary, fallback } => {
+                primary.collect_ids(ids);
+                fallback.collect_ids(ids);
+            }
+        }
+    }
 }

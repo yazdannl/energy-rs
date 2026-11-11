@@ -60,6 +60,28 @@ impl SiteModel {
         }
     }
 
+    /// Every entity id that can contribute a power reading for this dashboard.
+    ///
+    /// The meter reads these directly instead of pulling the whole state machine once per tick; a
+    /// dashboard with no power entities yields an empty list and the caller falls back to `/states`.
+    pub fn power_entity_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = Vec::new();
+        for rule in [&self.grid.power, &self.solar.power]
+            .into_iter()
+            .flatten()
+            .chain(
+                self.batteries
+                    .iter()
+                    .filter_map(|battery| battery.power.as_ref()),
+            )
+        {
+            rule.collect_ids(&mut ids);
+        }
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
     /// Resolve the current snapshot from entity readings.
     ///
     /// Load follows `grid + pv + battery`, never the sum of devices (devices are a subset of load

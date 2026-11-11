@@ -381,3 +381,28 @@ async fn not_found_prefs_means_no_dashboard() {
     assert!(!site.configured);
     assert!(site.batteries.is_empty());
 }
+
+#[test]
+fn the_model_names_every_entity_that_can_carry_power() {
+    let site = SiteModel::from_prefs(&prefs(json!({
+        "energy_sources": [
+            { "type": "grid", "stat_rate": "sensor.grid_power" },
+            { "type": "solar", "stat_rate": "sensor.pv_power" },
+            { "type": "battery", "stat_rate": "sensor.batt_power" }
+        ],
+        "device_consumption": []
+    })));
+    assert_eq!(
+        site.power_entity_ids(),
+        vec!["sensor.batt_power", "sensor.grid_power", "sensor.pv_power"]
+    );
+}
+
+#[test]
+fn a_dashboard_without_power_entities_names_nothing() {
+    let site = SiteModel::from_prefs(&prefs(json!({
+        "energy_sources": [],
+        "device_consumption": []
+    })));
+    assert!(site.power_entity_ids().is_empty());
+}

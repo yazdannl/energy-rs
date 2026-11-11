@@ -123,7 +123,10 @@ async fn wire_engine(
     config: energy_core::engine::EngineConfig,
 ) -> Result<Engine> {
     let (fleet_port, sink) = engine::fleet_ports(ledger, fleet, config.max_state_age_s);
-    let meter = meter::HaMeter::new(ha.client(), Arc::clone(&ha.site()));
+    // The reading is reused for exactly one tick: a one-second loop must not see four-second-old
+    // numbers, and it must not turn into two REST calls either.
+    let meter = meter::HaMeter::new(ha.client(), Arc::clone(&ha.site()))
+        .with_cache(std::time::Duration::from_secs(config.tick_seconds.max(1)));
     let connection = ha
         .client()
         .connection()
