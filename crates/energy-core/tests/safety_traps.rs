@@ -314,9 +314,14 @@ fn the_grid_follow_deadband_and_budget_are_pinned() {
         300.0
     );
     // The incremental base is the battery, not the plan: a battery already charging at 1000 W that
-    // faces 300 W of extra import ends up at 1300 W, not at plan + 300.
+    // is importing 300 W too much ends up charging 300 W less, not at plan + 300.
     assert_eq!(
         follow.correct(&request(0.0, 1_000.0, 0.0, 300.0, 2_000.0)),
+        700.0
+    );
+    // The mirror case: exporting 300 W more than wanted means charging 300 W more.
+    assert_eq!(
+        follow.correct(&request(0.0, 1_000.0, 0.0, -300.0, 2_000.0)),
         1_300.0
     );
 }

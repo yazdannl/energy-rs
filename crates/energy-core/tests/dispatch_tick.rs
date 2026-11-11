@@ -276,7 +276,9 @@ async fn missing_grid_telemetry_fails_the_fleet_check_closed() {
 async fn a_stale_fleet_reading_fails_the_fleet_check_closed() {
     let mut plan = plan(NOW, 0.8, 1.92);
     for slot in &mut plan.slots {
-        slot.load_kw = 0.0;
+        // A deliberate grid charge (1 kW of house, 0.8 kW into the pack): the follow leaves a slot
+        // that is exchanging energy alone, so this case stays about the clamp.
+        slot.load_kw = 1.0;
         slot.pv_kw = 0.0;
     }
     let mut fixture = Fixture::with_plan(plan, overrides_none());

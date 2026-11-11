@@ -6,6 +6,14 @@
 //! action path, and the timeline and the money are recomputed from the result.
 //!
 //! Nothing here can increase a charge, deepen a discharge, or touch a slot that serves the house.
+//!
+//! The export gate has **no exemption**. An earlier version licensed a below-break-even battery
+//! sale when the pack was too full to take later PV ("the capture budget"), and it was wrong twice
+//! over: the ladder's floor rule refuses every below-floor battery export, so the plan booked sales
+//! the dispatch would never make; and the licence was a plain per-slot bound that several slots
+//! could spend at once. It was also unnecessary — the ceiling only limits the *grid* portion of a
+//! charge, while the PV portion survives up to the pack's physical limit, so no PV is lost by
+//! refusing to dump stored energy below its cost.
 
 use energy_opt::BatterySpec;
 
@@ -81,13 +89,7 @@ const HOURS: f64 = SLOT_MINUTES / 60.0;
 /// Apply every clamp to the solver's path.
 pub(crate) fn clamp(request: &Request<'_>) -> Outcome {
     let ceilings = ceilings(request);
-    let zero = vec![0.0; request.powers.len()];
-    // Pass 1: the clamped path with no capture exemption. Its curtailment is the baseline the budget
-    // may spend -- a sale the solver already planned must not hide the PV it makes room for.
-    let baseline = pass(request, &ceilings, &zero);
-    let rescuable = curtailment(request, &baseline);
-    let budget = budget(&rescuable);
-    let (powers, energies, flags) = pass(request, &ceilings, &budget);
+    let (powers, energies, flags) = pass(request, &ceilings);
     let mut clipped_kwh = 0.0;
     let mut gated_kwh = 0.0;
     for (index, flag) in flags.iter().enumerate() {
@@ -125,38 +127,8 @@ fn ceilings(request: &Request<'_>) -> Vec<f64> {
         .collect()
 }
 
-/// Room-limited PV loss per slot on the clamped path: what a sale could actually rescue.
-fn curtailment(request: &Request<'_>, baseline: &(Vec<f64>, Vec<f64>, Vec<Flags>)) -> Vec<f64> {
-    let energies = &baseline.1;
-    let power_limit = request.spec.p_charge_kw * HOURS;
-    (0..energies.len())
-        .map(|index| {
-            let surplus = (request.pv_kw[index] - request.load_kw[index]).max(0.0) * HOURS;
-            let room =
-                (request.spec.e_max_kwh - energies[index]).max(0.0) / request.spec.eta_charge;
-            let chargeable = surplus.min(room).min(power_limit);
-            let curtailed = (surplus - chargeable).max(0.0);
-            // Surplus above the charge power is lost whatever the SoC: room cannot rescue it.
-            (curtailed - (surplus - power_limit).max(0.0)).max(0.0)
-        })
-        .collect()
-}
-
-/// The backward budget: a slot may spend what the later slots would otherwise lose.
-fn budget(rescuable: &[f64]) -> Vec<f64> {
-    let mut budget = vec![0.0; rescuable.len()];
-    for index in (0..rescuable.len().saturating_sub(1)).rev() {
-        budget[index] = budget[index + 1] + rescuable[index + 1];
-    }
-    budget
-}
-
-/// One forward pass with the given capture budget.
-fn pass(
-    request: &Request<'_>,
-    ceilings: &[f64],
-    budget: &[f64],
-) -> (Vec<f64>, Vec<f64>, Vec<Flags>) {
+/// One forward pass.
+fn pass(request: &Request<'_>, ceilings: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<Flags>) {
     let spec = request.spec;
     let slots = request.powers.len();
     let mut powers = Vec::with_capacity(slots);
@@ -168,7 +140,7 @@ fn pass(
         .copied()
         .unwrap_or(spec.e_min_kwh)
         .clamp(spec.e_min_kwh, spec.e_max_kwh);
-    for index in 0..slots {
+    for (index, ceiling) in ceilings.iter().enumerate().take(slots) {
         let start = energy;
         energies.push(start);
         let mut flag = Flags::default();
@@ -178,14 +150,14 @@ fn pass(
             request.powers[index],
             base,
             start,
-            ceilings[index],
+            *ceiling,
             &mut flag,
         );
         if step(spec, start, power) < spec.e_min_kwh {
             power = power.max((spec.e_min_kwh - start) * spec.eta_discharge / HOURS);
             flag.floor = true;
         }
-        power = bound_export(request, index, power, base, budget[index], &mut flag);
+        power = bound_export(request, index, power, base, &mut flag);
         energy = step(spec, start, power);
         if energy > spec.e_max_kwh {
             power = (spec.e_max_kwh - start) / (HOURS * spec.eta_charge);
@@ -220,14 +192,16 @@ fn bound_charge(
     bounded
 }
 
-/// A discharge that would export battery energy below the break-even, bounded to the house's need
-/// plus whatever the capture budget licenses.
+/// A discharge that would export battery energy below the break-even, bounded to the house's need.
+///
+/// Serving the house is never gated, however cheap the feed-in is; only the part that would be sold
+/// at a loss is. The ladder enforces the same floor on the measured flow, so the plan and the
+/// dispatch finally agree.
 fn bound_export(
     request: &Request<'_>,
     index: usize,
     power: f64,
     base: f64,
-    budget: f64,
     flag: &mut Flags,
 ) -> f64 {
     let Some(break_even) = request.break_even else {
@@ -236,8 +210,7 @@ fn bound_export(
     if power >= 0.0 || base + power >= 0.0 || request.feed_in[index] >= break_even {
         return power;
     }
-    let licensed = budget * request.spec.eta_charge * request.spec.eta_discharge / HOURS;
-    let bounded = power.max(-(base.max(0.0) + licensed));
+    let bounded = power.max(-base.max(0.0));
     if bounded > power + 1e-9 {
         flag.gate = true;
     }

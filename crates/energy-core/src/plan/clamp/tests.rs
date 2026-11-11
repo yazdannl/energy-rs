@@ -127,34 +127,45 @@ fn the_gate_is_off_without_a_basis() {
 }
 
 #[test]
-fn the_capture_budget_licenses_a_sale_only_when_pv_would_be_lost() {
+fn no_capture_exemption_survives_a_full_pack_and_a_surplus() {
     let policy = policy(50.0); // ceiling 2 kWh, so a full pack can hold no more PV
-    // Full pack, then a 3 kW surplus that has nowhere to go, then a second sale slot.
+    // A full pack, a surplus that has nowhere to go, then a second sale slot: neither slot may sell
+    // below the floor, because the ladder refuses such a sale on the measured flow.
     let powers = [-2.0, -2.0, 0.0];
     let energies = [4.0, 3.5, 3.0];
     let pv = [0.0, 3.0, 0.0];
     let load = [0.0, 0.0, 0.0];
     let feed_in = [0.05, 0.05, 0.05];
     let outcome = clamp(&request(&powers, &energies, &pv, &load, &feed_in, &policy));
-    // The budget is the room-limited surplus (0.5 kWh, the 2 kW charge power), which licenses
-    // 0.5 kWh of sale: the first slot sells, the second is gated.
+    // Slot 2 asked for nothing, so only the two sale slots carry the gate flag; every sale is cut.
     assert!(
-        (outcome.powers[0] + 2.0).abs() < 1e-9,
+        outcome.powers.iter().all(|power| power.abs() < 1e-9),
         "{:?}",
         outcome.powers
     );
-    assert!(outcome.powers[1].abs() < 1e-9, "{:?}", outcome.powers);
-    assert!(outcome.flags[1].gate);
+    assert!(outcome.flags[0].gate && outcome.flags[1].gate);
+    // Two 2 kW slots of a planned sale became a hold: 1.0 kWh stayed in the pack.
+    assert!(
+        (outcome.gated_kwh - 1.0).abs() < 1e-9,
+        "{}",
+        outcome.gated_kwh
+    );
 }
 
 #[test]
-fn no_surplus_ahead_means_no_exemption() {
+fn every_below_floor_sale_is_gated_however_many_slots_ask() {
     let policy = policy(50.0);
-    let powers = [-2.0, 0.0];
-    let energies = [4.0, 3.5];
-    let pv = [0.0, 0.0];
-    let load = [0.0, 0.0];
-    let feed_in = [0.05, 0.05];
+    // Three sale slots in a row with a surplus ahead of them: a per-slot licence would let all
+    // three through; the house's own need is the only thing that may pass.
+    let powers = [-2.0, -2.0, -2.0];
+    let energies = [4.0, 3.0, 2.5];
+    let pv = [0.0, 3.0, 3.0];
+    let load = [0.0, 0.0, 0.0];
+    let feed_in = [0.05, 0.05, 0.05];
     let outcome = clamp(&request(&powers, &energies, &pv, &load, &feed_in, &policy));
-    assert!((outcome.powers[0]).abs() < 1e-9, "{:?}", outcome.powers);
+    assert!(
+        outcome.powers.iter().all(|power| power.abs() < 1e-9),
+        "{:?}",
+        outcome.powers
+    );
 }

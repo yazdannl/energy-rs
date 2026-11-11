@@ -55,6 +55,14 @@ pub(crate) fn target(
 /// zero instead — absorb what the sun delivers, cover what the house draws, rather than importing
 /// to match a forecast that turned out wrong.
 fn desired_grid_w(slot: &PlanSlot) -> Option<f64> {
+    if ![slot.load_kw, slot.pv_kw, slot.battery_kw]
+        .iter()
+        .all(|value| value.is_finite())
+    {
+        // A slot that cannot say what it expected is not a target: hold the plan and let the
+        // ladder's missing-telemetry rule do its job.
+        return None;
+    }
     let planned_grid = slot.load_kw - slot.pv_kw - slot.battery_kw;
     let exchanging = slot.battery_kw * planned_grid > 0.0;
     (!exchanging).then_some(0.0)
