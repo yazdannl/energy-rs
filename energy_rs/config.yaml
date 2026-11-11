@@ -1,5 +1,5 @@
 name: "Energy RS"
-version: "0.4.1"
+version: "0.5.0"
 slug: "energy_rs"
 description: "Plans and drives home battery dispatch from the Home Assistant Energy dashboard."
 url: "https://github.com/yazdannl/energy-rs"
@@ -39,11 +39,13 @@ options:
   mode: dry_run
   log_level: info
   price_provider: auto
+  tick_seconds: 1
   batteries: "[]"
 schema:
   mode: list(advisory|dry_run|auto)
   log_level: list(trace|debug|info|warn|error)
   price_provider: list(auto|zonneplan|ha_sensor)
+  tick_seconds: int(1,60)
   scan: bool?
   zonneplan_refresh_token: password?
   price_entity: str?

@@ -57,6 +57,8 @@ pub(crate) struct OptionsFile {
     pub(crate) zonneplan_refresh_token: Option<String>,
     pub(crate) price_entity: Option<String>,
     pub(crate) batteries: Option<String>,
+    /// The control tick; the add-on option is optional so an older options file stays valid.
+    pub(crate) tick_seconds: Option<u64>,
 }
 
 /// One battery from the options `batteries` JSON string.

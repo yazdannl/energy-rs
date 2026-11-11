@@ -76,7 +76,7 @@ impl Options {
         let batteries = batteries(raw_batteries.as_deref())?;
         Ok(Self {
             port: env_u16("INGRESS_PORT").unwrap_or(DEFAULT_PORT),
-            tick_seconds: 5,
+            tick_seconds: file.tick_seconds.unwrap_or(1).clamp(1, 60),
             mode: parse_mode(
                 env_string("ENERGY_RS_MODE")
                     .as_deref()
@@ -120,7 +120,7 @@ impl Options {
         SocketAddr::from(([0, 0, 0, 0], self.port))
     }
 
-    /// The control tick, seconds (tests shorten it; production keeps the shipped 5 s).
+    /// The control tick, seconds: the grid follow runs this often.
     pub fn tick_seconds(&self) -> u64 {
         self.tick_seconds
     }

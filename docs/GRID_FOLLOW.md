@@ -1,6 +1,12 @@
 # Grid follow: close the loop on the meter, and let the plan sit still
 
-Status: **plan, not built.** Replaces the power-deviation replan trigger shipped in 0.4.0.
+Status: **built and shipped in 0.5.0.** Replaces the power-deviation replan trigger shipped in
+0.4.0. One refinement against §3 as first written: the desired grid is not simply the slot's
+`load − pv − battery`. That number is only a decision when the plan is *exchanging energy on
+purpose* (charging from the grid, or selling); everywhere else it is an artefact of the load and PV
+the plan assumed, and the site holds the meter at zero instead — absorb the sun, cover the house.
+Both cases are pinned by tests (`a_deliberate_grid_charge_keeps_its_import`,
+`a_surplus_is_absorbed_rather_than_exported`).
 
 ## 1. What was wrong
 
@@ -115,10 +121,10 @@ per second. The read becomes targeted:
 
 | # | commit | tests |
 |---|---|---|
-| 1 | `feat(dispatch): follow the meter every tick` — wire `GridFollow` into `TickFrame`, deadband from the setting, budget = capability, skip on stale/missing slot | `a_load_step_is_matched_within_one_tick`, `a_grid_charge_slot_keeps_its_import`, `zero_export_never_overshoots`, `no_slot_no_follow`, `stale_plan_no_follow`, `a_spike_is_rate_limited` |
-| 2 | `feat(server): read only the power entities, once per tick` — `power_entity_ids`, targeted reads, TTL = tick | `the_meter_reads_only_the_power_entities`, `the_cache_follows_the_tick` |
-| 3 | `refactor(plan): drop the power replan trigger` — remove `PowerMove`, `PowerChanged`, `power_watch`, the two settings; `replan_seconds` default 300 | `a_power_step_does_not_replan` |
-| 4 | `feat: tick every second, replan every five minutes` — defaults, add-on option, Settings page rows, docs | config/golden tests |
+| 1 | **done (0.5.0)** `feat(dispatch)` — wire `GridFollow` into `TickFrame`, deadband from the setting, budget = capability, skip on stale/missing slot | `a_load_step_is_matched_within_one_tick`, `a_grid_charge_slot_keeps_its_import`, `zero_export_never_overshoots`, `no_slot_no_follow`, `stale_plan_no_follow`, `a_spike_is_rate_limited` |
+| 2 | **done (0.5.0)** `feat(server)` — `power_entity_ids`, targeted reads, TTL = tick | `the_meter_reads_only_the_power_entities`, `the_cache_follows_the_tick` |
+| 3 | **done (0.5.0)** `refactor(plan)` — remove `PowerMove`, `PowerChanged`, `power_watch`, the two settings; `replan_seconds` default 300 | `a_power_step_does_not_replan` |
+| 4 | **done (0.5.0)** `feat` — defaults, add-on option, Settings page rows, docs | config/golden tests |
 
 Release 0.5.0. Everything lands in `dry_run` first: the dispatch log then shows `planPowerW`
 versus `targetW` per tick, which is exactly the follow's contribution, so the loop can be judged on

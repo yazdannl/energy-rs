@@ -189,7 +189,7 @@ Release 0.4.0 after commit 6; 0.3.8 may ship commits 1–2 alone if 3–6 need m
 - **More starts, not fewer** — if the hold were shorter than a replan, every replan would
   rotate. The default (1800 s) is deliberately many replans long; the setting's floor (60 s) is
   still above the 10 s reaction floor, and the docs warn when it is set under `replan_seconds`.
-- **DP load from the reaction trigger** — bounded by the 10 s floor; if it still shows up in the
-  tick budget, raise `grid_react_w` rather than the floor.
+- **DP load from a reaction trigger** — gone: `docs/GRID_FOLLOW.md` replaced the power-deviation
+  replan with a per-tick grid follow, so the plan solves on its own clock only.
 - **Hidden coupling with reserves** — staggering must never be the reason a pack is pushed into
   the solar reserve; the reserve check stays in the plan, the split only respects it.
