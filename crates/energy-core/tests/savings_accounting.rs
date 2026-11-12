@@ -200,9 +200,10 @@ fn a_day_consumes_the_saldering_budget_the_next_day_needs() {
     assert!(unspent.actual_eur < spent.actual_eur);
 }
 
-/// A closed day with one missing slot is stored with `NULL` money and its coverage, never a number.
+/// A closed day with one missing slot still stores its measured saving, marked partial: a single
+/// hole used to null the whole day, which is why the page only ever had today's number.
 #[test]
-fn a_day_with_a_hole_stores_null_money_and_its_coverage() {
+fn a_day_with_a_hole_stores_its_measured_saving_as_partial() {
     let day = "2027-06-15";
     let mut reading = savings::reading(
         day,
@@ -216,10 +217,11 @@ fn a_day_with_a_hole_stores_null_money_and_its_coverage() {
     assert!(!accounting.complete);
     assert!((accounting.coverage_hours - 23.75).abs() < 1e-12);
     let closed = accounting.row(true);
-    assert!(closed.saving_eur.is_none());
-    assert!(closed.actual_eur.is_none());
-    assert!(closed.arbitrage_eur.is_none());
-    assert!(!closed.complete);
+    assert!(
+        closed.saving_eur.is_some(),
+        "a mostly-covered day is settled"
+    );
+    assert!(!closed.complete, "and still says it is partial");
     assert!((closed.coverage_hours - 23.75).abs() < 1e-12);
     // The current day is provisional: it keeps the measured-so-far money.
     let provisional = accounting.row(false);

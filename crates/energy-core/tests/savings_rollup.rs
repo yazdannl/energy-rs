@@ -207,3 +207,37 @@ fn dst_days_keep_their_real_length() {
     assert!((spring.coverage_hours - 23.0).abs() < 1e-12);
     assert!((spring.import_kwh - 8.2).abs() < 1e-9);
 }
+
+/// A hole in an older day is retried even after a newer day closed complete.
+#[tokio::test]
+async fn an_older_incomplete_day_is_retried_after_a_newer_one_closes() {
+    let ledger = savings::ledger();
+    let source = Arc::new(ScriptedSource::new(vec![
+        sunny("2027-06-07", savings::unseeded()),
+        sunny("2027-06-08", savings::unseeded()),
+    ]));
+    let rollup = rollup(&ledger, Arc::clone(&source), "2027-06-08");
+    // First pass prices both, but leaves 06-07 incomplete (a hole in its own measurement).
+    rollup
+        .refresh(savings::noon("2027-06-08"))
+        .await
+        .expect("pass");
+    {
+        let savings = ledger.savings().expect("savings");
+        let mut row = savings.get("2027-06-07").expect("read").expect("row");
+        row.complete = false;
+        row.saving_eur = None;
+        savings.upsert(&row).expect("write");
+    }
+    let reads = source.reads();
+    let report = rollup
+        .refresh(savings::noon("2027-06-09"))
+        .await
+        .expect("pass");
+    assert!(
+        report.days.contains(&"2027-06-07".to_owned()),
+        "the older incomplete day must be retried: {:?}",
+        report.days
+    );
+    assert!(source.reads() > reads);
+}

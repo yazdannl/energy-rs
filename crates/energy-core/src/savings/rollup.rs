@@ -12,6 +12,8 @@ use super::{RollupReport, SavingsError, SavingsSource, account};
 /// Days the rollup goes back when it has no resume point, and the most it will recompute in one
 /// pass after the add-on was down for a while.
 pub const CATCH_UP_DAYS: i64 = 31;
+/// Closed days re-read on every pass, for statistics that publish late.
+pub const RETRY_DAYS: i64 = 3;
 
 /// The daily savings writer.
 ///
@@ -99,6 +101,28 @@ impl SavingsRollup {
             };
             day = next;
         }
+        // Late statistics: a day that closed with a hole used to be retried only while it was the
+        // newest one, so once the next day closed the hole was permanent -- which is why the page
+        // had one priced day and a month of nulls. Retry the most recent stored-but-incomplete days
+        // too, bounded per pass.
+        let from = (today - chrono::Duration::days(RETRY_DAYS)).max(floor);
+        let stored = self
+            .ledger
+            .savings()?
+            .range(&from.to_string(), &today.to_string())?;
+        for row in stored
+            .into_iter()
+            .filter(|row| !row.complete && !row.day_local.is_empty())
+        {
+            if let Ok(day) = NaiveDate::parse_from_str(&row.day_local, "%Y-%m-%d")
+                && day < today
+                && day >= floor
+                && !days.contains(&day)
+            {
+                days.push(day);
+            }
+        }
+        days.sort_unstable();
         Ok(days)
     }
 }

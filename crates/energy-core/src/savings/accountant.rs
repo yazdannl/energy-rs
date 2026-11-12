@@ -135,6 +135,7 @@ impl Replay {
             battery_discharge_kwh: totals.discharge_kwh,
             coverage_hours: reading.measured.coverage_hours(),
             complete: reading.measured.is_complete() && !missing_price,
+            prices_complete: !missing_price,
         }
     }
 }
