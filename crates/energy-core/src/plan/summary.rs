@@ -90,7 +90,11 @@ mod tests {
             slot(1, 0.0, 0.0, -1.0, 0.40, 0.40),
         ];
         let summary = summarize(&slots, 4.0, None);
-        assert!((summary.cost_estimate_eur).abs() < 1e-9, "{}", summary.cost_estimate_eur);
+        assert!(
+            (summary.cost_estimate_eur).abs() < 1e-9,
+            "{}",
+            summary.cost_estimate_eur
+        );
         assert!((summary.baseline_cost_eur - 0.1).abs() < 1e-9);
     }
 
@@ -102,7 +106,11 @@ mod tests {
             slot(1, 0.0, 0.0, -1.0, 0.60, 0.60),
         ];
         let summary = summarize(&slots, 4.0, None);
-        assert!((summary.cost_estimate_eur + 0.075).abs() < 1e-9, "{}", summary.cost_estimate_eur);
+        assert!(
+            (summary.cost_estimate_eur + 0.075).abs() < 1e-9,
+            "{}",
+            summary.cost_estimate_eur
+        );
         assert!(summary.saved_eur > 0.0);
     }
 }
