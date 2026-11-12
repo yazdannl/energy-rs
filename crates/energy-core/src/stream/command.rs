@@ -25,6 +25,8 @@ pub enum EngineCommand {
         /// Pack serial, or `None` for every pack.
         pack: Option<String>,
     },
+    /// Solve a fresh plan now instead of waiting for the interval.
+    Replan,
 }
 
 impl EngineCommand {
@@ -35,6 +37,7 @@ impl EngineCommand {
             Self::Override(_) => "override",
             Self::FullCharge { .. } => "full_charge",
             Self::Relearn { .. } => "relearn",
+            Self::Replan => "replan",
         }
     }
 }

@@ -21,8 +21,34 @@ impl Engine {
             }
             EngineCommand::FullCharge { pack } => self.request_full_charge(pack, now)?,
             EngineCommand::Relearn { pack } => self.relearn(pack.as_deref(), now)?,
+            EngineCommand::Replan => self.replan_now(now).await?,
         }
         self.publish_meta(now);
+        Ok(())
+    }
+
+    /// Solve a fresh plan now, as the operator asked, and journal the outcome.
+    ///
+    /// The plan is not dispatched from here: the next tick picks it up like any other, so a manual
+    /// replan cannot bypass the trigger's freshness checks.
+    async fn replan_now(&self, now: i64) -> Result<(), EngineError> {
+        let view = self.fleet.view(now).await?;
+        let solved = self.replan(now, &view).await.is_some();
+        self.event(
+            now,
+            if solved {
+                EventLevel::Info
+            } else {
+                EventLevel::Warn
+            },
+            "plan.requested",
+            if solved {
+                "operator asked for a replan; a fresh plan was solved".to_owned()
+            } else {
+                "operator asked for a replan; the solve was refused and the old plan is held"
+                    .to_owned()
+            },
+        )?;
         Ok(())
     }
 

@@ -21,6 +21,7 @@ import type {
   PlansResponse,
   PricesResponse,
   ProtectionResponse,
+  ReplanResponse,
   Savings,
   SavingsPeriod,
   SettingValue,
@@ -53,6 +54,8 @@ export interface ApiPort {
   }): Promise<OverrideResponse>;
   fullCharge(pack?: string): Promise<ProtectionResponse>;
   relearn(pack?: string): Promise<LearningResponse>;
+  /** Ask the engine for a fresh solve; the plan arrives with the next snapshot. */
+  replan(): Promise<ReplanResponse>;
 }
 
 export function apiRoot(baseURI?: string): URL {
@@ -178,6 +181,10 @@ export class HttpApi implements ApiPort {
 
   fullCharge(pack?: string): Promise<ProtectionResponse> {
     return this.command<ProtectionResponse>('protection', 'POST', { action: 'full_charge', pack });
+  }
+
+  replan(): Promise<ReplanResponse> {
+    return this.command<ReplanResponse>('replan', 'POST', {});
   }
 
   relearn(pack?: string): Promise<LearningResponse> {

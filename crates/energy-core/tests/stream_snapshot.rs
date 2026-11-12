@@ -170,3 +170,38 @@ async fn an_unreachable_pack_is_a_fault() {
     );
     assert!(snapshot.packs[0].stale);
 }
+
+/// A manual replan solves and stores a fresh plan, and journals that it happened.
+#[tokio::test]
+async fn a_replan_command_solves_a_fresh_plan() {
+    let (engine, _publisher) = engine_with_stream(Authority::DryRun, 1);
+    engine.boot(NOW).await.expect("boot");
+    engine.tick_once(NOW).await.expect("tick");
+    let before = engine
+        .current_plan()
+        .expect("plan")
+        .expect("plan")
+        .generated_at;
+
+    engine
+        .apply_command(EngineCommand::Replan, NOW + 60)
+        .await
+        .expect("replan");
+
+    let after = engine.current_plan().expect("plan").expect("plan");
+    assert!(
+        after.generated_at >= before,
+        "a fresh solve replaced the plan"
+    );
+    // The journal says the operator asked and what came of it.
+    let events = engine
+        .ledger()
+        .events()
+        .expect("events")
+        .range(NOW, NOW + 120)
+        .expect("range");
+    assert!(
+        events.iter().any(|event| event.kind == "plan.requested"),
+        "the manual replan must be journalled"
+    );
+}

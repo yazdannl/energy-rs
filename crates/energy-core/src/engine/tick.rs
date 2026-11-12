@@ -118,7 +118,7 @@ impl Engine {
     }
 
     /// Solve a new plan and store it; a refusal leaves the previous plan alone.
-    async fn replan(&self, now: i64, fleet: &FleetView) -> Option<Plan> {
+    pub(crate) async fn replan(&self, now: i64, fleet: &FleetView) -> Option<Plan> {
         let packs = plan_states(&fleet.packs);
         if packs.is_empty() {
             self.log_refusal(now, "no pack has a usable state of charge");

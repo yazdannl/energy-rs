@@ -22,6 +22,22 @@
 
   const plan = resource(() => api.currentPlan());
   let layers = $state<PlanLayers>({ ...DEFAULT_LAYERS });
+  let replanning = $state(false);
+  let replanNote = $state<string | null>(null);
+
+  /** Ask the engine for a fresh solve; the plan arrives with the next snapshot. */
+  async function replan(): Promise<void> {
+    replanning = true;
+    replanNote = null;
+    try {
+      await api.replan();
+      replanNote = 'requested — the next tick solves it';
+    } catch (cause) {
+      replanNote = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      replanning = false;
+    }
+  }
 
   onMount(() => {
     void plan.load();
@@ -44,12 +60,24 @@
     {#if plan.data}
       <Badge tone="neutral">solved {ago(plan.data.createdAt)}</Badge>
     {/if}
+    <Button
+      onclick={() => void replan()}
+      disabled={replanning}
+      title="Ask the optimizer for a fresh plan now"
+    >
+      {#snippet icon()}<RefreshCw class="size-3.5" />{/snippet}
+      {replanning ? 'Requesting…' : 'Replan'}
+    </Button>
     <Button onclick={() => void plan.load()} title="Reload the current plan">
       {#snippet icon()}<RefreshCw class="size-3.5" />{/snippet}
       Reload
     </Button>
   {/snippet}
 </PageHeader>
+
+{#if replanNote}
+  <p class="mt-2 text-[10.5px] text-faint">{replanNote}</p>
+{/if}
 
 {#if plan.loading && plan.data === null}
   <div class="mt-4 space-y-3">

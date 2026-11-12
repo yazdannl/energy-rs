@@ -470,7 +470,7 @@ export function makeSettings(now: Date): SettingsResponse {
       battery_power_limit_w: 1600,
       price_provider: 'zonneplan',
       price_entity: 'sensor.zonneplan_current_electricity_tariff',
-      replan_seconds: 900,
+      replan_seconds: 300,
       stale_input_seconds: 180,
       full_charge_weekday: 'sunday',
       full_charge_time: '02:30',
@@ -496,7 +496,7 @@ export function makeSettings(now: Date): SettingsResponse {
         options: ['zonneplan', 'ha'],
       },
       { key: 'price_entity', kind: 'text', default: '' },
-      { key: 'replan_seconds', kind: 'number', default: 900, min: 60, max: 86400 },
+      { key: 'replan_seconds', kind: 'number', default: 300, min: 60, max: 86400 },
       { key: 'stale_input_seconds', kind: 'number', default: 180, min: 30, max: 3600 },
       {
         key: 'full_charge_weekday',

@@ -10,6 +10,7 @@ import type {
   DispatchResponse,
   Health,
   LearningResponse,
+  ReplanResponse,
   Mode,
   ModeResponse,
   OverrideAction,
@@ -172,6 +173,10 @@ export class MockApi implements ApiPort {
   async fullCharge(pack?: string): Promise<ProtectionResponse> {
     await latency();
     return { accepted: true, action: 'full_charge', pack: pack ?? null };
+  }
+
+  async replan(): Promise<ReplanResponse> {
+    return { accepted: true };
   }
 
   async relearn(pack?: string): Promise<LearningResponse> {

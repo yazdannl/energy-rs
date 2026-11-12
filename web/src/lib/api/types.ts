@@ -314,6 +314,11 @@ export interface ProtectionResponse {
   pack: string | null;
 }
 
+/** `POST /replan` — the engine will solve a fresh plan before its next tick. */
+export interface ReplanResponse {
+  accepted: boolean;
+}
+
 export interface LearningResponse {
   accepted: boolean;
   action: 'relearn';

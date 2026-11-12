@@ -22,6 +22,7 @@ mod plan;
 mod plans;
 mod prices;
 mod protection;
+mod replan;
 mod savings;
 mod settings;
 mod site;
@@ -61,6 +62,7 @@ pub fn router() -> Router<Arc<Service>> {
         .route("/override", post(pack_override::create_override))
         .route("/protection", post(protection::protection))
         .route("/learning", post(learning::learning))
+        .route("/replan", post(replan::replan))
         .route("/stream", get(stream::stream))
         .fallback(not_found)
 }
