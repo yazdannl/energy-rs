@@ -12,6 +12,7 @@
   import { resource } from '../lib/state/resource.svelte';
   import PageHeader from '../components/layout/PageHeader.svelte';
   import DailyBars from '../components/savings/DailyBars.svelte';
+  import DayExplorer from '../components/savings/DayExplorer.svelte';
   import SavingsBreakdown from '../components/savings/SavingsBreakdown.svelte';
   import SavingsCard from '../components/savings/SavingsCard.svelte';
   import Badge from '../components/ui/Badge.svelte';
@@ -178,6 +179,17 @@
         <DailyBars days={month.data.days} />
       {:else}
         <EmptyNote title="No month rows" />
+      {/if}
+    </Panel>
+
+    <Panel
+      title="Day by day"
+      subtitle="Step through the recorded days and see how each number was made"
+    >
+      {#if month.data && month.data.days.length > 0}
+        <DayExplorer days={month.data.days} />
+      {:else}
+        <EmptyNote title="No day rows" detail="The rollup has not written a day yet." />
       {/if}
     </Panel>
 
