@@ -12,7 +12,7 @@
 import uPlot from 'uplot';
 
 import type { Plan } from '../api/types';
-import { epochSeconds } from '../format/time';
+import { clock, epochSeconds } from '../format/time';
 import type { ChartTheme } from './theme';
 
 export interface PlanLayers {
@@ -163,7 +163,9 @@ export function planChart(
     cursor: {
       points: { size: 5 },
       y: false,
-      drag: { x: false, y: false },
+      // The chart is panned and zoomed by the component (wheel to zoom, drag to pan); a drag box
+      // would fight the pan.
+      drag: { x: false, y: false, setScale: false },
     },
     tzDate: (ts) => new Date(ts * 1000),
     scales: {
@@ -175,8 +177,11 @@ export function planChart(
     axes: [
       {
         ...axisStyle(theme, 2),
+        size: 24,
         space: 70,
         incrs: [900, 1800, 3600, 7200, 10800, 21600],
+        // Hour:minute labels, so the chart says *when* a slot is, not just where it sits.
+        values: (_, splits) => splits.map((value) => clock(new Date(value * 1000).toISOString())),
       },
       {
         ...axisStyle(theme, 3),
