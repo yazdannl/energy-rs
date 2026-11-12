@@ -112,7 +112,9 @@ impl SavingsRollup {
             .range(&from.to_string(), &today.to_string())?;
         for row in stored
             .into_iter()
-            .filter(|row| !row.complete && !row.day_local.is_empty())
+            // A day that is partial but already priced has its number; the backlog that matters is
+            // the one still carrying no money at all.
+            .filter(|row| !row.complete && row.saving_eur.is_none() && !row.day_local.is_empty())
         {
             if let Ok(day) = NaiveDate::parse_from_str(&row.day_local, "%Y-%m-%d")
                 && day < today
