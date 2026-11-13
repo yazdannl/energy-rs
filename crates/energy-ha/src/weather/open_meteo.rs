@@ -50,9 +50,7 @@ pub async fn open_meteo_forecast(
     {
         return Ok(series.clone());
     }
-    let url = format!(
-        "https://api.open-meteo.com/v1/forecast?latitude={latitude:.4}&longitude={longitude:.4}         &hourly=temperature_2m,cloud_cover,wind_speed_10m,relative_humidity_2m,precipitation,         shortwave_radiation&forecast_days=3&timezone=UTC&temperature_unit=celsius         &wind_speed_unit=ms"
-    );
+    let url = open_meteo_url(latitude, longitude);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(concat!("energy-rs/", env!("CARGO_PKG_VERSION")))
@@ -101,6 +99,18 @@ pub async fn open_meteo_hourly(
         .into_iter()
         .map(|(hour, weather)| (hour, weather.temperature_c))
         .collect())
+}
+
+/// The request URL for one coordinate.
+///
+/// Built as a single line on purpose: a `\` continuation that a formatter reflows leaves a
+/// backslash before the indentation, which Rust reads as an escaped space inside the query, and the
+/// endpoint answers 400. The test pins the absence of whitespace.
+fn open_meteo_url(latitude: f64, longitude: f64) -> String {
+    let hourly = "temperature_2m,cloud_cover,wind_speed_10m,relative_humidity_2m,precipitation,shortwave_radiation";
+    format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={latitude:.4}&longitude={longitude:.4}&hourly={hourly}&forecast_days=3&timezone=UTC&temperature_unit=celsius&wind_speed_unit=ms"
+    )
 }
 
 fn parse_open_meteo(value: &Value) -> BTreeMap<DateTime<Utc>, OpenMeteoHour> {
@@ -155,8 +165,19 @@ fn parse_open_meteo(value: &Value) -> BTreeMap<DateTime<Utc>, OpenMeteoHour> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    use super::parse_open_meteo;
+    use super::{open_meteo_url, parse_open_meteo};
     use serde_json::json;
+
+    #[test]
+    fn the_request_url_carries_no_whitespace() {
+        let url = open_meteo_url(52.076_274, 4.510_948);
+        assert!(
+            !url.chars().any(char::is_whitespace),
+            "a space in the query is a 400: {url}"
+        );
+        assert!(url.contains("cloud_cover") && url.contains("shortwave_radiation"));
+        assert!(url.contains("wind_speed_unit=ms"));
+    }
 
     #[test]
     fn an_open_meteo_body_becomes_utc_hours() {
