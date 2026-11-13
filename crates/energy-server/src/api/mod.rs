@@ -12,6 +12,7 @@ mod error;
 mod extract;
 mod health;
 mod learning;
+mod load_components;
 mod loads;
 mod mode;
 mod pack_alias;

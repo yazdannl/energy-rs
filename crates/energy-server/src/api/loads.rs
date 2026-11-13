@@ -74,6 +74,8 @@ pub(crate) struct LearnedProfile {
     updated_at: String,
     temperature_hours: usize,
     accounting: Accounting,
+    /// The house base and every named load, with the curve each one serves.
+    components: Vec<super::load_components::Component>,
 }
 
 /// One device as the forecast would use it right now.
@@ -155,8 +157,8 @@ fn config_from_request(body: &LoadsRequest) -> Result<LoadConfig, ApiError> {
 }
 
 fn render(config: &LoadConfig, profiles: &LoadProfiles, now: i64) -> Loads {
-    let (devices, problems) = config.parsed_devices();
-    let modelled = devices
+    let (configured, problems) = config.parsed_devices();
+    let modelled = configured
         .iter()
         .map(|device| Modelled {
             entity: device.entity.clone(),
@@ -188,7 +190,16 @@ fn render(config: &LoadConfig, profiles: &LoadProfiles, now: i64) -> Loads {
                 .unwrap_or(false),
         })
         .collect();
-    let profile = profiles.current(now).map(learned);
+    let base = profiles.current(now);
+    let parts = base
+        .as_ref()
+        .map(|base| super::load_components::component_list(base, profiles, &configured))
+        .unwrap_or_default();
+    let profile = base.map(|base| {
+        let mut learned = learned(base);
+        learned.components = parts;
+        learned
+    });
     Loads {
         holiday: config.holiday,
         temperature_entity: config.temperature_entity.clone(),
@@ -209,6 +220,7 @@ fn learned(profile: energy_forecast::load::LoadProfile) -> LearnedProfile {
         house_base_kw: profile.house_base_kw,
         updated_at: profile.updated_at,
         temperature_hours: profile.temperature_hours,
+        components: Vec::new(),
         accounting: Accounting {
             subtracted: profile.devices_subtracted,
             excluded: profile
