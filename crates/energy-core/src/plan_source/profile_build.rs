@@ -39,8 +39,7 @@ pub async fn learn(
     for problem in &problems {
         tracing::warn!(%problem, "a load.devices entry was ignored");
     }
-    let counters = collect(connection, &site, from, to).await?;
-    let samples = samples(&counters, from, to);
+    let samples = house_hours(connection, &site, &config, from, to).await?;
     if samples.len() < MIN_HOURS {
         return Err(PlanError::Supply {
             reason: format!(
@@ -59,6 +58,34 @@ pub async fn learn(
         .map_err(|error| PlanError::Supply {
             reason: format!("load profile could not be stored: {error}"),
         })
+}
+
+/// The house's hourly load: a configured load meter's means, or the dashboard balance.
+///
+/// The balance (`import - export + PV + discharge - charge`) is only as good as the dashboard's
+/// counters: a battery counter that disagrees, or a PV counter that lags, shows up as a house that
+/// draws less than it does (and sometimes less than nothing). A dedicated load meter is one number
+/// from one sensor, and the previous add-on used exactly that.
+async fn house_hours(
+    connection: &Connection,
+    site: &energy_ha::SiteModel,
+    config: &LoadConfig,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<LoadSample>, PlanError> {
+    let Some(entity) = config.load_source() else {
+        let counters = collect(connection, site, from, to).await?;
+        return Ok(samples(&counters, from, to));
+    };
+    let series = device_meter::hourly_kwh(connection, entity, from, to)
+        .await
+        .map_err(|reason| PlanError::Supply {
+            reason: format!("the house load meter {entity} cannot be read: {reason}"),
+        })?;
+    Ok(series
+        .into_iter()
+        .map(|(moment, load_kw)| LoadSample { moment, load_kw })
+        .collect())
 }
 
 /// The outdoor temperature by UTC hour, or an empty series when nothing is configured.

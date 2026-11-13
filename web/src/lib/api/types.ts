@@ -403,6 +403,8 @@ export interface LoadsResponse {
   holiday: boolean;
   temperatureEntity: string;
   weatherEntity: string;
+  /** The house load meter; empty means the energy dashboard's balance is the house. */
+  loadEntity: string;
   devices: LoadDevice[];
   problems: string[];
   profile: LearnedLoadProfile | null;
@@ -414,5 +416,6 @@ export interface LoadsInput {
   holiday: boolean;
   temperatureEntity: string;
   weatherEntity: string;
+  loadEntity: string;
   devices: LoadDevice[];
 }

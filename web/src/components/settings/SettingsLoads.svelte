@@ -10,6 +10,7 @@
   import { toasts } from '../../lib/state/toast.svelte';
   import Button from '../ui/Button.svelte';
   import ErrorNote from '../ui/ErrorNote.svelte';
+  import LoadSources from './LoadSources.svelte';
   import Skeleton from '../ui/Skeleton.svelte';
   import LoadDeviceEditor from './LoadDeviceEditor.svelte';
 
@@ -18,6 +19,7 @@
     holiday: false,
     temperatureEntity: '',
     weatherEntity: '',
+    loadEntity: '',
     devices: [],
   });
   let loading = $state(true);
@@ -30,6 +32,7 @@
         holiday: loads.holiday,
         temperatureEntity: loads.temperatureEntity,
         weatherEntity: loads.weatherEntity,
+        loadEntity: loads.loadEntity,
         devices: loads.devices,
       }) !== JSON.stringify(draft),
   );
@@ -40,6 +43,7 @@
       holiday: response.holiday,
       temperatureEntity: response.temperatureEntity,
       weatherEntity: response.weatherEntity,
+      loadEntity: response.loadEntity,
       devices: response.devices.map((device) => ({ ...device })),
     };
   }
@@ -142,34 +146,11 @@
       </button>
     </div>
 
-    <div class="grid gap-2 sm:grid-cols-2">
-      <label class="block">
-        <span class="text-[11px] text-muted">Outdoor temperature</span>
-        <input
-          type="text"
-          placeholder="sensor.outdoor_temperature"
-          value={draft.temperatureEntity}
-          oninput={(event) => (draft.temperatureEntity = event.currentTarget.value)}
-          class="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-ink focus:border-line-strong focus:outline-none"
-        />
-        <span class="mt-0.5 block text-[10px] text-faint">
-          A °C sensor; its history fits the house and heat-pump temperature terms.
-        </span>
-      </label>
-      <label class="block">
-        <span class="text-[11px] text-muted">Weather forecast</span>
-        <input
-          type="text"
-          placeholder="weather.home"
-          value={draft.weatherEntity}
-          oninput={(event) => (draft.weatherEntity = event.currentTarget.value)}
-          class="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-ink focus:border-line-strong focus:outline-none"
-        />
-        <span class="mt-0.5 block text-[10px] text-faint">
-          Hourly temperatures for the plan horizon; without it the measured hour is held flat.
-        </span>
-      </label>
-    </div>
+    <LoadSources
+      bind:loadEntity={draft.loadEntity}
+      bind:temperatureEntity={draft.temperatureEntity}
+      bind:weatherEntity={draft.weatherEntity}
+    />
 
     <div class="space-y-2">
       <p class="text-[11px] text-muted">Named loads</p>

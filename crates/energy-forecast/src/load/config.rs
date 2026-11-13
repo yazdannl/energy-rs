@@ -20,6 +20,8 @@ pub struct LoadConfig {
     pub temperature_entity: String,
     /// Weather entity whose hourly forecast temperatures serve the horizon.
     pub weather_entity: String,
+    /// The house load meter. Empty means the energy dashboard's balance is the house.
+    pub load_entity: String,
     /// The configured `load.devices` entries, kept verbatim so an unknown key is not lost.
     pub devices: Vec<Value>,
 }
@@ -34,6 +36,7 @@ impl LoadConfig {
             holiday: map.get("holiday").and_then(Value::as_bool).unwrap_or(false),
             temperature_entity: text(map, "temperatureEntity"),
             weather_entity: text(map, "weatherEntity"),
+            load_entity: text(map, "loadEntity"),
             devices: map
                 .get("devices")
                 .and_then(Value::as_array)
@@ -54,6 +57,10 @@ impl LoadConfig {
             "weatherEntity".to_string(),
             Value::String(self.weather_entity.clone()),
         );
+        map.insert(
+            "loadEntity".to_string(),
+            Value::String(self.load_entity.clone()),
+        );
         map.insert("devices".to_string(), Value::Array(self.devices.clone()));
         Value::Object(map)
     }
@@ -69,6 +76,12 @@ impl LoadConfig {
     /// The weather sources that were configured, trimmed.
     pub fn temperature_source(&self) -> Option<&str> {
         let entity = self.temperature_entity.trim();
+        (!entity.is_empty()).then_some(entity)
+    }
+
+    /// The house load meter, trimmed; `None` means the dashboard balance is the house.
+    pub fn load_source(&self) -> Option<&str> {
+        let entity = self.load_entity.trim();
         (!entity.is_empty()).then_some(entity)
     }
 
@@ -98,6 +111,7 @@ mod tests {
         let config = LoadConfig::from_payload(&json!({}));
         assert!(!config.holiday);
         assert!(config.temperature_source().is_none());
+        assert!(config.load_source().is_none());
         assert!(config.weather_source().is_none());
         assert_eq!(config.parsed_devices().0, Vec::new());
     }
@@ -108,10 +122,12 @@ mod tests {
             "holiday": true,
             "temperatureEntity": " sensor.outdoor ",
             "weatherEntity": "weather.home",
+            "loadEntity": " sensor.home_load_power ",
             "devices": [{"entity": "sensor.heat_pump", "kind": "heat_pump", "keep_while_away": true, "future": 1}],
         });
         let config = LoadConfig::from_payload(&payload);
         assert_eq!(config.temperature_source(), Some("sensor.outdoor"));
+        assert_eq!(config.load_source(), Some("sensor.home_load_power"));
         let (devices, problems) = config.parsed_devices();
         assert!(problems.is_empty(), "{problems:?}");
         assert!(devices[0].keep_while_away);

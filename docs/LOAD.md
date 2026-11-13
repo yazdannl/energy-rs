@@ -13,7 +13,7 @@ Code: `crates/energy-forecast/src/load` (model), `crates/energy-core/src/plan_so
 
 | quantity | source | notes |
 |---|---|---|
-| house hourly load | energy dashboard balance: `import − export + PV + discharge − charge` | an hour missing any required counter is skipped, never zeroed |
+| house hourly load | a configured **load meter** (`loadEntity`), else the energy dashboard balance `import − export + PV + discharge − charge` | an hour missing any required counter is skipped, never zeroed |
 | 48 buckets | weekday/weekend × hour, median + p10/p90 | 56-day window |
 | level `scale` | `recent_7d_mean / profile_mean`, clamped `[0.5, 2.0]` | absorbs a growing or shrinking house |
 | `bias[48]` | EWMA of the last seven days' per-bucket mean over median, `α = 0.2`, clamped `[0.5, 2.0]` | a recent weekday pattern |
@@ -63,6 +63,16 @@ A meter that cannot be read is absent from the split, so the device stays inside
 reason; it is never silently dropped. An hour where the meters claim **more** than the house total is
 a measurement contradiction: it is dropped (unknown, not zero), and when that would leave less than
 half the window, the whole split is refused and every device stays inside the base.
+
+### The house source
+
+The balance is only as good as the dashboard's counters. A wrong battery counter, a lagging PV
+counter or a stale solar-day counter shows up as a house that draws less than it does — and
+sometimes less than nothing, which is how 290 of 1317 hours came to contradict the heat pump meter.
+When a whole-house meter is configured (`POST/PATCH /loads`, `loadEntity`), its hourly means are the
+house instead: one sensor, one number, no balance arithmetic. It may be a W power sensor (the hourly
+mean is the kW) or a kWh counter (`change` is the kWh). Served history, savings and the price book
+are unaffected; only the learned profile changes source.
 
 ## 3. Weather
 

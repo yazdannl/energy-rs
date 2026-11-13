@@ -93,6 +93,8 @@ pub(crate) struct Loads {
     holiday: bool,
     temperature_entity: String,
     weather_entity: String,
+    /// The house load meter; empty means the dashboard balance is the house.
+    load_entity: String,
     devices: Vec<Device>,
     /// Entries that had to be dropped or noted before they could be modelled.
     problems: Vec<String>,
@@ -112,6 +114,8 @@ pub(crate) struct LoadsRequest {
     temperature_entity: String,
     #[serde(default)]
     weather_entity: String,
+    #[serde(default)]
+    load_entity: String,
     #[serde(default)]
     devices: Vec<Device>,
 }
@@ -152,6 +156,7 @@ fn config_from_request(body: &LoadsRequest) -> Result<LoadConfig, ApiError> {
         holiday: body.holiday,
         temperature_entity: body.temperature_entity.trim().to_string(),
         weather_entity: body.weather_entity.trim().to_string(),
+        load_entity: body.load_entity.trim().to_string(),
         devices: body.devices.iter().map(Device::payload).collect(),
     })
 }
@@ -204,6 +209,7 @@ fn render(config: &LoadConfig, profiles: &LoadProfiles, now: i64) -> Loads {
         holiday: config.holiday,
         temperature_entity: config.temperature_entity.clone(),
         weather_entity: config.weather_entity.clone(),
+        load_entity: config.load_entity.clone(),
         devices,
         problems,
         profile,
