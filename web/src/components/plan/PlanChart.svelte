@@ -146,10 +146,10 @@
   </div>
   <PlanReadout slot={shown} pinned={hovered !== null} />
   <p class="text-[10px] leading-relaxed text-faint">
-    PV and load share the inner power axis; the battery has its own outer axis, so a 4 kW spike does
-    not flatten a 0.4 kW load shape. SoC is drawn in kWh on a hidden scale (the plan does not carry
-    pack capacity). Battery bars above the axis charge, below it they discharge. Hover a
-    quarter-hour for exact values.
+    PV and load share the left axis. The battery gets the right one, because a 4 kW charge burst
+    would otherwise flatten a 0.4 kW load shape; bars above zero charge, below it they discharge.
+    SoC is the outer right axis in kWh — an amount, so it cannot share a power scale. Prices live in
+    the readout above. Hover a quarter-hour for exact values.
   </p>
   <p class="sr-only">Plan from {clock(plan.horizonStartAt)} to {clock(plan.horizonEndAt)}</p>
 </div>

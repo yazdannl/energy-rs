@@ -164,7 +164,9 @@ Daily rollups + lifetime total, all derived from ledger rows (never from planned
 ## 9. UI (Svelte 5, embedded)
 
 Screens: **Now** (animated energy-flow diagram, live PV/grid/battery/load, current slot, today's
-money), **Plan** (30 h × 15 min timeline: buy price, feed-in, planned power, SoC, forecast bands),
+money), **Plan** (30 h × 15 min timeline: PV and load in kW on one axis, battery bars on the same kilowatt
+scale, SoC in kWh on the other — prices live in the hover readout and the Prices tab rather than a
+third axis),
 **Prices** (heatmap + net-metering toggle preview), **Batteries** (per-pack cards: SoC, power,
 learned capacity/efficiency with confidence, protection latches, manual override), **Savings**
 (daily bars + lifetime), **Settings** (onboarding, provider, contract constants, control mode).

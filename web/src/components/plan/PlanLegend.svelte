@@ -11,8 +11,6 @@
 
   const theme = $derived(themeFor(scheme.current));
   const items = $derived([
-    { label: 'Buy', color: theme.buy, on: layers.prices, dash: false },
-    { label: 'Feed-in', color: theme.feedIn, on: layers.prices, dash: true },
     { label: 'PV', color: theme.pv, on: layers.forecast, dash: false },
     { label: 'Load', color: theme.load, on: layers.forecast, dash: true },
     { label: 'Battery', color: theme.battery, on: layers.battery, dash: false },

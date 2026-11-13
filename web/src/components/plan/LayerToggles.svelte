@@ -13,7 +13,6 @@
 </script>
 
 <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-  <ToggleSwitch checked={layers.prices} label="Prices" onchange={set('prices')} />
   <ToggleSwitch checked={layers.forecast} label="PV / load" onchange={set('forecast')} />
   <ToggleSwitch checked={layers.battery} label="Battery" onchange={set('battery')} />
   <ToggleSwitch checked={layers.soc} label="SoC" onchange={set('soc')} />

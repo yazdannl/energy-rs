@@ -1,12 +1,17 @@
 /**
- * The 30 h plan timeline: price lines, forecast areas, battery power bars and the SoC trajectory.
+ * The 30 h plan timeline: forecast areas, battery power bars and the SoC trajectory.
  *
  * Series order is fixed and every layer is always present; the toggles hide a series with
  * `u.setSeries(i, {show})` instead of rebuilding the chart, so data and cursor stay stable.
  *
- * SoC is plotted in **kWh** on its own hidden scale. A percentage would need the pack capacity,
- * and the plan DTO does not carry it — a fabricated axis maximum is exactly how a chart starts
- * lying.
+ * Two labelled scales and no more: watts on the left for PV, load and the battery, and kilowatt
+ * hours on the right for the state of charge. A second kilowatt axis would be a second column of
+ * the same unit, which is unreadable on a 400 px phone; a third one is worse. Prices are not a
+ * scale here either — they live in the readout under the chart and in the Prices tab.
+ *
+ * SoC is a third quantity — an amount, not a rate — so it gets a third labelled axis in kWh rather
+ * than a hidden scale that would make 3.5 kWh look like 1.6 kW. A percentage would need the pack
+ * capacity and the plan DTO does not carry it.
  */
 
 import uPlot from 'uplot';
@@ -16,14 +21,12 @@ import { clock, epochSeconds } from '../format/time';
 import type { ChartTheme } from './theme';
 
 export interface PlanLayers {
-  prices: boolean;
   battery: boolean;
   soc: boolean;
   forecast: boolean;
 }
 
 export const DEFAULT_LAYERS: PlanLayers = {
-  prices: true,
   battery: true,
   soc: true,
   forecast: true,
@@ -31,18 +34,27 @@ export const DEFAULT_LAYERS: PlanLayers = {
 
 /** Series indices in `data`, in the order `planChart` builds them. */
 export const SERIES_INDEX = {
-  buy: 1,
-  feedIn: 2,
-  pv: 3,
-  load: 4,
-  battery: 5,
-  soc: 6,
-  target: 7,
+  pv: 1,
+  load: 2,
+  battery: 3,
+  soc: 4,
+  target: 5,
 } as const;
 
 export interface PlanChartModel {
   data: uPlot.AlignedData;
   options: uPlot.Options;
+}
+
+/** Round bounds to a step a person can read, so the battery floor is a labelled gridline. */
+function niceAxis(min: number, max: number, target: number): [number, number] {
+  const span = Math.max(max - min, 0.2);
+  const raw = span / (target - 1);
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  const step =
+    [0.5, 1, 2, 5, 10].map((multiplier) => multiplier * magnitude).find((value) => value >= raw) ??
+    10 * magnitude;
+  return [Math.floor(min / step) * step, Math.ceil(max / step) * step];
 }
 
 function axisStyle(theme: ChartTheme, side: 0 | 1 | 2 | 3) {
@@ -63,52 +75,19 @@ export function planChart(
 ): PlanChartModel {
   const slots = plan.slots;
   const xs = slots.map((slot) => epochSeconds(slot.startAt));
-  const buy = slots.map((slot) => slot.buyEurPerKwh);
-  const feedIn = slots.map((slot) => slot.feedInEurPerKwh);
   const pv = slots.map((slot) => (slot.pvWh * 4) / 1000);
   const load = slots.map((slot) => (slot.loadWh * 4) / 1000);
   const battery = slots.map((slot) => slot.batteryPowerW / 1000);
   const soc = slots.map((slot) => slot.socWh / 1000);
   const target = slots.map((slot) => slot.targetSocWh / 1000);
 
-  const data: uPlot.AlignedData = [
-    xs,
-    buy,
-    feedIn,
-    pv,
-    load,
-    battery,
-    soc,
-    target,
-  ] as uPlot.AlignedData;
-  const socMax = Math.max(0.1, ...soc, ...target) * 1.12;
-  // The battery is the only series that goes to kilowatts at full inverter power; sharing one scale
-  // with PV and load squeezed a 0.3-0.9 kW load shape into the bottom tenth of the chart. It gets
-  // its own right axis, and the power axis covers PV and load alone.
-  const batteryMax = Math.max(0.2, ...battery.map((value) => Math.abs(value))) * 1.15;
+  const data: uPlot.AlignedData = [xs, pv, load, battery, soc, target] as uPlot.AlignedData;
   const barPaths = uPlot.paths.bars?.({ size: [0.66, 14], align: 0, radius: 0.25 });
 
   const series: uPlot.Series[] = [
     {
       label: 'Time',
       value: (_, value) => new Date(value * 1000).toLocaleTimeString(),
-    },
-    {
-      label: 'Buy',
-      scale: 'price',
-      stroke: theme.buy,
-      width: 1.6,
-      points: { show: false },
-      value: (_, value) => `€${value.toFixed(3)}`,
-    },
-    {
-      label: 'Feed-in',
-      scale: 'price',
-      stroke: theme.feedIn,
-      width: 1.2,
-      dash: [5, 4],
-      points: { show: false },
-      value: (_, value) => `€${value.toFixed(3)}`,
     },
     {
       label: 'PV forecast',
@@ -123,14 +102,14 @@ export function planChart(
       label: 'Load forecast',
       scale: 'power',
       stroke: theme.load,
-      width: 1,
+      width: 1.4,
       dash: [2, 3],
       points: { show: false },
       value: (_, value) => `${value.toFixed(2)} kW`,
     },
     {
       label: 'Battery power',
-      scale: 'battery',
+      scale: 'power',
       stroke: theme.battery,
       fill: 'rgba(56, 189, 248, 0.55)',
       width: 1,
@@ -144,7 +123,6 @@ export function planChart(
       scale: 'soc',
       stroke: theme.soc,
       width: 2,
-      fill: 'rgba(167, 139, 250, 0.1)',
       points: { show: false },
       value: (_, value) => `${value.toFixed(2)} kWh`,
     },
@@ -174,13 +152,13 @@ export function planChart(
     tzDate: (ts) => new Date(ts * 1000),
     scales: {
       x: { time: true },
-      price: { auto: true },
       power: {
-        auto: true,
-        range: (_u, _min, max) => [0, Math.max(max, 0.2) * 1.1],
+        // Nice bounds, so the battery's discharge floor lands on a labelled gridline instead of
+        // half a kilowatt past the last one. The battery discharges below zero, so the axis has to
+        // reach under it as well.
+        range: (_u, min, max) => niceAxis(Math.min(0, min), Math.max(max, 0.2), 6),
       },
-      battery: { range: [-batteryMax, batteryMax] },
-      soc: { range: [0, socMax] },
+      soc: { range: (_u, _min, max) => niceAxis(0, Math.max(max, 0.2), 5) },
     },
     axes: [
       {
@@ -193,27 +171,20 @@ export function planChart(
       },
       {
         ...axisStyle(theme, 3),
-        scale: 'price',
-        size: 54,
-        space: 44,
-        values: (_, splits) => splits.map((value) => `€${value.toFixed(2)}`),
-      },
-      {
-        ...axisStyle(theme, 1),
         scale: 'power',
-        size: 46,
-        space: 40,
-        values: (_, splits) => splits.map((value) => `${value.toFixed(0)} kW`),
+        size: 52,
+        space: 34,
+        values: (_, splits) => splits.map((value) => `${value.toFixed(1)} kW`),
       },
       {
         ...axisStyle(theme, 1),
-        scale: 'battery',
+        scale: 'soc',
         side: 1,
-        size: 36,
-        gap: 6,
-        values: (_, splits) => splits.map((value) => `${value.toFixed(0)} kW`),
+        size: 54,
+        space: 48,
+        grid: { show: false },
+        values: (_, splits) => splits.map((value) => `${value.toFixed(1)} kWh`),
       },
-      { ...axisStyle(theme, 1), scale: 'soc', show: false, size: 0 },
     ],
     series,
     hooks: {
@@ -232,8 +203,6 @@ export function planChart(
 /** Visibility for the layer toggles, as `[seriesIndex, visible]` pairs. */
 export function layerVisibility(layers: PlanLayers): [number, boolean][] {
   return [
-    [SERIES_INDEX.buy, layers.prices],
-    [SERIES_INDEX.feedIn, layers.prices],
     [SERIES_INDEX.pv, layers.forecast],
     [SERIES_INDEX.load, layers.forecast],
     [SERIES_INDEX.battery, layers.battery],
