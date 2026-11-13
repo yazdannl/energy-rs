@@ -56,12 +56,16 @@ Rules, in order:
    count it twice, and the doubling hides in the temperature slope instead of looking like an error.
 
 A meter that cannot be read is absent from the split, so the device stays inside the base with a
-reason; it is never silently dropped.
+reason; it is never silently dropped. An hour where the meters claim **more** than the house total is
+a measurement contradiction: it is dropped (unknown, not zero), and when that would leave less than
+half the window, the whole split is refused and every device stays inside the base.
 
 ## 3. Weather
 
 Two optional entities, both trimmed:
 
+* `weatherEntity` falls back to the deprecated one-entity `weather.get_forecast` when the entity
+  never implemented `weather.get_forecasts` (OpenWeatherMap among them).
 * `temperatureEntity` — a numeric °C sensor with long-term statistics (`state_class: measurement`).
   A heat pump's own outdoor sensor is a fine choice: it is the temperature the pump responds to.
   Its hourly recorder **means** fit the temperature regression for the house and for each

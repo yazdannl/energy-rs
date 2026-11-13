@@ -203,7 +203,7 @@ fn notes_for(
         }
         if base.devices_clamped_hours > 0 {
             notes.push(format!(
-                "load.devices: on {} house hours the device meters summed to more than the house total; the base contribution was floored at zero, which suggests the meters overlap",
+                "load.devices: on {} house hours the device meters claimed more than the house total, so those hours were left out of the base profile (the meters overlap)",
                 base.devices_clamped_hours
             ));
         }

@@ -213,6 +213,21 @@
       {:else}
         <p>No usable learned profile yet; the residential shape is serving the plan.</p>
       {/if}
+      {#if (loads?.profile?.accounting.clampedHours ?? 0) > 0}
+        <p>
+          {loads?.profile?.accounting.clampedHours} house hours were left out of the base profile: the
+          meters claimed more than the house total there, so they overlap (the hour is unknown, not zero).
+        </p>
+      {/if}
+      {#if (loads?.profile?.accounting.droppedHours ?? 0) > 0}
+        <p>
+          {loads?.profile?.accounting.droppedHours} house hours were left out because a meter had no reading
+          for them.
+        </p>
+      {/if}
+      {#each loads?.profile?.accounting.excluded ?? [] as entry (entry.key)}
+        <p class="text-warn">· {entry.key}: {entry.reason}</p>
+      {/each}
       {#each loads?.problems ?? [] as problem (problem)}
         <p class="text-warn">· {problem}</p>
       {/each}

@@ -44,6 +44,24 @@ impl Device {
     }
 }
 
+/// One named load the base profile could not subtract, and why.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Excluded {
+    key: String,
+    reason: String,
+}
+
+/// What the base profile did with the named loads when it was learned.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Accounting {
+    subtracted: Vec<String>,
+    excluded: Vec<Excluded>,
+    dropped_hours: u32,
+    clamped_hours: u32,
+}
+
 /// What the profile the planner is using says.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +71,7 @@ pub(crate) struct LearnedProfile {
     base_kw: f64,
     updated_at: String,
     temperature_hours: usize,
+    accounting: Accounting,
 }
 
 /// One device as the forecast would use it right now.
@@ -167,13 +186,7 @@ fn render(config: &LoadConfig, profiles: &LoadProfiles, now: i64) -> Loads {
                 .unwrap_or(false),
         })
         .collect();
-    let profile = profiles.current(now).map(|profile| LearnedProfile {
-        days: profile.days,
-        samples: profile.samples,
-        base_kw: profile.base_kw,
-        updated_at: profile.updated_at,
-        temperature_hours: profile.temperature_hours,
-    });
+    let profile = profiles.current(now).map(learned);
     Loads {
         holiday: config.holiday,
         temperature_entity: config.temperature_entity.clone(),
@@ -182,6 +195,27 @@ fn render(config: &LoadConfig, profiles: &LoadProfiles, now: i64) -> Loads {
         problems,
         profile,
         modelled,
+    }
+}
+
+/// The learned profile as the API shows it, including what the split did with the meters.
+fn learned(profile: energy_forecast::load::LoadProfile) -> LearnedProfile {
+    LearnedProfile {
+        days: profile.days,
+        samples: profile.samples,
+        base_kw: profile.base_kw,
+        updated_at: profile.updated_at,
+        temperature_hours: profile.temperature_hours,
+        accounting: Accounting {
+            subtracted: profile.devices_subtracted,
+            excluded: profile
+                .devices_excluded
+                .into_iter()
+                .map(|(key, reason)| Excluded { key, reason })
+                .collect(),
+            dropped_hours: profile.devices_dropped_hours,
+            clamped_hours: profile.devices_clamped_hours,
+        },
     }
 }
 

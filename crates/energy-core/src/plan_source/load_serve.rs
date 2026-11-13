@@ -22,12 +22,17 @@ pub(crate) struct Served<'a> {
 }
 
 /// The load series at `now`, from the learned profile or the residential fallback shape.
+///
+/// The forecast's own notes (which loads are modelled, what the split had to drop, whether the
+/// temperature term is on) are appended to `notes`, which the plan publishes as its `degraded`
+/// string: a forecast that is not what the operator configured must say so.
 pub(crate) fn serve(
     profile: Option<&LoadProfile>,
     base_kwh_per_day: f64,
     now: i64,
     slots: usize,
     served: &Served<'_>,
+    notes: &mut Vec<String>,
 ) -> Result<Vec<f64>, PlanError> {
     let moment = DateTime::<Utc>::from_timestamp(now, 0).ok_or(PlanError::Supply {
         reason: format!("timestamp {now} is not representable"),
@@ -42,6 +47,7 @@ pub(crate) fn serve(
     )
     .with_holiday(served.holiday);
     let forecast: LoadForecast = load_forecast(profile, served.devices, &inputs);
+    notes.extend(forecast.notes.iter().cloned());
     if forecast.slots.len() < slots {
         return Err(PlanError::ForecastUnavailable {
             name: "load_kw",

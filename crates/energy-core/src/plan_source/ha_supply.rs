@@ -155,10 +155,12 @@ impl HaPlanSupply {
         };
         let base = history.load_kwh_over(24);
         let load_kw = match (&profile, base) {
-            (Some(profile), _) => load_serve::serve(Some(profile), 0.0, now, slots, &served)?,
+            (Some(profile), _) => {
+                load_serve::serve(Some(profile), 0.0, now, slots, &served, &mut notes)?
+            }
             (None, base) if base > 0.0 => {
                 notes.push("load profile missing; residential fallback shape".to_string());
-                load_serve::serve(None, base, now, slots, &served)?
+                load_serve::serve(None, base, now, slots, &served, &mut notes)?
             }
             (None, _) => {
                 notes.push("load profile missing; EWMA fallback from measured load".to_string());

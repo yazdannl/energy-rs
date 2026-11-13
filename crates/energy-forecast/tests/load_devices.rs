@@ -254,3 +254,71 @@ fn holiday_serves_only_the_loads_that_keep_running() {
     assert_eq!(away.excluded[0].0.key, ev.key);
     assert!(away.excluded[0].1.contains("away"));
 }
+
+/// `hours` hourly samples from `start`, the house at `house` kW.
+fn flat_hours(start: &str, hours: u32, load: f64) -> Vec<LoadSample> {
+    use chrono::Duration;
+    let start = support::time(start);
+    (0..hours)
+        .map(|hour| LoadSample {
+            moment: start + Duration::hours(i64::from(hour)),
+            load_kw: load,
+        })
+        .collect()
+}
+
+#[test]
+fn an_hour_where_the_meter_exceeds_the_house_is_dropped_not_zeroed() {
+    // A heat pump that draws 0.8 kW in 60 of 168 hours while the house balance says 0.5 kW: those
+    // hours are a measurement contradiction, so they are not part of the base.
+    let house = flat_hours("2026-01-01T00:00:00+00:00", 168, 0.5);
+    let device = LoadDevice::new("sensor.heat", &DeviceKind::parse("heat_pump"), "");
+    let mut series = BTreeMap::new();
+    for (index, sample) in house.iter().enumerate() {
+        series.insert(sample.moment, if index < 60 { 0.8 } else { 0.1 });
+    }
+    let mut device_samples = BTreeMap::new();
+    device_samples.insert(device.key.clone(), series);
+    let split = split_device_load(&house, std::slice::from_ref(&device), &device_samples);
+    assert_eq!(split.subtracted, vec![device.key.clone()]);
+    assert_eq!(split.clamped_hours, 60);
+    assert_eq!(split.base.len(), 108);
+    assert!(
+        split
+            .base
+            .iter()
+            .all(|sample| (sample.load_kw - 0.4).abs() < 1e-9),
+        "every kept hour is the house minus the meter"
+    );
+    assert!(
+        split
+            .base
+            .iter()
+            .all(|sample| sample.moment != house[0].moment),
+        "the contradiction hour is absent, not zero"
+    );
+}
+
+#[test]
+fn a_split_that_drops_too_much_is_refused_whole() {
+    // 100 of 168 hours contradict the house total, which leaves too little to learn a base.
+    let house = flat_hours("2026-01-01T00:00:00+00:00", 168, 0.5);
+    let device = LoadDevice::new("sensor.heat", &DeviceKind::parse("heat_pump"), "");
+    let mut series = BTreeMap::new();
+    for (index, sample) in house.iter().enumerate() {
+        series.insert(sample.moment, if index < 100 { 0.9 } else { 0.1 });
+    }
+    let mut device_samples = BTreeMap::new();
+    device_samples.insert(device.key.clone(), series);
+    let split = split_device_load(&house, std::slice::from_ref(&device), &device_samples);
+    assert!(
+        split.subtracted.is_empty(),
+        "the device stays inside the base"
+    );
+    assert_eq!(split.base.len(), house.len());
+    assert!(
+        split.skipped[&device.key].contains("contradict"),
+        "{}",
+        split.skipped[&device.key]
+    );
+}

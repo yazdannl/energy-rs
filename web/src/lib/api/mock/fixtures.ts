@@ -608,6 +608,12 @@ export function makeLoads(now: Date, holiday = false): LoadsResponse {
       baseKw: 0.18,
       updatedAt: iso(new Date(now.getTime() - 3 * 3_600_000)),
       temperatureHours: 640,
+      accounting: {
+        subtracted: ['device:sensor.heat_pump_power'],
+        excluded: [],
+        droppedHours: 0,
+        clampedHours: 0,
+      },
     },
     modelled: [{ entity: 'sensor.heat_pump_power', modelled: true }],
   };

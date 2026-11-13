@@ -380,6 +380,14 @@ export interface LoadDevice {
   keepWhileAway: boolean;
 }
 
+/** What the base profile did with the named loads when it was learned. */
+export interface LoadAccounting {
+  subtracted: string[];
+  excluded: { key: string; reason: string }[];
+  droppedHours: number;
+  clampedHours: number;
+}
+
 /** The learned base profile the planner is using, when one is fresh enough. */
 export interface LearnedLoadProfile {
   days: number;
@@ -387,6 +395,7 @@ export interface LearnedLoadProfile {
   baseKw: number;
   updatedAt: Instant;
   temperatureHours: number;
+  accounting: LoadAccounting;
 }
 
 export interface LoadsResponse {

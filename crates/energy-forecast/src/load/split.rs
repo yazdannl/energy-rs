@@ -23,7 +23,7 @@ pub struct DeviceSplit {
     pub skipped: BTreeMap<String, String>,
     /// House hours left out because a subtracted device had no reading for them.
     pub dropped_hours: u32,
-    /// House hours where the device sum exceeded the total (the result is floored at zero).
+    /// House hours where the device meters claimed more than the total, so the hour was dropped.
     pub clamped_hours: u32,
 }
 
@@ -67,6 +67,20 @@ pub fn split_device_load(
         return DeviceSplit::untouched(samples.to_vec(), skipped);
     }
     let (base, dropped_hours, clamped_hours) = subtract(samples, &eligible, device_samples);
+    // Dropping contradiction hours must not leave too little to learn from: a base profile built
+    // from a quarter of the window is a different house, and adding the devices back on top of it
+    // would be worse than leaving them inside the base.
+    if (base.len() as f64) < DEVICE_MIN_COVERAGE * samples.len() as f64 {
+        let reason = format!(
+            "with the other meters subtracted only {} of the house's {} hours are left to learn the base profile from (the meters contradict the house total in the rest)",
+            base.len(),
+            samples.len()
+        );
+        for device in &eligible {
+            skipped.insert(device.key.clone(), reason.clone());
+        }
+        return DeviceSplit::untouched(samples.to_vec(), skipped);
+    }
     DeviceSplit {
         base,
         subtracted: eligible.iter().map(|device| device.key.clone()).collect(),
@@ -180,10 +194,13 @@ fn subtract(
             dropped = dropped.saturating_add(1);
             continue;
         }
-        let mut value = sample.load_kw - removed;
+        let value = sample.load_kw - removed;
         if value < 0.0 {
+            // The meters claim more than the house used, which cannot be true: the hour is a
+            // measurement contradiction, unknown rather than zero. Zero-filling it teaches the
+            // base profile a house that drew nothing (and drags its floor to zero), so drop it.
             clamped = clamped.saturating_add(1);
-            value = 0.0;
+            continue;
         }
         base.push(LoadSample {
             moment: sample.moment,
