@@ -2,6 +2,12 @@
 
 use serde_json::{Value, json};
 
+/// The longest accepted text value.
+///
+/// Entity ids and labels are short, but `pv_planes` is a JSON array of the array's roof planes and a
+/// three-plane list is already ~230 characters.
+pub(crate) const TEXT_MAX: usize = 4_096;
+
 /// What a setting value may be.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SettingKind {
@@ -14,7 +20,7 @@ pub(crate) enum SettingKind {
         /// Inclusive upper bound.
         max: f64,
     },
-    /// Free text (up to 128 characters, no control characters).
+    /// Free text (up to [`TEXT_MAX`] characters, no control characters).
     Text,
 }
 
@@ -70,8 +76,8 @@ impl SettingKind {
                 }
             }
             Self::Text => {
-                if raw.len() > 128 {
-                    return Err("value is longer than 128 characters".to_owned());
+                if raw.len() > TEXT_MAX {
+                    return Err(format!("value is longer than {TEXT_MAX} characters"));
                 }
                 if raw.chars().any(char::is_control) {
                     return Err("value contains a control character".to_owned());
