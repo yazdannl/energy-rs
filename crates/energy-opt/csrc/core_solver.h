@@ -75,6 +75,8 @@ typedef struct {
     int32_t has_sell_floor;
     /*: 0 = auto, 1 = prefer_pv, 2 = avoid_pv (``PV_AUTO``/``PV_PREFER``/``PV_AVOID``). */
     int32_t pv_preference;
+    /*: Add the two grid-neutral powers (PV surplus, house serving) to the action set. */
+    int32_t align_actions;
 } eo_core_params;
 
 /* Bridge entry points implemented by csrc/core_adapter.c, which includes core_solver.c so the

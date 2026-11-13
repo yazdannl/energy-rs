@@ -35,6 +35,9 @@ pub const MIN_STATES: i64 = 8;
 /// config.validate().unwrap();
 /// ```
 #[derive(Debug, Clone, PartialEq)]
+// One flag per independent policy switch, never a state machine: charging from the grid, exporting,
+// refusing a battery export and aligning the action set are four separate decisions.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Config {
     // ---- battery aggregate (the 6 required physical keys) ----
     /// Lowest usable stored energy, kWh.
@@ -89,6 +92,10 @@ pub struct Config {
     // ---- enum with a default, not an optional key ----
     /// How PV energy charged into the pack is priced.
     pub pv_charge_preference: PvChargePreference,
+    /// Add the two grid-neutral powers to the action set: charge exactly the PV surplus, and
+    /// discharge exactly the house's load. They are what a 24-step lattice cannot otherwise express
+    /// on a small surplus or a load between two steps.
+    pub align_actions: bool,
 }
 
 impl Config {
@@ -120,6 +127,7 @@ impl Config {
             refuse_battery_export: false,
             sell_floor_eur_per_kwh: None,
             pv_charge_preference: PvChargePreference::Auto,
+            align_actions: false,
         }
     }
 
@@ -237,6 +245,7 @@ impl Config {
             refuse_battery_export: i32::from(self.refuse_battery_export),
             has_sell_floor: i32::from(self.sell_floor_eur_per_kwh.is_some()),
             pv_preference: self.pv_charge_preference.code(),
+            align_actions: i32::from(self.align_actions),
         })
     }
 }

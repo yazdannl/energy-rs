@@ -125,7 +125,13 @@ voltage; stale reading keeps the latch; persisted across restarts) + weekly full
 
 ## 6. Optimizer
 
-C DP core unchanged: `solve(pv[], load[], buy[], sell[], minutes[], config[, terminal_row])`.
+C DP core: `solve(pv[], load[], buy[], sell[], minutes[], config[, terminal_row])`. The numerics are
+the vendored `_core.c` lines; the one deliberate addition is the `align_actions` candidate pair
+(0.9.1): charging exactly the PV surplus and discharging exactly the house's load. A 24-step lattice
+cannot express a 0.10 kW surplus without importing the difference, nor a 0.88 kW load without
+spilling 0.13 kW to the grid, and both showed up as real exports on live plans. The candidates are
+config-gated, so the Python parity rows (and `tests/fixtures/parity.json`) still run the old lattice.
+
 Rust wrapper owns: input validation, feasibility/bounds/path re-derivation, per-slot argmin decision
 equality, sampled backward Bellman, and a periodic full differential against a small Rust brute-force
 DP. Any mismatch ⇒ refuse the solve and hold (never "use a slightly wrong plan").

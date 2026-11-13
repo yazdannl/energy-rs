@@ -24,10 +24,14 @@ impl Step<'_> {
             (true, Some(target)) => Some(exact_power(self.config, energy, target, self.dt)),
             _ => None,
         };
+        let align = self
+            .config
+            .align_actions
+            .then(|| (self.sample.surplus(), -self.sample.base()));
         let mut best = f64::INFINITY;
         let mut choice = clamp(0.0, lo, hi);
         let mut iterations = 0i64;
-        for power in actions(lo, hi, self.config.power_steps, extra) {
+        for power in actions(lo, hi, self.config.power_steps, extra, align) {
             let next = transition(self.config, energy, power, self.dt);
             let cost = slot_cost(self.config, self.sample, power)
                 + wear(self.config, energy, next)

@@ -69,8 +69,18 @@ pub fn bounds(config: &Config, slot: &Slot, e_kwh: f64, dt_hours: f64) -> (f64, 
 }
 
 /// `dp._actions`: evenly spaced powers in `[lo, hi]`, `0` always when feasible, sorted and deduped.
+///
+/// `align` adds the two grid-neutral powers when the config asks for them: charge exactly the PV
+/// surplus, and discharge exactly the house's load. Both are clamped into the window first, so a
+/// candidate can never widen it.
 #[allow(clippy::manual_midpoint)] // the single-step action is `(lo + hi) / 2` in the reference.
-pub fn actions(lo: f64, hi: f64, steps: i64, extra: Option<f64>) -> Vec<f64> {
+pub fn actions(
+    lo: f64,
+    hi: f64,
+    steps: i64,
+    extra: Option<f64>,
+    align: Option<(f64, f64)>,
+) -> Vec<f64> {
     let steps = steps.max(1);
     if hi - lo <= EPS_KW {
         return vec![clamp(0.0, lo, hi)];
@@ -89,6 +99,13 @@ pub fn actions(lo: f64, hi: f64, steps: i64, extra: Option<f64>) -> Vec<f64> {
         && extra <= hi + EPS_KW
     {
         values.push(clamp(extra, lo, hi));
+    }
+    if let Some((surplus, house)) = align {
+        for candidate in [surplus, house] {
+            if lo - EPS_KW <= candidate && candidate <= hi + EPS_KW {
+                values.push(clamp(candidate, lo, hi));
+            }
+        }
     }
     values.sort_by(f64::total_cmp);
     let mut out: Vec<f64> = Vec::with_capacity(values.len());

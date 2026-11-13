@@ -160,6 +160,8 @@ impl Case {
                 "avoid_pv" => PvChargePreference::AvoidPv,
                 _ => PvChargePreference::Auto,
             },
+            // The reference fixtures predate the aligned action set; parity is the old lattice.
+            align_actions: false,
         }
     }
 

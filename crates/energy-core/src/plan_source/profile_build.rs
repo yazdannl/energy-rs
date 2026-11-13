@@ -14,6 +14,7 @@ use energy_ha::{Connection, discover, mean_series_hourly, slot_series_hourly};
 
 use crate::plan::PlanError;
 use crate::plan_source::LoadProfiles;
+use crate::plan_source::device_meter;
 
 /// Rows shorter than this cannot teach a weekday/weekend profile; refuse instead of storing noise.
 const MIN_HOURS: usize = 7 * 24;
@@ -95,21 +96,15 @@ async fn device_series(
 ) -> BTreeMap<String, BTreeMap<DateTime<Utc>, f64>> {
     let mut out = BTreeMap::new();
     for device in devices {
-        match fetch(connection, &device.entity, from, to).await {
-            Ok(hourly) => {
-                let series = hourly
-                    .into_iter()
-                    .filter_map(|(hour, kwh)| {
-                        DateTime::<Utc>::from_timestamp(hour, 0).map(|moment| (moment, kwh))
-                    })
-                    .collect();
+        match device_meter::hourly_kwh(connection, &device.entity, from, to).await {
+            Ok(series) => {
                 out.insert(device.key.clone(), series);
             }
-            Err(error) => {
+            Err(reason) => {
                 tracing::warn!(
                     entity = device.entity,
-                    %error,
-                    "a load.devices meter is unreadable; it stays inside the base profile"
+                    %reason,
+                    "a load.devices meter cannot be split off the house; it stays inside the base profile"
                 );
             }
         }

@@ -101,9 +101,12 @@ fn chosen_power(
         (true, Some(target)) => Some(exact_power(config, energy, target, dt)),
         _ => None,
     };
+    let align = config
+        .align_actions
+        .then(|| (sample.surplus(), -sample.base()));
     let mut best = f64::INFINITY;
     let mut choice = clamp(0.0, lo, hi);
-    for power in actions(lo, hi, config.power_steps, extra) {
+    for power in actions(lo, hi, config.power_steps, extra, align) {
         let next = transition(config, energy, power, dt);
         let cost = slot_cost(config, sample, power)
             + wear(config, energy, next)

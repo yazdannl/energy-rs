@@ -23,5 +23,7 @@ pub use slot_series::{slot_series, slot_series_5min, slot_series_15min, slot_ser
 pub use stat_row::{StatRow, StatisticsResponse};
 pub use stat_type::StatType;
 pub use statistic_kind::StatisticKind;
-pub use statistic_metadata::{StatisticMetadata, list_statistic_ids, statistics_metadata};
+pub use statistic_metadata::{
+    StatisticMetadata, list_statistic_ids, statistic_metadata_for, statistics_metadata,
+};
 pub use statistics_query::{StatisticsQuery, statistics_during_period};

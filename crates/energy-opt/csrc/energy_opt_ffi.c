@@ -129,7 +129,7 @@ int eo_solve(const eo_core_params *params, int32_t n_slots, const double *pv_kw,
         return EO_ERR_GRID;
     }
 
-    long action_count = params->power_steps + 1;
+    long action_count = params->power_steps + (params->align_actions != 0 ? 4 : 1);
     if (action_count < 2) action_count = 2;
     long budget = params->max_iterations / (n_slots > 0 ? (long)n_slots * action_count : 1);
     if (budget < 2) budget = 2;
@@ -186,8 +186,8 @@ int eo_solve(const eo_core_params *params, int32_t n_slots, const double *pv_kw,
         free(grid);
         return EO_ERR_LIMITS;
     }
-    size_t actions_capacity = (size_t)params->power_steps + 2;
-    if (actions_capacity < 3) actions_capacity = 3;
+    size_t actions_capacity = (size_t)params->power_steps + 4;
+    if (actions_capacity < 5) actions_capacity = 5;
     size_t arena_elements = grid_capacity + value_count + argmin_count + actions_capacity +
                             2 * n + windows_count;
     size_t arena_bytes = 0;

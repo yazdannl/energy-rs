@@ -38,7 +38,7 @@ pub fn reference_grid(config: &Config, slot_count: usize) -> (Vec<f64>, f64) {
         None => vec![clamp(config.start_kwh, config.e_min_kwh, config.e_max_kwh)],
     };
     let (mut grid, mut step) = build_grid(config, config.soc_step_kwh, &anchors);
-    let action_count = (config.power_steps + 1).max(2);
+    let action_count = (config.power_steps + if config.align_actions { 4 } else { 1 }).max(2);
     let slots = i64::try_from(slot_count).unwrap_or(i64::MAX);
     let budget = (config.max_iterations / (slots * action_count).max(1)).max(2);
     if i64::try_from(grid.len()).unwrap_or(i64::MAX) > budget {

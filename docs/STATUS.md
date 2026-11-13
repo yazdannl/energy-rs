@@ -25,6 +25,22 @@ what makes the add-on actually run end to end; the real UI is P11. The newest no
 | P15 | Control-layer hardening from the independent safety review (`crates/energy-core`) | one regression test per finding, `docs/RUNBOOK.md` §2 safety invariants | **done** |
 | P16 | Battery-layer hardening from the independent safety review (`crates/energy-battery`) | one regression test per finding (`tests/echo.rs`, `tests/control.rs`, `tests/clamp.rs`) | **done** |
 | P17 | Load prediction: base-load floor, named loads, weather and holiday mode | floor/holiday/device tests, `docs/LOAD.md`, `GET/PATCH /loads` | **done** |
+| P18 | Solver action alignment and the PV-charge attribution fix | `tests/align.rs`, summary tests, live plan with zero export | **done** (0.9.1) |
+
+## P18 notes (action alignment)
+
+- **The lattice was rounding, not deciding.** `power_steps = 24` over `[-3.2, +4.0]` kW is a
+  0.313 kW step: the smallest positive charge is 0.2435 kW and a 0.88 kW load lands on 1.0087 kW.
+  The DP then had to either import the difference or spill it, which is where the plan's 0.43 kWh
+  of battery exports came from.
+- **Two grid-neutral candidates.** `align_actions` adds `p = surplus` and `p = −base`, both clamped
+  into the window and deduped. They are gated so the Python parity fixtures keep the old lattice.
+- **Measured on the live 0.8.5 inputs** (same 68 slots, same prices): exports 0.600 → **0.000** kWh,
+  PV into the pack 0.42 → 0.59 kWh, horizon cost 0.246 → 0.188 EUR, solve time unchanged
+  (~7-12 ms).
+- **`pvChargeWh` was always zero.** `summary.rs` computed the grid part of a charge as
+  `battery_kw − max(load − pv, 0)`, which counts the whole charge as imported whenever PV covers
+  the house. It now subtracts the actual surplus; a summary test pins both directions.
 
 ## P17 notes (load prediction)
 

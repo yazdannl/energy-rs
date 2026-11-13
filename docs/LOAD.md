@@ -45,8 +45,10 @@ Rules, in order:
 
 1. A device is subtracted from the house only when its meter covers ≥ 50 % of the house's learning
    hours and has ≥ 48 usable hours; the split also needs the joint coverage to stay ≥ 50 %. The
-   meter must be an **energy counter in kWh** (`change` statistics), not a power sensor: a W sensor
-   has no `change`, so the device is refused with a reason instead of being subtracted as garbage.
+   meter may be either an **energy counter** (its `change`, converted to kWh by the recorder) or a
+   **power sensor** (its hourly `mean`, scaled to kW, which is the same kWh for one hour). The
+   recorder's own metadata decides which; anything else (a temperature, a percentage) is refused
+   with a reason instead of being subtracted as garbage.
 2. The base profile is learned from what remains, and records `devices_subtracted` plus one reason
    per device it refused (`devices_excluded`).
 3. At serving time a device is added back **only** when the served base profile says it was
@@ -61,6 +63,7 @@ reason; it is never silently dropped.
 Two optional entities, both trimmed:
 
 * `temperatureEntity` — a numeric °C sensor with long-term statistics (`state_class: measurement`).
+  A heat pump's own outdoor sensor is a fine choice: it is the temperature the pump responds to.
   Its hourly recorder **means** fit the temperature regression for the house and for each
   temperature-driven load; without statistics the series is empty and the term stays off.
 * `weatherEntity` — a `weather.*` entity. `weather.get_forecasts` (hourly) supplies the temperature

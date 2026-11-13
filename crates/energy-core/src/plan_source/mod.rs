@@ -18,6 +18,7 @@
 //!   marked degraded in its summary, so the UI never presents a guess as a model output.
 
 mod config;
+mod device_meter;
 mod forecast;
 mod ha_series;
 mod ha_supply;

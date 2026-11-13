@@ -43,6 +43,18 @@ pub async fn statistics_metadata(
         .await
 }
 
+/// The metadata of one statistic, or `None` when the recorder keeps none for it.
+pub async fn statistic_metadata_for(
+    connection: &Connection,
+    statistic_id: &str,
+) -> Result<Option<StatisticMetadata>, HaError> {
+    let ids = [statistic_id.to_owned()];
+    Ok(statistics_metadata(connection, &ids)
+        .await?
+        .into_iter()
+        .next())
+}
+
 pub async fn list_statistic_ids(
     connection: &Connection,
     kind: Option<StatisticKind>,

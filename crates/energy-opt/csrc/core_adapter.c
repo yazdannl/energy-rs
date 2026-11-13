@@ -71,6 +71,7 @@ static void map_params(const eo_core_params *p, Config *c) {
     c->target_penalty = p->target_penalty;
     c->max_states = p->max_states;
     c->max_iterations = p->max_iterations;
+    c->align_actions = p->align_actions != 0;
 }
 
 /* ``parse_config``'s domain checks, without the dict (``_core.c:630-658``).  Any value that could

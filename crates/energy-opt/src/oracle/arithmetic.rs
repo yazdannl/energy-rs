@@ -70,7 +70,13 @@ pub(crate) fn interp(values: &[f64], grid: &[f64], energy: f64) -> f64 {
 /// Evenly spaced actions in `[lo, hi]`, `0` always included when feasible, sorted and deduped.
 // `(lo + hi) / 2` is the reference's single-step action; `f64::midpoint` rounds differently.
 #[allow(clippy::manual_midpoint)]
-pub(crate) fn actions(lo: f64, hi: f64, steps: i64, extra: Option<f64>) -> Vec<f64> {
+pub(crate) fn actions(
+    lo: f64,
+    hi: f64,
+    steps: i64,
+    extra: Option<f64>,
+    align: Option<(f64, f64)>,
+) -> Vec<f64> {
     let steps = steps.max(1);
     if hi - lo <= crate::validate::EPS_KW {
         return vec![clamp(0.0, lo, hi)];
@@ -89,6 +95,15 @@ pub(crate) fn actions(lo: f64, hi: f64, steps: i64, extra: Option<f64>) -> Vec<f
         && extra <= hi + crate::validate::EPS_KW
     {
         values.push(clamp(extra, lo, hi));
+    }
+    if let Some((surplus, house)) = align {
+        for candidate in [surplus, house] {
+            if lo - crate::validate::EPS_KW <= candidate
+                && candidate <= hi + crate::validate::EPS_KW
+            {
+                values.push(clamp(candidate, lo, hi));
+            }
+        }
     }
     values.sort_by(f64::total_cmp);
     let mut out: Vec<f64> = Vec::new();

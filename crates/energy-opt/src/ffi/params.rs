@@ -32,4 +32,5 @@ pub struct EoCoreParams {
     pub refuse_battery_export: i32,
     pub has_sell_floor: i32,
     pub pv_preference: i32,
+    pub align_actions: i32,
 }

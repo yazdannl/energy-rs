@@ -192,6 +192,13 @@ PV is never blocked and no import is ever forced. When `cap_raw(t) < E_min_hw` t
 exceeds the whole usable band: the ceiling sits at the hardware floor, grid charging stops, and the
 plan records `reserve_saturated` — a sunny day the pack cannot swallow, not a failure.
 
+**The action set (0.9.1).** With `align_actions` the solver evaluates two grid-neutral powers beside
+the lattice: `p = surplus` (charge exactly the PV the house cannot use) and `p = −base` (discharge
+exactly the house's load). Before them, a 24-step lattice could only round: a 0.10 kW surplus had to
+become a 0.24 kW charge that imported 0.14 kW, and a 0.88 kW load had to become a 1.01 kW discharge
+that sold 0.13 kW below break-even. On the live 0.8.5 plan the pair removed all 0.60 kWh of exports
+(0.43 kWh of it battery energy) and captured every surplus kWh at the same 24-step cost.
+
 **The clamp.** `plan/clamp.rs` walks the solver's action path in slot order, applying the reserve
 ceiling, the hardware floor and the export gate in one pass (sign convention is the DP's:
 `power > 0` charges, `power < 0` discharges):

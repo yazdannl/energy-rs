@@ -40,7 +40,8 @@ pub use stats::{
     Granularity, HistoryQuery, HistoryResponse, HistoryState, Period, Slot, StatRow, StatType,
     StatisticKind, StatisticMetadata, StatisticsQuery, StatisticsResponse, history_during_period,
     list_statistic_ids, mean_series_hourly, parse_slots, slot_series, slot_series_5min,
-    slot_series_15min, slot_series_hourly, statistics_during_period, statistics_metadata,
+    slot_series_15min, slot_series_hourly, statistic_metadata_for, statistics_during_period,
+    statistics_metadata,
 };
 pub use subscribe::{
     CompressedDiff, CompressedPatch, CompressedState, EntityDiffEvent, EntityStore, EntityUpdate,

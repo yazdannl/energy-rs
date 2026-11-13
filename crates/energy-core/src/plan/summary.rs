@@ -37,7 +37,12 @@ pub(crate) fn summarize(
         if slot.battery_kw > 0.0 {
             let charge = slot.battery_kw * hours;
             summary.charged_kwh += charge;
-            let from_grid = (slot.battery_kw - base.max(0.0)).max(0.0) * hours;
+            // The PV part of a charge is what the surplus covers; everything above it is imported.
+            // Using `base.max(0.0)` here (the pre-0.9.0 form) counted the *whole* midday charge as
+            // grid charging whenever PV covered the house, which is why the summary reported
+            // `pvChargeWh: 0` on a plan that was visibly charging on solar.
+            let surplus = (slot.pv_kw - slot.load_kw).max(0.0);
+            let from_grid = (slot.battery_kw - surplus).max(0.0) * hours;
             summary.grid_charge_kwh += from_grid;
         } else {
             summary.discharged_kwh += -slot.battery_kw * hours;
@@ -96,6 +101,22 @@ mod tests {
             summary.cost_estimate_eur
         );
         assert!((summary.baseline_cost_eur - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_charge_on_pv_surplus_is_counted_as_pv_not_grid() {
+        // PV covers the house and 0.3 kW is left; the pack takes it. Nothing is imported.
+        let slots = vec![slot(0, 0.2, 0.5, 0.3, 0.40, 0.22)];
+        let summary = summarize(&slots, 4.0, None);
+        assert!((summary.charged_kwh - 0.075).abs() < 1e-12);
+        assert_eq!(summary.grid_charge_kwh, 0.0);
+        assert!((summary.pv_charge_kwh - 0.075).abs() < 1e-12);
+
+        // A charge that is larger than the surplus imports the difference.
+        let slots = vec![slot(0, 0.2, 0.3, 0.4, 0.40, 0.22)];
+        let summary = summarize(&slots, 4.0, None);
+        assert!((summary.grid_charge_kwh - 0.075).abs() < 1e-12);
+        assert!((summary.pv_charge_kwh - 0.025).abs() < 1e-12);
     }
 
     #[test]

@@ -69,6 +69,9 @@ typedef struct {
     double target_penalty;
     long max_states;
     long max_iterations;
+    /*: Plan the two grid-neutral powers as actions as well: charge exactly the PV surplus and
+     * serve exactly the house.  Off keeps the extracted core's action set (parity rows). */
+    int align_actions;
 } Config;
 /* Per-slot constants, hoisted out of the state loop. */
 typedef struct {
@@ -267,12 +270,18 @@ static void bounds(const Config *c, const SlotCtx *ctx, double e, double dt, dou
 }
 
 /* _actions: evenly spaced powers in [lo, hi], 0 always when feasible, sorted and deduped.
+ *
+ * ``align`` adds the two grid-neutral powers the planner cares about: charging exactly the PV
+ * surplus (grid flows neither way) and serving exactly the house (grid flows neither way).  Without
+ * them a 24-step lattice can only round a 0.10 kW surplus to 0.24 kW (importing the difference) or
+ * spill a 0.13 kW discharge to the grid.
+ *
  * Returns the count, or -1 when the caller's capacity is too small (never a partial write). */
 static int build_actions(double lo, double hi, long steps_in, int has_extra, double extra,
-                         double *out, long capacity) {
+                         int align, double surplus, double house, double *out, long capacity) {
     long steps = steps_in;
     if (steps < 1) steps = 1;
-    if (steps + 2 > capacity) return -1;
+    if (steps + 4 > capacity) return -1;
     int n = 0;
     if (hi - lo <= EPS_KW) {
         out[n++] = clampd(0.0, lo, hi);
@@ -288,6 +297,14 @@ static int build_actions(double lo, double hi, long steps_in, int has_extra, dou
     out[n++] = clampd(0.0, lo, hi);
     if (has_extra && lo - EPS_KW <= extra && extra <= hi + EPS_KW) {
         out[n++] = clampd(extra, lo, hi);
+    }
+    if (align) {
+        if (lo - EPS_KW <= surplus && surplus <= hi + EPS_KW) {
+            out[n++] = clampd(surplus, lo, hi);
+        }
+        if (lo - EPS_KW <= house && house <= hi + EPS_KW) {
+            out[n++] = clampd(house, lo, hi);
+        }
     }
     insertion_sort(out, n);
     int w = 0;
@@ -365,7 +382,8 @@ static double choose_power(const Config *c, const SlotCtx *ctx, const double *gr
     bounds(c, ctx, e_now, dt, &lo, &hi, &soc_lo, &soc_hi);
     int has_extra = last_slot && c->has_target;
     double extra = has_extra ? exact_power(c, e_now, c->e_target, dt) : 0.0;
-    int na = build_actions(lo, hi, c->power_steps, has_extra, extra, actions, actions_capacity);
+    int na = build_actions(lo, hi, c->power_steps, has_extra, extra, c->align_actions,
+                           ctx->surplus, -ctx->base, actions, actions_capacity);
     if (na < 0) return clampd(0.0, lo, hi);
     double best = INFINITY;
     double best_p = clampd(0.0, lo, hi);
@@ -419,8 +437,8 @@ static int run_solve(const Config *c, const double *pv, const double *load, cons
             bounds(c, &ctx, e, dt, &lo, &hi, &soc_lo, &soc_hi);
             int has_extra = last_slot && c->has_target;
             double extra = has_extra ? exact_power(c, e, c->e_target, dt) : 0.0;
-            int na = build_actions(lo, hi, c->power_steps, has_extra, extra, actions,
-                                   actions_capacity);
+            int na = build_actions(lo, hi, c->power_steps, has_extra, extra, c->align_actions,
+                                   ctx.surplus, -ctx.base, actions, actions_capacity);
             if (na < 0) return -1;
             double best = INFINITY;
             double best_p = clampd(0.0, lo, hi);

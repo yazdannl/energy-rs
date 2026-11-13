@@ -75,7 +75,11 @@ pub fn argmin_at(
 ) -> Option<(f64, f64)> {
     let mut best_cost = f64::INFINITY;
     let mut best_power: Option<f64> = None;
-    for action in actions(lo, hi, ctx.config.power_steps, extra) {
+    let align = ctx
+        .config
+        .align_actions
+        .then(|| (ctx.slot.surplus(), -ctx.slot.base()));
+    for action in actions(lo, hi, ctx.config.power_steps, extra, align) {
         let (total, _, _) = one_step(ctx, state, action)?;
         if total < best_cost {
             best_cost = total;

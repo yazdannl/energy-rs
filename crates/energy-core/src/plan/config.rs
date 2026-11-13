@@ -11,6 +11,10 @@ pub(crate) fn solver_config(input: &PlanInput, aggregate: &Aggregate, salvage: f
     config.slot_minutes = SLOT_MINUTES;
     config.soc_step_kwh = 0.05;
     config.power_steps = 24;
+    // A 24-step lattice cannot charge a 0.10 kW PV surplus without importing the difference, nor
+    // serve a 0.88 kW load without spilling 0.13 kW to the grid. The two grid-neutral powers are
+    // what makes the plan capture the sun and stop selling battery energy below break-even.
+    config.align_actions = true;
     config.max_states = 400;
     config.allow_grid_charge = true;
     // Export is allowed unless the operator banned it. There is no static price floor: whether a
