@@ -12,6 +12,7 @@ use energy_price::store::PriceRepository;
 
 use crate::dispatch::BoxFuture;
 use crate::plan::PlanError;
+use crate::plan_source::PvHandle;
 use crate::plan_source::ha_series;
 use crate::plan_source::load_profiles::LoadProfiles;
 use crate::plan_source::load_serve::{self, Served};
@@ -29,6 +30,7 @@ pub struct HaPlanSupply {
     prices: Arc<dyn PriceRepository>,
     settlement: Settlement,
     profiles: Option<Arc<LoadProfiles>>,
+    pv: Option<Arc<PvHandle>>,
 }
 
 impl HaPlanSupply {
@@ -43,6 +45,7 @@ impl HaPlanSupply {
             prices,
             settlement,
             profiles: None,
+            pv: None,
         }
     }
 
@@ -50,6 +53,13 @@ impl HaPlanSupply {
     #[must_use]
     pub fn with_load_profiles(mut self, profiles: Arc<LoadProfiles>) -> Self {
         self.profiles = Some(profiles);
+        self
+    }
+
+    /// Use the operator's PV array and mode (the learned model is the default in `auto`).
+    #[must_use]
+    pub fn with_pv(mut self, pv: Arc<PvHandle>) -> Self {
+        self.pv = Some(pv);
         self
     }
 
@@ -123,29 +133,31 @@ impl HaPlanSupply {
     ) -> Result<Forecast, PlanError> {
         let start = ha_series::slot_floor(now);
         let slots = crate::plan::HORIZON_SLOTS;
-        let solar = ha_series::solar_forecast(&self.connection, entry_ids).await?;
         let mut notes: Vec<String> = Vec::new();
-        let pv_kw = if let Some(series) = solar {
-            ha_series::sample(&series, start, slots)
-        } else {
-            notes.push("solar forecast missing; EWMA fallback from measured PV".to_string());
-            history
-                .fallback(start, slots, false)
-                .ok_or(PlanError::ForecastUnavailable {
-                    name: "pv_kw",
-                    reason: "no solar forecast and no full day of measured history".to_owned(),
-                })?
-        };
-        let profile = self
-            .profiles
-            .as_ref()
-            .and_then(|profiles| profiles.current(now));
         let config = self
             .profiles
             .as_ref()
             .map(|profiles| profiles.config())
             .unwrap_or_default();
-        let prepared = self.prepare(&config, now, slots).await;
+        let weather = load_serve::weather(&self.connection, &config, now, slots).await;
+        let pv_kw = super::pv_select::select(
+            super::pv_select::PvRequest {
+                connection: &self.connection,
+                handle: self.pv.as_ref(),
+                entry_ids,
+                start,
+                slots,
+                weather: &weather,
+                history,
+            },
+            &mut notes,
+        )
+        .await?;
+        let profile = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.current(now));
+        let prepared = self.prepare(&config, &weather.temperatures);
         notes.extend(prepared.notes.iter().cloned());
         let served = Served {
             devices: &prepared.devices,
@@ -180,14 +192,17 @@ impl HaPlanSupply {
     }
 
     /// Everything the load forecast needs beside the house profile and the measured level.
-    async fn prepare(&self, config: &LoadConfig, now: i64, slots: usize) -> Prepared {
+    fn prepare(
+        &self,
+        config: &LoadConfig,
+        temperatures: &BTreeMap<DateTime<Utc>, f64>,
+    ) -> Prepared {
         let (devices, problems) = config.parsed_devices();
         let device_profiles = self
             .profiles
             .as_ref()
             .map(|profiles| profiles.device_profiles(&devices))
             .unwrap_or_default();
-        let temperatures = load_serve::temperatures(&self.connection, config, now, slots).await;
         let mut notes: Vec<String> = problems
             .iter()
             .map(|problem| format!("load.devices: {problem}"))
@@ -202,7 +217,7 @@ impl HaPlanSupply {
         Prepared {
             devices,
             device_profiles,
-            temperatures,
+            temperatures: temperatures.clone(),
             holiday: config.holiday,
             notes,
         }

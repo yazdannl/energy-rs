@@ -11,10 +11,11 @@ const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const PRICE_PROVIDERS: [&str; 2] = ["zonneplan", "ha_sensor"];
 const EXPORT_POLICIES: [&str; 2] = ["legacy", "cost_basis"];
 const ON_OFF: [&str; 2] = ["off", "on"];
+const PV_MODES: [&str; 3] = ["auto", "model", "provider"];
 const NET_METERING: [&str; 2] = ["on", "off"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 24] = [
+static SPECS: [SettingSpec; 30] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -173,6 +174,48 @@ static SPECS: [SettingSpec; 24] = [
         key: "export_policy",
         kind: SettingKind::Choice(&EXPORT_POLICIES),
         default: "legacy",
+    },
+    SettingSpec {
+        key: "pv_mode",
+        kind: SettingKind::Choice(&PV_MODES),
+        default: "auto",
+    },
+    SettingSpec {
+        key: "pv_dc_kwp",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 100.0,
+        },
+        default: "0",
+    },
+    SettingSpec {
+        key: "pv_ac_kwp",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 100.0,
+        },
+        default: "0",
+    },
+    SettingSpec {
+        key: "pv_tilt_deg",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 90.0,
+        },
+        default: "25",
+    },
+    SettingSpec {
+        key: "pv_azimuth_deg",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 359.999,
+        },
+        default: "135",
+    },
+    SettingSpec {
+        key: "pv_scale",
+        kind: SettingKind::Number { min: 0.1, max: 5.0 },
+        default: "1",
     },
 ];
 

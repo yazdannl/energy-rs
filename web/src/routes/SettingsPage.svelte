@@ -7,6 +7,7 @@
   import Scale from '@lucide/svelte/icons/scale';
   import Server from '@lucide/svelte/icons/server';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+  import Sun from '@lucide/svelte/icons/sun';
   import { onMount } from 'svelte';
 
   import type { DispatchResponse, Health, PricesResponse, SitePack } from '../lib/api/types';
@@ -25,6 +26,7 @@
   import SettingsPolicy from '../components/settings/SettingsPolicy.svelte';
   import SettingsProvider from '../components/settings/SettingsProvider.svelte';
   import SettingsRetention from '../components/settings/SettingsRetention.svelte';
+  import SettingsSolar from '../components/settings/SettingsSolar.svelte';
   import Badge from '../components/ui/Badge.svelte';
   import Button from '../components/ui/Button.svelte';
   import ErrorNote from '../components/ui/ErrorNote.svelte';
@@ -138,6 +140,15 @@
         <Skeleton rows={5} />
       {:else}
         <SettingsPolicy {draft} />
+      {/if}
+    </Panel>
+
+    <Panel title="PV forecast" subtitle="Learned model, provider or auto; the array it serves">
+      {#snippet icon()}<Sun class="size-4 text-pv" />{/snippet}
+      {#if draft.loading && draft.schema.length === 0}
+        <Skeleton rows={5} />
+      {:else}
+        <SettingsSolar {draft} />
       {/if}
     </Panel>
 

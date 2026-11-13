@@ -15,6 +15,7 @@ use crate::bootstrap::booted::Booted;
 use crate::bootstrap::engine::Ports;
 use crate::bootstrap::pool;
 use crate::bootstrap::settings_policy;
+use crate::bootstrap::settings_pv;
 use crate::bootstrap::site_cache::SiteCache;
 use crate::bootstrap::{
     config, engine, fleet, ha, ha_loop, meter, options, prices, profile, savings,
@@ -135,12 +136,13 @@ async fn wire_engine(
     let policy = Arc::new(energy_core::plan_source::PolicyHandle::new(config::policy(
         ledger,
     )));
+    let pv = energy_core::plan_source::PvHandle::shared(config::pv(ledger));
     let source = engine::plan_source(
         connection,
         Arc::clone(&prices.repository),
         prices.settlement(),
         Arc::clone(profiles),
-        policy.get(),
+        Arc::clone(&pv),
         Arc::clone(&policy),
     );
     Ok(engine::engine(
@@ -157,7 +159,8 @@ async fn wire_engine(
         policy,
         settings_policy::SettingsPolicy::shared(Arc::clone(ledger)),
         pool::LedgerPool::shared(Arc::clone(ledger)),
-    ))
+    )
+    .with_pv(pv, settings_pv::SettingsPv::shared(Arc::clone(ledger))))
 }
 
 /// Run the engine's tick loop, draining the API command queue between ticks.

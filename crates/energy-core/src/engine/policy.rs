@@ -19,11 +19,26 @@ impl crate::engine::Engine {
         self
     }
 
+    /// Follow the live PV configuration as well (array, mode and model scale).
+    #[must_use]
+    pub fn with_pv(
+        mut self,
+        handle: Arc<crate::plan_source::PvHandle>,
+        source: Arc<dyn crate::plan_source::PvSource>,
+    ) -> Self {
+        self.pv = Some(handle);
+        self.pv_source = Some(source);
+        self
+    }
+
     /// Refresh the policy handle and advance the cost pool with this tick's measurement.
     ///
     /// A settings change therefore takes effect on the next plan instead of at the next restart,
     /// and the basis follows what the packs actually charge and discharge.
     pub(crate) fn refresh_policy(&self, now: i64, view: &FleetView, meter: &MeterReading) {
+        if let (Some(handle), Some(source)) = (&self.pv, &self.pv_source) {
+            handle.set(source.pv());
+        }
         let (Some(handle), Some(source), Some(pool)) =
             (&self.policy, &self.policy_source, &self.pool)
         else {

@@ -40,6 +40,9 @@ pub struct Engine {
     pub(crate) source: Arc<dyn PlanSource>,
     pub(crate) policy: Option<Arc<crate::plan_source::PolicyHandle>>,
     pub(crate) policy_source: Option<Arc<dyn crate::plan_source::PolicySource>>,
+    /// The live PV configuration (the plan source reads it through its own handle).
+    pub(crate) pv: Option<Arc<crate::plan_source::PvHandle>>,
+    pub(crate) pv_source: Option<Arc<dyn crate::plan_source::PvSource>>,
     pub(crate) pool: Option<Arc<dyn crate::savings::PoolStore>>,
     pub(crate) sink: Arc<dyn CommandSink>,
     pub(crate) ledger: Arc<Ledger>,
@@ -91,6 +94,8 @@ impl Engine {
             source,
             policy: None,
             policy_source: None,
+            pv: None,
+            pv_source: None,
             pool: None,
             sink,
             ledger,

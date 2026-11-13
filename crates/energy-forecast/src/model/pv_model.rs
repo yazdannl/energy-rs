@@ -31,6 +31,14 @@ impl PvModel {
         loader::parse(bytes)
     }
 
+    /// The artifact committed with this build (`models/pv_base.json`).
+    ///
+    /// Embedded rather than read from disk: the add-on image ships one binary, and the planner must
+    /// not depend on a working directory. Callers cache the result; it is immutable.
+    pub fn embedded() -> Result<Self, ForecastError> {
+        Self::from_json(include_bytes!("../../models/pv_base.json"))
+    }
+
     /// The clamped multiplier on the physical estimate, for one feature vector.
     pub fn ratio(&self, features: &Features) -> Result<f64, ForecastError> {
         self.ensemble.ratio(features)

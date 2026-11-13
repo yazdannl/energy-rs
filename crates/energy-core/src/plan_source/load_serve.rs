@@ -65,23 +65,58 @@ pub(crate) fn serve(
         .collect())
 }
 
-/// The outdoor temperature over the horizon: the configured weather entity first, then Open-Meteo
-/// over Home Assistant's coordinates, and finally the newest measured hour held flat.
-pub(crate) async fn temperatures(
+/// The weather one plan uses: the PV model's hourly fields, the temperatures the load model reads,
+/// and the coordinates both came from.
+pub(crate) struct Weather {
+    /// Open-Meteo's hourly weather (empty when it answered nothing).
+    pub hours: BTreeMap<DateTime<Utc>, energy_ha::OpenMeteoHour>,
+    /// The temperature by UTC hour the load regression reads.
+    pub temperatures: BTreeMap<DateTime<Utc>, f64>,
+    /// Home Assistant's coordinates, when it has a location.
+    pub location: Option<(f64, f64)>,
+}
+
+/// Fetch the weather once: the configured entity first, then Open-Meteo, then the measured hour.
+pub(crate) async fn weather(
     connection: &Connection,
     config: &LoadConfig,
     now: i64,
     slots: usize,
-) -> BTreeMap<DateTime<Utc>, f64> {
-    if let Some(series) = entity_temperatures(connection, config).await {
-        return series;
+) -> Weather {
+    let location = energy_ha::core_location(connection).await.ok().flatten();
+    let hours = meteo_hours(location).await;
+    let from_meteo: BTreeMap<DateTime<Utc>, f64> = hours
+        .iter()
+        .map(|(hour, weather)| (*hour, weather.temperature_c))
+        .collect();
+    let temperatures = match entity_temperatures(connection, config).await {
+        Some(series) => series,
+        None if !from_meteo.is_empty() => from_meteo,
+        None => match config.temperature_source() {
+            Some(entity) => held_temperatures(connection, entity, now, slots).await,
+            None => BTreeMap::new(),
+        },
+    };
+    Weather {
+        hours,
+        temperatures,
+        location,
     }
-    if let Some(series) = open_meteo_temperatures(connection).await {
-        return series;
-    }
-    match config.temperature_source() {
-        Some(entity) => held_temperatures(connection, entity, now, slots).await,
-        None => BTreeMap::new(),
+}
+
+/// Open-Meteo's hourly weather over Home Assistant's coordinates (empty when either is missing).
+async fn meteo_hours(
+    location: Option<(f64, f64)>,
+) -> BTreeMap<DateTime<Utc>, energy_ha::OpenMeteoHour> {
+    let Some((latitude, longitude)) = location else {
+        return BTreeMap::new();
+    };
+    match energy_ha::open_meteo_forecast(latitude, longitude).await {
+        Ok(series) => series,
+        Err(error) => {
+            tracing::warn!(%error, "the Open-Meteo weather forecast is unreadable");
+            BTreeMap::new()
+        }
     }
 }
 
@@ -96,23 +131,6 @@ async fn entity_temperatures(
         Ok(_) => None,
         Err(error) => {
             tracing::warn!(entity, %error, "the weather forecast is unreadable");
-            None
-        }
-    }
-}
-
-/// Open-Meteo over Home Assistant's own coordinates, or `None` when there is no answer.
-///
-/// No key and no account: this is the path that gives the horizon real temperatures when the
-/// weather integration never implemented a forecast service. Answers are cached by the caller's
-/// side (30 minutes), so a plan rebuild does not hit the provider.
-async fn open_meteo_temperatures(connection: &Connection) -> Option<BTreeMap<DateTime<Utc>, f64>> {
-    let (latitude, longitude) = energy_ha::core_location(connection).await.ok()??;
-    match energy_ha::open_meteo_hourly(latitude, longitude).await {
-        Ok(series) if !series.is_empty() => Some(series),
-        Ok(_) => None,
-        Err(error) => {
-            tracing::warn!(%error, "the Open-Meteo temperature forecast is unreadable");
             None
         }
     }

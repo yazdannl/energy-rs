@@ -23,6 +23,7 @@ pub mod prices;
 pub mod profile;
 pub mod savings;
 pub mod settings_policy;
+pub mod settings_pv;
 pub mod shutdown;
 pub mod site_cache;
 pub mod startup;

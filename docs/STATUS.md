@@ -26,6 +26,7 @@ what makes the add-on actually run end to end; the real UI is P11. The newest no
 | P16 | Battery-layer hardening from the independent safety review (`crates/energy-battery`) | one regression test per finding (`tests/echo.rs`, `tests/control.rs`, `tests/clamp.rs`) | **done** |
 | P17 | Load prediction: base-load floor, named loads, weather and holiday mode | floor/holiday/device tests, `docs/LOAD.md`, `GET/PATCH /loads` | **done** |
 | P18 | Solver action alignment and the PV-charge attribution fix | `tests/align.rs`, summary tests, live plan with zero export | **done** (0.9.1) |
+| P19 | PV forecast from the learned model + Open-Meteo weather | `docs/SOLAR.md`, `pv_mode` settings, model tests | **done** (0.10.0) |
 
 ## P18 notes (action alignment)
 

@@ -276,7 +276,9 @@ credentials and other private options never appear.
 
 * Writable keys: `grid_import_limit_w`, `grid_export_limit_w`, `reserve_soc_pct`, `max_soc_pct`,
   `battery_power_limit_w`, `price_provider`, `price_entity`, `replan_seconds`,
-  `stale_input_seconds`, `full_charge_weekday`, `full_charge_time`.
+  `stale_input_seconds`, `full_charge_weekday`, `full_charge_time`, and the PV array
+  (`pv_mode`, `pv_dc_kwp`, `pv_ac_kwp`, `pv_tilt_deg`, `pv_azimuth_deg`, `pv_scale` — see
+  [SOLAR.md](SOLAR.md)).
 * `at` defaults to now and may not lie more than 60 s in the future (`422`).
 * A write whose `at` predates a stored change for that key is `409 stale_write`; history is never
   rewritten. Writes at or after the newest change append a history row.

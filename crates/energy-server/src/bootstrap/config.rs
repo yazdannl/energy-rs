@@ -55,6 +55,22 @@ pub fn policy(ledger: &Ledger) -> Policy {
     }
 }
 
+/// The PV array and forecast mode from the stored settings.
+///
+/// An unconfigured array (`dc_kwp` 0) means the learned model cannot run, so `auto` falls back to
+/// the provider. The defaults describe this install's plane, not a generic one: a wrong tilt is a
+/// wrong forecast, and a zero is honest.
+pub fn pv(ledger: &Ledger) -> energy_core::plan_source::PvConfig {
+    energy_core::plan_source::PvConfig {
+        dc_kwp: number(ledger, "pv_dc_kwp", 0.0),
+        ac_kwp: number(ledger, "pv_ac_kwp", 0.0),
+        tilt_deg: number(ledger, "pv_tilt_deg", 25.0),
+        azimuth_deg: number(ledger, "pv_azimuth_deg", 135.0),
+        mode: energy_core::plan_source::PvMode::parse(&text(ledger, "pv_mode").unwrap_or_default()),
+        scale: number(ledger, "pv_scale", 1.0),
+    }
+}
+
 /// The weekly maintenance window from `full_charge_weekday`/`full_charge_time`.
 #[allow(clippy::cast_sign_loss)] // clamped to a positive ceiling above the cast
 fn full_charge(ledger: &Ledger, limit_w: f64) -> FullChargeSettings {
