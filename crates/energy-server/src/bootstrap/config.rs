@@ -59,16 +59,55 @@ pub fn policy(ledger: &Ledger) -> Policy {
 ///
 /// An unconfigured array (`dc_kwp` 0) means the learned model cannot run, so `auto` falls back to
 /// the provider. The defaults describe this install's plane, not a generic one: a wrong tilt is a
-/// wrong forecast, and a zero is honest.
+/// The PV array and forecast mode from the stored settings.
+///
+/// The array is a list of planes (`pv_planes`, a JSON array). When that is absent the legacy
+/// single-plane scalars are used, so an install configured before the list existed keeps serving
+/// the same forecast. No planes means the learned model cannot run and `auto` falls back to the
+/// provider: a guessed tilt is a wrong forecast, and a zero is honest.
 pub fn pv(ledger: &Ledger) -> energy_core::plan_source::PvConfig {
     energy_core::plan_source::PvConfig {
-        dc_kwp: number(ledger, "pv_dc_kwp", 0.0),
+        planes: pv_planes(ledger),
         ac_kwp: number(ledger, "pv_ac_kwp", 0.0),
-        tilt_deg: number(ledger, "pv_tilt_deg", 25.0),
-        azimuth_deg: number(ledger, "pv_azimuth_deg", 135.0),
         mode: energy_core::plan_source::PvMode::parse(&text(ledger, "pv_mode").unwrap_or_default()),
         scale: number(ledger, "pv_scale", 1.0),
     }
+}
+
+/// The array's planes: `pv_planes` when it holds any usable entry, else the legacy scalar plane.
+fn pv_planes(ledger: &Ledger) -> Vec<energy_core::plan_source::PvPlane> {
+    let parsed: Vec<energy_core::plan_source::PvPlane> = text(ledger, "pv_planes")
+        .and_then(|raw| serde_json::from_str::<Vec<serde_json::Value>>(&raw).ok())
+        .map(|items| items.iter().filter_map(plane).collect())
+        .unwrap_or_default();
+    if !parsed.is_empty() {
+        return parsed;
+    }
+    let kwp = number(ledger, "pv_dc_kwp", 0.0);
+    if kwp <= 0.0 {
+        return Vec::new();
+    }
+    vec![energy_core::plan_source::PvPlane {
+        name: "Array".to_string(),
+        kwp,
+        tilt_deg: number(ledger, "pv_tilt_deg", 25.0),
+        azimuth_deg: number(ledger, "pv_azimuth_deg", 135.0),
+    }]
+}
+
+/// One plane from one JSON entry; an unusable entry is skipped rather than half-applied.
+fn plane(value: &serde_json::Value) -> Option<energy_core::plan_source::PvPlane> {
+    let plane = energy_core::plan_source::PvPlane {
+        name: value
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        kwp: value.get("kwp")?.as_f64()?,
+        tilt_deg: value.get("tilt")?.as_f64()?,
+        azimuth_deg: value.get("azimuth")?.as_f64()?,
+    };
+    plane.usable().then_some(plane)
 }
 
 /// The weekly maintenance window from `full_charge_weekday`/`full_charge_time`.

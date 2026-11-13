@@ -1,18 +1,14 @@
-//! The array the PV model serves: plane, capacity and which forecast to use.
+//! The array the PV model serves: its planes, the inverter and which forecast to use.
 
-use super::PvMode;
+use super::{PvMode, PvPlane};
 
 /// The operator's PV array, from the settings.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PvConfig {
-    /// DC capacity of the array, kWp.
-    pub dc_kwp: f64,
-    /// AC capacity of the inverter, kW.
+    /// The roof planes; their capacities sum to the array's DC size.
+    pub planes: Vec<PvPlane>,
+    /// AC capacity of the inverter, kW (one ceiling over all planes).
     pub ac_kwp: f64,
-    /// Plane tilt, degrees from horizontal.
-    pub tilt_deg: f64,
-    /// Compass azimuth, degrees (0 = north, 180 = south).
-    pub azimuth_deg: f64,
     /// Which forecast drives the plan.
     pub mode: PvMode,
     /// A scale on the learned model's output, for calibrating it against the measured array.
@@ -22,7 +18,12 @@ pub struct PvConfig {
 impl PvConfig {
     /// Whether the learned model has everything it needs to run.
     pub fn model_ready(&self) -> bool {
-        self.dc_kwp > 0.0 && self.ac_kwp > 0.0 && self.tilt_deg.is_finite()
+        !self.planes.is_empty() && self.ac_kwp > 0.0
+    }
+
+    /// The array's DC capacity, kWp.
+    pub fn dc_kwp(&self) -> f64 {
+        self.planes.iter().map(|plane| plane.kwp).sum()
     }
 
     /// The scale in force, never negative.

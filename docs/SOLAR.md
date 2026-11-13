@@ -23,17 +23,30 @@ weather. A missing weather hour is carried forward from the previous one.
 
 ## Array settings
 
+The array is a **list of planes**, because a roof usually is one:
+
+```json
+[{"name":"PV SE","kwp":2.16,"tilt":25,"azimuth":135},
+ {"name":"PV SW","kwp":1.08,"tilt":25,"azimuth":225},
+ {"name":"PV NW","kwp":1.44,"tilt":25,"azimuth":315}]
+```
+
 | key | unit | notes |
 |---|---|---|
+| `pv_planes` | JSON | one entry per plane: `name`, `kwp`, `tilt`, `azimuth` |
+| `pv_ac_kwp` | kW | the single inverter ceiling over all planes |
 | `pv_mode` | `auto`/`model`/`provider` | which forecast drives the plan |
-| `pv_dc_kwp` | kWp | module nameplate; `0` means "not configured" |
-| `pv_ac_kwp` | kW | inverter ceiling (clipping headroom) |
-| `pv_tilt_deg` | ° | 0 flat, 90 vertical |
-| `pv_azimuth_deg` | ° | 0 north, 180 south |
 | `pv_scale` | × | calibration factor on the model's output |
+| `pv_dc_kwp` / `pv_tilt_deg` / `pv_azimuth_deg` | kWp / ° / ° | legacy single-plane fallback, used only while `pv_planes` is empty |
 
-This install: 2.16 kWp, 25° tilt, 135° azimuth (from the Forecast.Solar sub-entry), inverter ~2.4 kW
-(the highest AC power the SolarEdge statistics ever reached).
+Each plane is served at its own azimuth with the plane's DC capacity and the **total** AC ceiling as
+its clip, the results are summed and the ceiling is applied once — clipping belongs to the inverter,
+not to a roof. The Settings page edits the list row by row.
+
+This install: 4.68 kWp over three planes (SE 2.16 @ 135°, SW 1.08 @ 225°, NW 1.44 @ 315°, all 25°
+tilt), imported from the previous add-on's `solar.sources`; the same array the embedded model was
+trained on. No explicit inverter rating was configured there, so `pv_ac_kwp` equals the DC total
+(no clipping assumed) until the real ceiling is known.
 
 ## Calibration
 

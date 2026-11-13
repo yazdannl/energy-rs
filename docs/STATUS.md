@@ -27,6 +27,7 @@ what makes the add-on actually run end to end; the real UI is P11. The newest no
 | P17 | Load prediction: base-load floor, named loads, weather and holiday mode | floor/holiday/device tests, `docs/LOAD.md`, `GET/PATCH /loads` | **done** |
 | P18 | Solver action alignment and the PV-charge attribution fix | `tests/align.rs`, summary tests, live plan with zero export | **done** (0.9.1) |
 | P19 | PV forecast from the learned model + Open-Meteo weather | `docs/SOLAR.md`, `pv_mode` settings, model tests | **done** (0.10.0) |
+| P20 | Multi-plane array: one row per roof plane, summed, clipped once | `pv_planes` setting, model tests, planes imported from the old add-on | **done** (0.11.0) |
 
 ## P18 notes (action alignment)
 

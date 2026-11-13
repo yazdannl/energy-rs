@@ -21,7 +21,10 @@ impl PvHandle {
 
     /// The configuration in force.
     pub fn get(&self) -> PvConfig {
-        self.0.read().map(|config| *config).unwrap_or_default()
+        self.0
+            .read()
+            .map(|config| config.clone())
+            .unwrap_or_default()
     }
 
     /// Replace it.
