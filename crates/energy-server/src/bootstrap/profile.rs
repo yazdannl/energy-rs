@@ -17,8 +17,12 @@ use crate::bootstrap::site_cache::SiteCache;
 
 /// Seconds a learned profile is used before it is replaced (daily, with an hour of slack).
 const REFRESH: Duration = Duration::from_hours(24);
-/// Silence for this long means the profile refresh is stuck; the next tick tries again.
-const MIN_GAP: Duration = Duration::from_mins(30);
+/// A requested refresh waits this long before the next learn attempt.
+///
+/// It debounces a burst of settings writes (the settings page saves once, but a script may not),
+/// and it used to be thirty minutes, which made the loads page's "relearning now" untrue: a new
+/// named load stayed unmodelled until the next boot. Thirty seconds is a debounce, not a delay.
+const MIN_GAP: Duration = Duration::from_secs(30);
 
 /// Build the profile store over the ledger.
 pub fn store(ledger: Arc<Ledger>) -> Arc<LoadProfiles> {
