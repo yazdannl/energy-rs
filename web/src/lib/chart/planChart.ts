@@ -82,6 +82,10 @@ export function planChart(
     target,
   ] as uPlot.AlignedData;
   const socMax = Math.max(0.1, ...soc, ...target) * 1.12;
+  // The battery is the only series that goes to kilowatts at full inverter power; sharing one scale
+  // with PV and load squeezed a 0.3-0.9 kW load shape into the bottom tenth of the chart. It gets
+  // its own right axis, and the power axis covers PV and load alone.
+  const batteryMax = Math.max(0.2, ...battery.map((value) => Math.abs(value))) * 1.15;
   const barPaths = uPlot.paths.bars?.({ size: [0.66, 14], align: 0, radius: 0.25 });
 
   const series: uPlot.Series[] = [
@@ -126,7 +130,7 @@ export function planChart(
     },
     {
       label: 'Battery power',
-      scale: 'power',
+      scale: 'battery',
       stroke: theme.battery,
       fill: 'rgba(56, 189, 248, 0.55)',
       width: 1,
@@ -171,7 +175,11 @@ export function planChart(
     scales: {
       x: { time: true },
       price: { auto: true },
-      power: { auto: true },
+      power: {
+        auto: true,
+        range: (_u, _min, max) => [0, Math.max(max, 0.2) * 1.1],
+      },
+      battery: { range: [-batteryMax, batteryMax] },
       soc: { range: [0, socMax] },
     },
     axes: [
@@ -195,6 +203,14 @@ export function planChart(
         scale: 'power',
         size: 46,
         space: 40,
+        values: (_, splits) => splits.map((value) => `${value.toFixed(0)} kW`),
+      },
+      {
+        ...axisStyle(theme, 1),
+        scale: 'battery',
+        side: 1,
+        size: 36,
+        gap: 6,
         values: (_, splits) => splits.map((value) => `${value.toFixed(0)} kW`),
       },
       { ...axisStyle(theme, 1), scale: 'soc', show: false, size: 0 },

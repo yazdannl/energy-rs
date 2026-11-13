@@ -4,7 +4,7 @@
   import { onMount, untrack } from 'svelte';
 
   import { DEFAULT_LAYERS, type PlanLayers } from '../lib/chart/planChart';
-  import { ago, clock } from '../lib/format/time';
+  import { ago, span } from '../lib/format/time';
   import { api } from '../lib/state/runtime';
   import { connection } from '../lib/state/connection.svelte';
   import { poll } from '../lib/state/poller';
@@ -101,7 +101,7 @@
 
     <Panel
       title="Timeline"
-      subtitle={`${clock(plan.data.horizonStartAt)} → ${clock(plan.data.horizonEndAt)} · ${plan.data.slots.length} slots`}
+      subtitle={`${span(plan.data.horizonStartAt, plan.data.horizonEndAt)} · ${plan.data.slots.length} slots`}
     >
       {#snippet icon()}<ChartLine class="size-4 text-batt" />{/snippet}
       {#snippet actions()}

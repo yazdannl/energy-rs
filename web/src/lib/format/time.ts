@@ -35,6 +35,26 @@ export function clockSeconds(instant: string | null | undefined): string {
   return orNo(instant, (value) => timeSeconds.format(parseInstant(value)));
 }
 
+/**
+ * `18:45 → 00:00` for a same-day span, `18:45 → 00:00 (+1d)` when it crosses local midnight.
+ *
+ * A 30-hour horizon almost always crosses it, and the times alone made it read as a five-hour plan.
+ */
+export function span(start: string | null | undefined, end: string | null | undefined): string {
+  if (start === null || start === undefined || end === null || end === undefined) {
+    return `${clock(start)} → ${clock(end)}`;
+  }
+  const from = parseInstant(start);
+  const to = parseInstant(end);
+  const days = Math.round(
+    (new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime() -
+      new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime()) /
+      86_400_000,
+  );
+  const suffix = days <= 0 ? '' : ` (+${days}d)`;
+  return `${time.format(from)} → ${time.format(to)}${suffix}`;
+}
+
 /** `12 Jan` */
 export function dayShort(value: string | null | undefined): string {
   return orNo(value, (iso) => dayMonth.format(new Date(`${iso}T12:00:00`)));
