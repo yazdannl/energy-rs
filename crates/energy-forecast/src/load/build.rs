@@ -57,7 +57,10 @@ pub fn build_profile(
         scale: round_digits(scale, 4),
         profile_mean: round_digits(profile_mean, 4),
         recent_7d_mean: round_digits(recent_7d_mean, 4),
-        base_kw: base_load(&usable, now, zone),
+        base_kw: base_load_kw(&usable, now, zone),
+        // The caller that builds a *house* profile sets the served floor; a component's floor is
+        // its own and stays zero until then.
+        house_base_kw: 0.0,
         fit: fit_temperature(&usable, temperatures),
         temperature_hours: temperature_hours(&usable, temperatures),
         samples: usable.len(),
@@ -102,12 +105,12 @@ fn level(usable: &[LoadSample], profile_mean: f64, recent_cutoff: DateTime<Utc>)
     (scale, recent_7d_mean)
 }
 
-/// The house's base load: the tenth percentile of the last fortnight's **night** hours.
+/// The standing load: the tenth percentile of the last fortnight's **night** hours.
 ///
 /// The night is when a house carries only its standing load, so a sensor bug or an unoccupied
 /// afternoon cannot drag the floor to zero the way a whole-window percentile would. When the night
 /// has no samples at all, the whole recent window stands in; with no samples, the floor is zero.
-fn base_load(samples: &[LoadSample], now: DateTime<Utc>, zone: Tz) -> f64 {
+pub fn base_load_kw(samples: &[LoadSample], now: DateTime<Utc>, zone: Tz) -> f64 {
     let cutoff = now - Duration::days(i64::from(BASE_WINDOW_DAYS));
     let recent: Vec<&LoadSample> = samples
         .iter()

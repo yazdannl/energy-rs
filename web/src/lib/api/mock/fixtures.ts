@@ -606,6 +606,7 @@ export function makeLoads(now: Date, holiday = false): LoadsResponse {
       days: 34,
       samples: 812,
       baseKw: 0.18,
+      houseBaseKw: 0.24,
       updatedAt: iso(new Date(now.getTime() - 3 * 3_600_000)),
       temperatureHours: 640,
       accounting: {

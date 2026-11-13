@@ -358,6 +358,39 @@ fn the_base_floor_is_learned_from_the_night_and_floors_a_dead_afternoon() {
 }
 
 #[test]
+fn the_served_total_never_falls_below_the_houses_standing_load() {
+    // The base component learned a 60 W floor, but the house itself never drew below 150 W.
+    let mut profile = LoadProfile::from_payload(&serde_json::json!({
+        "buckets": [],
+        "base_kw": 0.06,
+        "house_base_kw": 0.15,
+    }))
+    .expect("payload parses");
+    profile.samples = 500;
+    profile.days = 30;
+    let profiles = BTreeMap::new();
+    let degrees = BTreeMap::new();
+    let inputs = LoadInputs::new(
+        &profiles,
+        &degrees,
+        0.0,
+        time("2026-03-06T00:00:00+00:00"),
+        AMSTERDAM,
+        Some(24),
+    );
+    let forecast = load_forecast(Some(&profile), &[], &inputs);
+    for slot in &forecast.slots {
+        assert!(
+            slot.load_kw >= 0.15 - 1e-9,
+            "{} served {} below the house's standing load",
+            slot.t,
+            slot.load_kw
+        );
+        assert!(slot.p10_kw <= slot.load_kw + 1e-9);
+    }
+}
+
+#[test]
 fn holiday_serves_the_base_floor_instead_of_the_house_shape() {
     let profile = build_profile(
         &fortnight(0.2, 1.4),

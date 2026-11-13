@@ -40,7 +40,8 @@ impl HourlyBands {
 /// `(p50, p10, p90)` kW for every UTC hour in `[first_hour, last_hour]`, one component.
 ///
 /// A device's own profile is a second profile above the house's, not a correction to it: every
-/// component sees the same clock and the same temperature series.
+/// component sees the same clock and the same temperature series. No floor is applied here; the
+/// house base uses [`house_bands`] and the served total is floored in [`super::forecast`].
 pub fn hourly_bands(
     profile: Option<&LoadProfile>,
     first_hour: DateTime<Utc>,
@@ -57,9 +58,7 @@ pub fn hourly_bands(
     while cursor <= last_hour {
         let index = weekday_hour_bucket(cursor, zone);
         let midpoint = profile.median(index) * profile.scale * profile.bias[index];
-        // The floor is the house's own base load: a bucket learned from an unoccupied or
-        // mis-metered afternoon may read near zero, and no hour can be below the standing load.
-        let value = profile_value(profile, midpoint, cursor, temperatures).max(profile.base_kw);
+        let value = profile_value(profile, midpoint, cursor, temperatures);
         bands.band.insert(cursor, value);
         let bucket_median = profile.median(index);
         let (low, high) = if value > 0.0 && bucket_median > 0.0 {
@@ -70,11 +69,47 @@ pub fn hourly_bands(
         } else {
             (value * FALLBACK_P10_RATIO, value * FALLBACK_P90_RATIO)
         };
-        bands
-            .low
-            .insert(cursor, low.max(profile.base_kw).min(value));
+        bands.low.insert(cursor, low.min(value));
         bands.high.insert(cursor, high.max(value));
         cursor += Duration::hours(1);
+    }
+    bands
+}
+
+/// The house base component: the same bands, floored at the component's own standing load.
+///
+/// Only the house base is floored. A heat pump that cycles would be over-predicted every hour by
+/// its night percentile, while the served *total* is floored separately at the house's own standing
+/// load (see [`super::forecast`]).
+pub fn house_bands(
+    profile: Option<&LoadProfile>,
+    first_hour: DateTime<Utc>,
+    last_hour: DateTime<Utc>,
+    zone: Tz,
+    base_kwh_per_day: f64,
+    temperatures: &BTreeMap<DateTime<Utc>, f64>,
+) -> HourlyBands {
+    let mut bands = hourly_bands(
+        profile,
+        first_hour,
+        last_hour,
+        zone,
+        base_kwh_per_day,
+        temperatures,
+    );
+    let Some(profile) = profile else {
+        return bands;
+    };
+    let floor = profile.base_kw;
+    for (hour, value) in &mut bands.band {
+        let p50 = value.max(floor);
+        *value = p50;
+        if let Some(low) = bands.low.get_mut(hour) {
+            *low = low.max(floor).min(p50);
+        }
+        if let Some(high) = bands.high.get_mut(hour) {
+            *high = high.max(p50);
+        }
     }
     bands
 }

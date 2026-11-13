@@ -69,6 +69,8 @@ pub(crate) struct LearnedProfile {
     days: usize,
     samples: usize,
     base_kw: f64,
+    /// The house's own standing load: the floor of the served total.
+    house_base_kw: f64,
     updated_at: String,
     temperature_hours: usize,
     accounting: Accounting,
@@ -204,6 +206,7 @@ fn learned(profile: energy_forecast::load::LoadProfile) -> LearnedProfile {
         days: profile.days,
         samples: profile.samples,
         base_kw: profile.base_kw,
+        house_base_kw: profile.house_base_kw,
         updated_at: profile.updated_at,
         temperature_hours: profile.temperature_hours,
         accounting: Accounting {

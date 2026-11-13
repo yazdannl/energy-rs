@@ -16,7 +16,8 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use energy_forecast::ForecastError;
 use energy_forecast::load::{
-    LoadConfig, LoadDevice, LoadProfile, LoadSample, WINDOW_DAYS, build_profile, split_device_load,
+    LoadConfig, LoadDevice, LoadProfile, LoadSample, WINDOW_DAYS, base_load_kw, build_profile,
+    split_device_load,
 };
 use energy_forecast::persistence::{LearningRecord, LearningStore};
 use energy_forecast::time::iso_seconds;
@@ -127,6 +128,9 @@ impl LoadProfiles {
     ) -> Result<LoadProfile, ForecastError> {
         let split = split_device_load(house, devices, device_samples);
         let mut base = build_profile(&split.base, temperatures, now, TARIFF_TZ, WINDOW_DAYS, true);
+        // The house's own standing load, learned before anything was subtracted: the served total
+        // is floored at it, so a component that models low can never plan a darker house.
+        base.house_base_kw = base_load_kw(house, now, TARIFF_TZ);
         base.devices_subtracted.clone_from(&split.subtracted);
         base.devices_excluded.clone_from(&split.skipped);
         base.devices_dropped_hours = split.dropped_hours;

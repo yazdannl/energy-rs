@@ -65,26 +65,56 @@ pub(crate) fn serve(
         .collect())
 }
 
-/// The outdoor temperature over the horizon: the weather forecast when one is configured,
-/// otherwise the newest measured hour held flat.
+/// The outdoor temperature over the horizon: the configured weather entity first, then Open-Meteo
+/// over Home Assistant's coordinates, and finally the newest measured hour held flat.
 pub(crate) async fn temperatures(
     connection: &Connection,
     config: &LoadConfig,
     now: i64,
     slots: usize,
 ) -> BTreeMap<DateTime<Utc>, f64> {
-    if let Some(entity) = config.weather_source() {
-        match energy_ha::weather_forecast_hourly(connection, entity).await {
-            Ok(series) if !series.is_empty() => return series,
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(entity, %error, "the weather forecast is unreadable");
-            }
-        }
+    if let Some(series) = entity_temperatures(connection, config).await {
+        return series;
+    }
+    if let Some(series) = open_meteo_temperatures(connection).await {
+        return series;
     }
     match config.temperature_source() {
         Some(entity) => held_temperatures(connection, entity, now, slots).await,
         None => BTreeMap::new(),
+    }
+}
+
+/// The configured weather entity's hourly forecast, or `None` when it has none.
+async fn entity_temperatures(
+    connection: &Connection,
+    config: &LoadConfig,
+) -> Option<BTreeMap<DateTime<Utc>, f64>> {
+    let entity = config.weather_source()?;
+    match energy_ha::weather_forecast_hourly(connection, entity).await {
+        Ok(series) if !series.is_empty() => Some(series),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(entity, %error, "the weather forecast is unreadable");
+            None
+        }
+    }
+}
+
+/// Open-Meteo over Home Assistant's own coordinates, or `None` when there is no answer.
+///
+/// No key and no account: this is the path that gives the horizon real temperatures when the
+/// weather integration never implemented a forecast service. Answers are cached by the caller's
+/// side (30 minutes), so a plan rebuild does not hit the provider.
+async fn open_meteo_temperatures(connection: &Connection) -> Option<BTreeMap<DateTime<Utc>, f64>> {
+    let (latitude, longitude) = energy_ha::core_location(connection).await.ok()??;
+    match energy_ha::open_meteo_hourly(latitude, longitude).await {
+        Ok(series) if !series.is_empty() => Some(series),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(%error, "the Open-Meteo temperature forecast is unreadable");
+            None
+        }
     }
 }
 

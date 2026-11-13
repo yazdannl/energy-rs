@@ -20,9 +20,9 @@ mod source;
 mod split;
 mod temperature_fit;
 
-pub use bands::{HourlyBands, hourly_bands};
+pub use bands::{HourlyBands, hourly_bands, house_bands};
 pub use bucket::{BIAS_MAX, BIAS_MIN, Bucket, EWMA_ALPHA, MIN_SAMPLES, SCALE_MAX, SCALE_MIN};
-pub use build::{BASE_WINDOW_DAYS, WINDOW_DAYS, build_profile};
+pub use build::{BASE_WINDOW_DAYS, WINDOW_DAYS, base_load_kw, build_profile};
 pub use confidence::Confidence;
 pub use config::LoadConfig;
 pub use device::LoadDevice;

@@ -393,6 +393,7 @@ export interface LearnedLoadProfile {
   days: number;
   samples: number;
   baseKw: number;
+  houseBaseKw: number;
   updatedAt: Instant;
   temperatureHours: number;
   accounting: LoadAccounting;

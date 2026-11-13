@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Timelike, Utc};
 
-use super::bands::{HourlyBands, hourly_bands};
+use super::bands::{HourlyBands, hourly_bands, house_bands};
 use super::confidence::Confidence;
 use super::device::LoadDevice;
 use super::inputs::LoadInputs;
@@ -94,6 +94,7 @@ fn summed_bands(
     let first_hour = hour_floor(start) - Duration::hours(1);
     let last_hour = hour_floor(last) + Duration::hours(2);
     let mut total = HourlyBands::default();
+    let house_floor = profile.map_or(0.0, |base| base.house_base_kw);
     let mut components: Vec<Option<&LoadProfile>> = Vec::new();
     match (inputs.holiday, profile) {
         // Away: the learned shape is the house at home, so it is replaced by the floor. The
@@ -104,16 +105,38 @@ fn summed_bands(
     for (_, component) in &plan.included {
         components.push(Some(component));
     }
-    for component in components {
-        let bands = hourly_bands(
-            component,
-            first_hour,
-            last_hour,
-            inputs.zone,
-            inputs.base_kwh_per_day,
-            inputs.temperatures,
-        );
+    for (index, component) in components.into_iter().enumerate() {
+        // Only the first component is the house base, and only at home; the rest are named loads.
+        let bands = if index == 0 && !inputs.holiday {
+            house_bands(
+                component,
+                first_hour,
+                last_hour,
+                inputs.zone,
+                inputs.base_kwh_per_day,
+                inputs.temperatures,
+            )
+        } else {
+            hourly_bands(
+                component,
+                first_hour,
+                last_hour,
+                inputs.zone,
+                inputs.base_kwh_per_day,
+                inputs.temperatures,
+            )
+        };
         total.add(&bands);
+    }
+    // The house never draws less than its standing load, whatever the components say. Away, the
+    // floor *is* the served shape, so flooring it again would count the house twice.
+    if !inputs.holiday {
+        for value in total.band.values_mut() {
+            *value = value.max(house_floor);
+        }
+        for value in total.low.values_mut() {
+            *value = value.max(house_floor);
+        }
     }
     total
 }

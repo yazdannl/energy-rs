@@ -21,11 +21,15 @@ Code: `crates/energy-forecast/src/load` (model), `crates/energy-core/src/plan_so
 | temperature fit | `load = a + b·(T − T̄)`, `r² ≥ 0.05` to be applied | needs an outdoor temperature source |
 | named loads | each meter's own series, after being subtracted from the house | same model, own temperature term for heat pump / water heater / pool pump |
 
-`base_kw` is a **floor**: `bands::profile_value` serves `max(prediction, base_kw)`, and p10 is
-lifted to it as well. A bucket that learned near zero — an unoccupied afternoon, or a mis-metered
-balance — can therefore never plan a house that is darker than its own standing load. The night is
-used rather than the whole day on purpose: a systematically bad daytime measurement must not be
-able to drag the floor down with it.
+`base_kw` is a **floor** for the house base component (`house_bands`), and `house_base_kw` is the
+floor of the **served total** (`summed_bands`), learned from the house *before* any named load was
+subtracted. Two numbers because they answer two questions: the base component's own standing load,
+and what the house never draws less than whatever the components say. A bucket that learned near
+zero — an unoccupied afternoon, or a mis-metered balance — can therefore never plan a house that is
+darker than its own standing load. The night is used rather than the whole day on purpose: a
+systematically bad daytime measurement must not be able to drag the floor down with it. Named loads
+are *not* floored by their own `base_kw`: a cycling heat pump would be over-predicted every hour by
+its night percentile, and the total floor already covers the house.
 
 ## 2. Named loads (`load.devices`)
 
@@ -66,6 +70,12 @@ Two optional entities, both trimmed:
 
 * `weatherEntity` falls back to the deprecated one-entity `weather.get_forecast` when the entity
   never implemented `weather.get_forecasts` (OpenWeatherMap among them).
+* With no usable weather entity, the horizon comes from **Open-Meteo** (`api.open-meteo.com`, the
+  free no-key endpoint) over Home Assistant's own coordinates (`get_config`). Answers are cached for
+  30 minutes, and the request is skipped when Home Assistant reports no location.
+* With no usable weather entity, the horizon comes from **Open-Meteo** (`api.open-meteo.com`, the
+  free no-key endpoint) over Home Assistant's own coordinates (`get_config`). Answers are cached for
+  30 minutes, and the request is skipped when Home Assistant reports no location.
 * `temperatureEntity` — a numeric °C sensor with long-term statistics (`state_class: measurement`).
   A heat pump's own outdoor sensor is a fine choice: it is the temperature the pump responds to.
   Its hourly recorder **means** fit the temperature regression for the house and for each

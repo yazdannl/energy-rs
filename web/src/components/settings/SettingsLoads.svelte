@@ -207,8 +207,10 @@
           Learned base load <span class="font-mono text-ink"
             >{(loads.profile.baseKw * 1000).toFixed(0)} W</span
           >
+          · house floor
+          <span class="font-mono text-ink">{(loads.profile.houseBaseKw * 1000).toFixed(0)} W</span>
           · {loads.profile.days} days, {loads.profile.samples} hours, {loads.profile
-            .temperatureHours} with a temperature reading. No hour is predicted below the base.
+            .temperatureHours} with a temperature reading. No hour is predicted below the house floor.
         </p>
       {:else}
         <p>No usable learned profile yet; the residential shape is serving the plan.</p>

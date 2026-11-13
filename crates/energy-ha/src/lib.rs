@@ -47,4 +47,4 @@ pub use subscribe::{
     CompressedDiff, CompressedPatch, CompressedState, EntityDiffEvent, EntityStore, EntityUpdate,
     EntityWatch, watch_entities,
 };
-pub use weather::weather_forecast_hourly;
+pub use weather::{core_location, open_meteo_hourly, weather_forecast_hourly};
