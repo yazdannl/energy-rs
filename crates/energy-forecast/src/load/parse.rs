@@ -78,7 +78,12 @@ fn parse_entry(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .trim();
-    let device = LoadDevice::new(entity, &kind, name);
+    let keep_while_away = map
+        .get("keep_while_away")
+        .or_else(|| map.get("keepWhileAway"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let device = LoadDevice::new(entity, &kind, name).with_keep_while_away(keep_while_away);
     let note = kind.label().is_none().then(|| {
         format!(
             "{where_} ({}): unknown kind {:?}; modelled as a plain meter with no temperature term",

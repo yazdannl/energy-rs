@@ -57,20 +57,23 @@ pub fn hourly_bands(
     while cursor <= last_hour {
         let index = weekday_hour_bucket(cursor, zone);
         let midpoint = profile.median(index) * profile.scale * profile.bias[index];
-        let value = profile_value(profile, midpoint, cursor, temperatures);
+        // The floor is the house's own base load: a bucket learned from an unoccupied or
+        // mis-metered afternoon may read near zero, and no hour can be below the standing load.
+        let value = profile_value(profile, midpoint, cursor, temperatures).max(profile.base_kw);
         bands.band.insert(cursor, value);
         let bucket_median = profile.median(index);
-        if value > 0.0 && bucket_median > 0.0 {
-            bands
-                .low
-                .insert(cursor, value * profile.buckets[index].p10 / bucket_median);
-            bands
-                .high
-                .insert(cursor, value * profile.buckets[index].p90 / bucket_median);
+        let (low, high) = if value > 0.0 && bucket_median > 0.0 {
+            (
+                value * profile.buckets[index].p10 / bucket_median,
+                value * profile.buckets[index].p90 / bucket_median,
+            )
         } else {
-            bands.low.insert(cursor, value * FALLBACK_P10_RATIO);
-            bands.high.insert(cursor, value * FALLBACK_P90_RATIO);
-        }
+            (value * FALLBACK_P10_RATIO, value * FALLBACK_P90_RATIO)
+        };
+        bands
+            .low
+            .insert(cursor, low.max(profile.base_kw).min(value));
+        bands.high.insert(cursor, high.max(value));
         cursor += Duration::hours(1);
     }
     bands

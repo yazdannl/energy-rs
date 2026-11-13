@@ -21,6 +21,7 @@ import type {
   SavingsPeriod,
   SettingsResponse,
   Site,
+  LoadsResponse,
   StreamState,
 } from '../types';
 
@@ -583,5 +584,31 @@ export function makeStreamState(now: Date, tick: number): StreamState {
         since: iso(new Date(now.getTime() - 5_400_000)),
       },
     ],
+  };
+}
+
+/** The load-prediction settings the mock serves: one heat pump that runs while away. */
+export function makeLoads(now: Date, holiday = false): LoadsResponse {
+  return {
+    holiday,
+    temperatureEntity: 'sensor.outdoor_temperature',
+    weatherEntity: 'weather.home',
+    devices: [
+      {
+        entity: 'sensor.heat_pump_power',
+        kind: 'heat_pump',
+        name: 'Heat pump',
+        keepWhileAway: true,
+      },
+    ],
+    problems: [],
+    profile: {
+      days: 34,
+      samples: 812,
+      baseKw: 0.18,
+      updatedAt: iso(new Date(now.getTime() - 3 * 3_600_000)),
+      temperatureHours: 640,
+    },
+    modelled: [{ entity: 'sensor.heat_pump_power', modelled: true }],
   };
 }

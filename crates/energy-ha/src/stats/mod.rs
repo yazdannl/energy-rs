@@ -3,6 +3,7 @@
 mod granularity;
 mod history_query;
 mod history_state;
+mod mean_series;
 mod period;
 mod slot;
 mod slot_series;
@@ -15,6 +16,7 @@ mod statistics_query;
 pub use granularity::Granularity;
 pub use history_query::{HistoryQuery, history_during_period};
 pub use history_state::{HistoryResponse, HistoryState};
+pub use mean_series::mean_series_hourly;
 pub use period::Period;
 pub use slot::{Slot, parse_slots};
 pub use slot_series::{slot_series, slot_series_5min, slot_series_15min, slot_series_hourly};

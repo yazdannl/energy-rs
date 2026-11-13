@@ -10,6 +10,8 @@ import type {
   DispatchResponse,
   Health,
   LearningResponse,
+  LoadsInput,
+  LoadsResponse,
   ReplanResponse,
   Mode,
   ModeResponse,
@@ -31,6 +33,7 @@ import {
   MOCK_MODE,
   makeDispatch,
   makeHealth,
+  makeLoads,
   makePacks,
   makePlan,
   makePrices,
@@ -47,7 +50,7 @@ async function latency(): Promise<void> {
 }
 
 /** Mode is shared between the command endpoints and the stream so the mock stays coherent. */
-const shared: { mode: Mode } = { mode: MOCK_MODE };
+const shared: { mode: Mode; holiday: boolean } = { mode: MOCK_MODE, holiday: false };
 
 /** Aliases the mock remembers, keyed by serial; `null` is a cleared label. */
 const aliases = new Map<string, string | null>();
@@ -140,6 +143,24 @@ export class MockApi implements ApiPort {
     await latency();
     const current = makeSettings(new Date());
     return { ...current, values: { ...current.values, ...values } };
+  }
+
+  async loads(): Promise<LoadsResponse> {
+    await latency();
+    return makeLoads(new Date(), shared.holiday);
+  }
+
+  async saveLoads(input: LoadsInput): Promise<LoadsResponse> {
+    await latency();
+    shared.holiday = input.holiday;
+    const current = makeLoads(new Date(), input.holiday);
+    return {
+      ...current,
+      temperatureEntity: input.temperatureEntity,
+      weatherEntity: input.weatherEntity,
+      devices: input.devices,
+      modelled: input.devices.map((device) => ({ entity: device.entity, modelled: true })),
+    };
   }
 
   async setMode(mode: Mode): Promise<ModeResponse> {

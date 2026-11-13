@@ -10,6 +10,7 @@ use super::device::LoadDevice;
 use super::inputs::LoadInputs;
 use super::plan::{DevicePlan, device_plan};
 use super::profile::LoadProfile;
+use super::shape::{FALLBACK_P10_RATIO, FALLBACK_P90_RATIO};
 use super::slot::LoadSlot;
 use super::source::LoadSource;
 use crate::time::{SLOT_MINUTES, hour_floor, quarter_floor, slot_range};
@@ -69,14 +70,14 @@ pub fn load_forecast(
         start + Duration::hours(i64::from(horizon)),
         i64::from(SLOT_MINUTES),
     );
-    let plan = device_plan(profile, devices, inputs.device_profiles);
+    let plan = device_plan(profile, devices, inputs.device_profiles, inputs.holiday);
     let total = summed_bands(profile, &plan, &grid, inputs);
     LoadForecast {
         slots: slots_from(&grid, &total),
         generated_at: inputs.now,
         source: LoadSource::classify(profile.is_some(), inputs.base_kwh_per_day),
         confidence: Confidence::from_profile(profile),
-        notes: notes_for(profile, &plan),
+        notes: notes_for(profile, &plan, inputs),
     }
 }
 
@@ -93,7 +94,13 @@ fn summed_bands(
     let first_hour = hour_floor(start) - Duration::hours(1);
     let last_hour = hour_floor(last) + Duration::hours(2);
     let mut total = HourlyBands::default();
-    let mut components: Vec<Option<&LoadProfile>> = vec![profile];
+    let mut components: Vec<Option<&LoadProfile>> = Vec::new();
+    match (inputs.holiday, profile) {
+        // Away: the learned shape is the house at home, so it is replaced by the floor. The
+        // devices that keep running are still added below.
+        (true, Some(base)) => total = flat_bands(base.base_kw, first_hour, last_hour),
+        _ => components.push(profile),
+    }
     for (_, component) in &plan.included {
         components.push(Some(component));
     }
@@ -111,6 +118,20 @@ fn summed_bands(
     total
 }
 
+/// Every hour at the base floor, with the fallback band width: the away shape.
+fn flat_bands(floor: f64, first_hour: DateTime<Utc>, last_hour: DateTime<Utc>) -> HourlyBands {
+    let mut bands = HourlyBands::default();
+    let value = floor.max(0.0);
+    let mut cursor = first_hour;
+    while cursor <= last_hour {
+        bands.band.insert(cursor, value);
+        bands.low.insert(cursor, value * FALLBACK_P10_RATIO);
+        bands.high.insert(cursor, value * FALLBACK_P90_RATIO);
+        cursor += Duration::hours(1);
+    }
+    bands
+}
+
 /// Interpolate each hour-quantity onto the quarter-hour grid.
 fn slots_from(grid: &[DateTime<Utc>], total: &HourlyBands) -> Vec<LoadSlot> {
     grid.iter()
@@ -126,10 +147,22 @@ fn slots_from(grid: &[DateTime<Utc>], total: &HourlyBands) -> Vec<LoadSlot> {
         .collect()
 }
 
-fn notes_for(profile: Option<&LoadProfile>, plan: &DevicePlan) -> Vec<String> {
+fn notes_for(
+    profile: Option<&LoadProfile>,
+    plan: &DevicePlan,
+    inputs: &LoadInputs<'_>,
+) -> Vec<String> {
     let mut notes = Vec::new();
     if profile.is_none() {
         notes.push("cold start: no learned profile yet".to_string());
+    }
+    if inputs.holiday {
+        let floor = profile.map_or(0.0, |base| base.base_kw);
+        notes.push(format!(
+            "holiday mode: the house shape is replaced by the base floor ({:.0} W) plus {} load(s) that keep running",
+            floor * 1000.0,
+            plan.included.len()
+        ));
     }
     notes.extend(plan.notes.iter().cloned());
     if !plan.included.is_empty() {
@@ -145,6 +178,13 @@ fn notes_for(profile: Option<&LoadProfile>, plan: &DevicePlan) -> Vec<String> {
         ));
     }
     for (device, reason) in &plan.excluded {
+        if inputs.holiday && !device.keep_while_away {
+            notes.push(format!(
+                "load.devices: {} is off in holiday mode",
+                device.label()
+            ));
+            continue;
+        }
         let detail = profile
             .and_then(|base| base.devices_excluded.get(&device.key))
             .cloned()

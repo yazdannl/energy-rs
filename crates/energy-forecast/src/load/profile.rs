@@ -25,6 +25,8 @@ pub struct LoadProfile {
     pub profile_mean: f64,
     /// Mean load over the last 7 days of the window.
     pub recent_7d_mean: f64,
+    /// The base load, kW: the floor no served hour may predict below.
+    pub base_kw: f64,
     /// The temperature regression, if one was fitted.
     pub fit: TemperatureFit,
     /// Hourly samples that met a temperature reading.
@@ -87,10 +89,8 @@ impl LoadProfile {
             "profile_mean".to_string(),
             number(round_digits(self.profile_mean, 4)),
         );
-        map.insert(
-            "recent_7d_mean".to_string(),
-            number(round_digits(self.recent_7d_mean, 4)),
-        );
+        map.insert("recent_7d_mean".to_string(), number(self.recent_7d_mean));
+        map.insert("base_kw".to_string(), number(self.base_kw));
         map.insert("a".to_string(), self.fit.a.map_or(Value::Null, number));
         map.insert("b".to_string(), number(self.fit.b));
         map.insert("r2".to_string(), number(self.fit.r2));
@@ -179,6 +179,7 @@ impl LoadProfile {
             scale: float(map, "scale", 1.0),
             profile_mean: float(map, "profile_mean", 0.0),
             recent_7d_mean: float(map, "recent_7d_mean", 0.0),
+            base_kw: float(map, "base_kw", 0.0),
             fit: TemperatureFit {
                 a: map.get("a").and_then(Value::as_f64),
                 b: float(map, "b", 0.0),

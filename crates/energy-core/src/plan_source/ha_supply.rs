@@ -3,27 +3,27 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use energy_forecast::load::{LoadDevice, LoadForecast, LoadInputs, LoadProfile, load_forecast};
+use energy_forecast::load::{LoadConfig, LoadDevice, LoadProfile};
 
 use chrono::{DateTime, Utc};
 use energy_ha::{Connection, discover};
 use energy_price::Settlement;
-use energy_price::book::query::TARIFF_TZ;
 use energy_price::store::PriceRepository;
 
 use crate::dispatch::BoxFuture;
 use crate::plan::PlanError;
 use crate::plan_source::ha_series;
 use crate::plan_source::load_profiles::LoadProfiles;
+use crate::plan_source::load_serve::{self, Served};
 use crate::plan_source::{Forecast, HISTORY_HOURS, MeasuredHistory, PlanSupply, Supply};
 
 /// The real supply: `energy/get_prefs` and the energy dashboard's statistics.
 ///
 /// Every required statistic is read as `change` per complete quarter-hour; a hole is refused. The
-/// load forecast is the residential fallback shape scaled to the measured last-24-hour level (no
-/// learned profile is wired into the engine yet), and PV comes from `energy/solar_forecast` when a
-/// provider is configured. Both land in a degraded [`Forecast`] until a model is wired in, which
-/// the plan summary shows honestly.
+/// load forecast is the learned house profile (see [`LoadProfiles`]) plus whatever the operator
+/// configured for it — named loads, holiday mode and the outdoor temperature — and PV comes from
+/// `energy/solar_forecast` when a provider is configured. A missing input degrades the
+/// [`Forecast`] with a note instead of being fabricated, and the plan summary shows it.
 pub struct HaPlanSupply {
     connection: Arc<Connection>,
     prices: Arc<dyn PriceRepository>,
@@ -124,11 +124,11 @@ impl HaPlanSupply {
         let start = ha_series::slot_floor(now);
         let slots = crate::plan::HORIZON_SLOTS;
         let solar = ha_series::solar_forecast(&self.connection, entry_ids).await?;
-        let mut notes = Vec::new();
+        let mut notes: Vec<String> = Vec::new();
         let pv_kw = if let Some(series) = solar {
             ha_series::sample(&series, start, slots)
         } else {
-            notes.push("solar forecast missing; EWMA fallback from measured PV");
+            notes.push("solar forecast missing; EWMA fallback from measured PV".to_string());
             history
                 .fallback(start, slots, false)
                 .ok_or(PlanError::ForecastUnavailable {
@@ -140,15 +140,28 @@ impl HaPlanSupply {
             .profiles
             .as_ref()
             .and_then(|profiles| profiles.current(now));
+        let config = self
+            .profiles
+            .as_ref()
+            .map(|profiles| profiles.config())
+            .unwrap_or_default();
+        let prepared = self.prepare(&config, now, slots).await;
+        notes.extend(prepared.notes.iter().cloned());
+        let served = Served {
+            devices: &prepared.devices,
+            device_profiles: &prepared.device_profiles,
+            temperatures: &prepared.temperatures,
+            holiday: prepared.holiday,
+        };
         let base = history.load_kwh_over(24);
         let load_kw = match (&profile, base) {
-            (Some(profile), _) => serve(Some(profile), 0.0, now, slots)?,
+            (Some(profile), _) => load_serve::serve(Some(profile), 0.0, now, slots, &served)?,
             (None, base) if base > 0.0 => {
-                notes.push("load profile missing; residential fallback shape");
-                serve(None, base, now, slots)?
+                notes.push("load profile missing; residential fallback shape".to_string());
+                load_serve::serve(None, base, now, slots, &served)?
             }
             (None, _) => {
-                notes.push("load profile missing; EWMA fallback from measured load");
+                notes.push("load profile missing; EWMA fallback from measured load".to_string());
                 history
                     .fallback(start, slots, true)
                     .ok_or(PlanError::ForecastUnavailable {
@@ -162,6 +175,35 @@ impl HaPlanSupply {
         } else {
             Forecast::degraded(pv_kw, load_kw, now, notes.join("; "))
         })
+    }
+
+    /// Everything the load forecast needs beside the house profile and the measured level.
+    async fn prepare(&self, config: &LoadConfig, now: i64, slots: usize) -> Prepared {
+        let (devices, problems) = config.parsed_devices();
+        let device_profiles = self
+            .profiles
+            .as_ref()
+            .map(|profiles| profiles.device_profiles(&devices))
+            .unwrap_or_default();
+        let temperatures = load_serve::temperatures(&self.connection, config, now, slots).await;
+        let mut notes: Vec<String> = problems
+            .iter()
+            .map(|problem| format!("load.devices: {problem}"))
+            .collect();
+        let configured = config.temperature_source().is_some() || config.weather_source().is_some();
+        if temperatures.is_empty() && configured {
+            notes.push(
+                "no outdoor temperature available; the temperature term is off for this plan"
+                    .to_owned(),
+            );
+        }
+        Prepared {
+            devices,
+            device_profiles,
+            temperatures,
+            holiday: config.holiday,
+            notes,
+        }
     }
 }
 
@@ -203,41 +245,11 @@ impl PlanSupply for HaPlanSupply {
     }
 }
 
-/// The load series at `now`, from the learned profile or the residential fallback shape.
-fn serve(
-    profile: Option<&LoadProfile>,
-    base_kwh_per_day: f64,
-    now: i64,
-    slots: usize,
-) -> Result<Vec<f64>, PlanError> {
-    let moment = DateTime::<Utc>::from_timestamp(now, 0).ok_or(PlanError::Supply {
-        reason: format!("timestamp {now} is not representable"),
-    })?;
-    let devices = BTreeMap::new();
-    let temperatures = BTreeMap::new();
-    let inputs = LoadInputs::new(
-        &devices,
-        &temperatures,
-        base_kwh_per_day,
-        moment,
-        TARIFF_TZ,
-        Some(30),
-    );
-    let devices: Vec<LoadDevice> = Vec::new();
-    let forecast: LoadForecast = load_forecast(profile, &devices, &inputs);
-    if forecast.slots.len() < slots {
-        return Err(PlanError::ForecastUnavailable {
-            name: "load_kw",
-            reason: format!(
-                "load forecast served {} slots, the horizon needs {slots}",
-                forecast.slots.len()
-            ),
-        });
-    }
-    Ok(forecast
-        .slots
-        .iter()
-        .take(slots)
-        .map(|slot| slot.load_kw.max(0.0))
-        .collect())
+/// Everything one load forecast needs beyond the house profile and the measured level.
+struct Prepared {
+    devices: Vec<LoadDevice>,
+    device_profiles: BTreeMap<String, LoadProfile>,
+    temperatures: BTreeMap<DateTime<Utc>, f64>,
+    holiday: bool,
+    notes: Vec<String>,
 }

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
 
 use super::bucket::{BIAS_MAX, BIAS_MIN, Bucket, EWMA_ALPHA, SCALE_MAX, SCALE_MIN};
@@ -16,6 +16,12 @@ use crate::time::{iso_seconds, local_date, weekday_hour_bucket};
 
 /// Days of history the profile is learned from.
 pub const WINDOW_DAYS: u32 = 56;
+/// Days of history the base-load floor is learned from.
+pub const BASE_WINDOW_DAYS: u32 = 14;
+/// The local night hours the base load is read from (start, exclusive end).
+const NIGHT_HOURS: std::ops::Range<u32> = 0..6;
+/// The quantile of the night samples that stands for the base load.
+const BASE_QUANTILE: f64 = 0.1;
 
 /// Learn the 48-bucket median profile, level scale, EWMA bias and temperature slope.
 ///
@@ -51,6 +57,7 @@ pub fn build_profile(
         scale: round_digits(scale, 4),
         profile_mean: round_digits(profile_mean, 4),
         recent_7d_mean: round_digits(recent_7d_mean, 4),
+        base_kw: base_load(&usable, now, zone),
         fit: fit_temperature(&usable, temperatures),
         temperature_hours: temperature_hours(&usable, temperatures),
         samples: usable.len(),
@@ -93,6 +100,33 @@ fn level(usable: &[LoadSample], profile_mean: f64, recent_cutoff: DateTime<Utc>)
         1.0
     };
     (scale, recent_7d_mean)
+}
+
+/// The house's base load: the tenth percentile of the last fortnight's **night** hours.
+///
+/// The night is when a house carries only its standing load, so a sensor bug or an unoccupied
+/// afternoon cannot drag the floor to zero the way a whole-window percentile would. When the night
+/// has no samples at all, the whole recent window stands in; with no samples, the floor is zero.
+fn base_load(samples: &[LoadSample], now: DateTime<Utc>, zone: Tz) -> f64 {
+    let cutoff = now - Duration::days(i64::from(BASE_WINDOW_DAYS));
+    let recent: Vec<&LoadSample> = samples
+        .iter()
+        .filter(|sample| sample.moment >= cutoff)
+        .collect();
+    let night: Vec<f64> = recent
+        .iter()
+        .filter(|sample| NIGHT_HOURS.contains(&sample.moment.with_timezone(&zone).hour()))
+        .map(|sample| sample.load_kw)
+        .collect();
+    let values = if night.is_empty() {
+        recent.iter().map(|sample| sample.load_kw).collect()
+    } else {
+        night
+    };
+    if values.is_empty() {
+        return 0.0;
+    }
+    round_digits(quantile(&values, BASE_QUANTILE).max(0.0), 4)
 }
 
 fn bucket_stats(samples: &[LoadSample], zone: Tz) -> ([f64; 48], [f64; 48], [f64; 48]) {

@@ -371,3 +371,38 @@ export interface PlanEvent {
 }
 
 export type LinkStatus = 'connecting' | 'live' | 'reconnecting' | 'offline';
+
+/** One configured named load (`load.devices[]`). */
+export interface LoadDevice {
+  entity: string;
+  kind: string;
+  name: string;
+  keepWhileAway: boolean;
+}
+
+/** The learned base profile the planner is using, when one is fresh enough. */
+export interface LearnedLoadProfile {
+  days: number;
+  samples: number;
+  baseKw: number;
+  updatedAt: Instant;
+  temperatureHours: number;
+}
+
+export interface LoadsResponse {
+  holiday: boolean;
+  temperatureEntity: string;
+  weatherEntity: string;
+  devices: LoadDevice[];
+  problems: string[];
+  profile: LearnedLoadProfile | null;
+  modelled: { entity: string; modelled: boolean }[];
+}
+
+/** The whole configuration, replaced as a unit by `PATCH /loads`. */
+export interface LoadsInput {
+  holiday: boolean;
+  temperatureEntity: string;
+  weatherEntity: string;
+  devices: LoadDevice[];
+}

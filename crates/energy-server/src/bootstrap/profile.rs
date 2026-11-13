@@ -27,6 +27,14 @@ pub fn store(ledger: Arc<Ledger>) -> Arc<LoadProfiles> {
 
 /// Learn once and report the outcome in the fault cache.
 pub async fn refresh_once(client: &HaClient, profiles: &LoadProfiles, cache: &SiteCache, now: i64) {
+    if profiles.config().holiday {
+        // An empty house would teach the 48 buckets and the 7-day level a house that does not
+        // exist, and the plan would keep under-predicting for a week after the return. Pause
+        // instead; the last at-home profile stays in service until it ages out.
+        tracing::info!("holiday mode: load-profile learning is paused");
+        cache.set_fault("load_profile", None, now);
+        return;
+    }
     let Some(connection) = connect(client, cache, now).await else {
         return;
     };

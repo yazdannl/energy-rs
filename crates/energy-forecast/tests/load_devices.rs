@@ -175,7 +175,12 @@ fn device_plan_only_adds_back_what_the_base_subtracted() {
     ev_profile.fit.b = 0.4;
     ev_profile.fit.r2 = 0.6;
     profiles.insert(ev.key.clone(), ev_profile);
-    let plan = device_plan(Some(&base), &[ev.clone(), heat_pump.clone()], &profiles);
+    let plan = device_plan(
+        Some(&base),
+        &[ev.clone(), heat_pump.clone()],
+        &profiles,
+        false,
+    );
     assert_eq!(plan.included.len(), 1);
     let (included, component) = &plan.included[0];
     assert_eq!(included.key, ev.key);
@@ -186,7 +191,7 @@ fn device_plan_only_adds_back_what_the_base_subtracted() {
     assert_eq!(plan.excluded[0].0.key, heat_pump.key);
 
     // No base profile: everything is excluded because the fallback already contains it.
-    let plan = device_plan(None, &[ev], &profiles);
+    let plan = device_plan(None, &[ev], &profiles, false);
     assert_eq!(plan.included, Vec::new());
     assert_eq!(plan.excluded.len(), 1);
 }
@@ -218,4 +223,34 @@ fn parse_devices_drops_the_house_meter_duplicates_and_empty_entries() {
     assert!(problems.iter().any(|line| line.contains("repeats a meter")));
     assert!(problems.iter().any(|line| line.contains("names no meter")));
     assert!(problems.iter().any(|line| line.contains("unknown kind")));
+}
+
+#[test]
+fn holiday_serves_only_the_loads_that_keep_running() {
+    let mut base = LoadProfile::from_payload(&json!({
+        "buckets": [],
+        "base_kw": 0.18,
+        "devices_subtracted": ["device:sensor.ev", "device:sensor.heat"],
+    }))
+    .expect("minimal payload parses");
+    base.samples = 500;
+    base.days = 30;
+    let ev = LoadDevice::new("sensor.ev", &DeviceKind::parse("ev_charger"), "");
+    let heat = LoadDevice::new("sensor.heat", &DeviceKind::parse("heat_pump"), "")
+        .with_keep_while_away(true);
+    let mut profiles = BTreeMap::new();
+    for device in [&ev, &heat] {
+        profiles.insert(
+            device.key.clone(),
+            LoadProfile::from_payload(&json!({})).unwrap(),
+        );
+    }
+    let home = device_plan(Some(&base), &[ev.clone(), heat.clone()], &profiles, false);
+    assert_eq!(home.included.len(), 2, "both are modelled at home");
+    let away = device_plan(Some(&base), &[ev.clone(), heat.clone()], &profiles, true);
+    assert_eq!(away.included.len(), 1);
+    assert_eq!(away.included[0].0.key, heat.key);
+    assert_eq!(away.excluded.len(), 1);
+    assert_eq!(away.excluded[0].0.key, ev.key);
+    assert!(away.excluded[0].1.contains("away"));
 }

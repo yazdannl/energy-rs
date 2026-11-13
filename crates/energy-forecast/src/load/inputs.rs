@@ -22,6 +22,8 @@ pub struct LoadInputs<'a> {
     pub zone: Tz,
     /// Horizon in hours; `None` uses the default and the range is clamped.
     pub hours: Option<u32>,
+    /// The house is away: serve the base floor plus only the devices that keep running.
+    pub holiday: bool,
 }
 
 impl<'a> LoadInputs<'a> {
@@ -41,6 +43,14 @@ impl<'a> LoadInputs<'a> {
             now,
             zone,
             hours,
+            holiday: false,
         }
+    }
+
+    /// The same inputs with the house away.
+    #[must_use]
+    pub fn with_holiday(mut self, holiday: bool) -> Self {
+        self.holiday = holiday;
+        self
     }
 }

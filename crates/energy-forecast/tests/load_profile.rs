@@ -306,3 +306,93 @@ fn night_fill_keeps_the_observed_level() {
         "filled mean {mean} should stay at the observed level"
     );
 }
+
+/// Fourteen days of hourly samples: `night` kW in local 00:00-05:00, `day` kW otherwise.
+fn fortnight(night: f64, day: f64) -> Vec<energy_forecast::load::LoadSample> {
+    use chrono::Duration;
+    use chrono::Timelike;
+    let start = time("2026-02-20T00:00:00+00:00");
+    let mut samples = Vec::new();
+    for hour in 0..(14 * 24) {
+        let moment = start + Duration::hours(hour);
+        let local_hour = moment.with_timezone(&AMSTERDAM).hour();
+        let load_kw = if local_hour < 6 { night } else { day };
+        samples.push(energy_forecast::load::LoadSample { moment, load_kw });
+    }
+    samples
+}
+
+#[test]
+fn the_base_floor_is_learned_from_the_night_and_floors_a_dead_afternoon() {
+    // The measured afternoon is implausibly low (a mis-metered balance); the night is not.
+    let profile = build_profile(
+        &fortnight(0.2, 0.01),
+        &BTreeMap::new(),
+        time("2026-03-06T00:00:00+00:00"),
+        AMSTERDAM,
+        WINDOW_DAYS,
+        false,
+    );
+    assert_eq!(profile.base_kw, 0.2, "the night is the standing load");
+    let profiles = BTreeMap::new();
+    let degrees = BTreeMap::new();
+    let inputs = LoadInputs::new(
+        &profiles,
+        &degrees,
+        0.0,
+        time("2026-03-06T00:00:00+00:00"),
+        AMSTERDAM,
+        Some(24),
+    );
+    let forecast = load_forecast(Some(&profile), &[], &inputs);
+    for slot in &forecast.slots {
+        assert!(
+            slot.load_kw >= 0.2 - 1e-9,
+            "{} served {} below the base floor",
+            slot.t,
+            slot.load_kw
+        );
+        assert!(slot.p10_kw <= slot.load_kw + 1e-9);
+        assert!(slot.load_kw <= slot.p90_kw + 1e-9);
+    }
+}
+
+#[test]
+fn holiday_serves_the_base_floor_instead_of_the_house_shape() {
+    let profile = build_profile(
+        &fortnight(0.2, 1.4),
+        &BTreeMap::new(),
+        time("2026-03-06T00:00:00+00:00"),
+        AMSTERDAM,
+        WINDOW_DAYS,
+        false,
+    );
+    let profiles = BTreeMap::new();
+    let degrees = BTreeMap::new();
+    let inputs = LoadInputs::new(
+        &profiles,
+        &degrees,
+        0.0,
+        time("2026-03-06T00:00:00+00:00"),
+        AMSTERDAM,
+        Some(24),
+    )
+    .with_holiday(true);
+    let forecast = load_forecast(Some(&profile), &[], &inputs);
+    for slot in &forecast.slots {
+        assert!(
+            (slot.load_kw - 0.2).abs() < 1e-9,
+            "{} served {} in holiday mode",
+            slot.t,
+            slot.load_kw
+        );
+    }
+    assert!(
+        forecast
+            .notes
+            .iter()
+            .any(|note| note.contains("holiday mode")),
+        "{:?}",
+        forecast.notes
+    );
+}

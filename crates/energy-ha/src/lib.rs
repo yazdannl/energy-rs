@@ -23,6 +23,7 @@ pub mod discovery;
 pub mod state;
 pub mod stats;
 pub mod subscribe;
+pub mod weather;
 
 pub use client::{
     Config, Connection, CoreConfig, EventStream, HaClient, HaError, LinkState, ReconnectPolicy,
@@ -38,10 +39,11 @@ pub use state::{EntityMap, EntityState};
 pub use stats::{
     Granularity, HistoryQuery, HistoryResponse, HistoryState, Period, Slot, StatRow, StatType,
     StatisticKind, StatisticMetadata, StatisticsQuery, StatisticsResponse, history_during_period,
-    list_statistic_ids, parse_slots, slot_series, slot_series_5min, slot_series_15min,
-    slot_series_hourly, statistics_during_period, statistics_metadata,
+    list_statistic_ids, mean_series_hourly, parse_slots, slot_series, slot_series_5min,
+    slot_series_15min, slot_series_hourly, statistics_during_period, statistics_metadata,
 };
 pub use subscribe::{
     CompressedDiff, CompressedPatch, CompressedState, EntityDiffEvent, EntityStore, EntityUpdate,
     EntityWatch, watch_entities,
 };
+pub use weather::weather_forecast_hourly;

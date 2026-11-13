@@ -9,8 +9,8 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Timelike, Utc};
-use energy_forecast::load::{LoadProfile, LoadSample, WINDOW_DAYS};
-use energy_ha::{Connection, discover, slot_series_hourly};
+use energy_forecast::load::{LoadConfig, LoadDevice, LoadProfile, LoadSample, WINDOW_DAYS};
+use energy_ha::{Connection, discover, mean_series_hourly, slot_series_hourly};
 
 use crate::plan::PlanError;
 use crate::plan_source::LoadProfiles;
@@ -33,6 +33,11 @@ pub async fn learn(
         return Err(PlanError::SiteNotConfigured);
     }
     let (from, to) = window(now)?;
+    let config = profiles.config();
+    let (devices, problems) = config.parsed_devices();
+    for problem in &problems {
+        tracing::warn!(%problem, "a load.devices entry was ignored");
+    }
     let counters = collect(connection, &site, from, to).await?;
     let samples = samples(&counters, from, to);
     if samples.len() < MIN_HOURS {
@@ -43,14 +48,73 @@ pub async fn learn(
             ),
         });
     }
+    let temperatures = temperatures(connection, &config, from, to).await;
+    let device_samples = device_series(connection, &devices, from, to).await;
     let moment = DateTime::<Utc>::from_timestamp(now, 0).ok_or(PlanError::Supply {
         reason: format!("timestamp {now} is not representable"),
     })?;
     profiles
-        .refresh(&samples, moment)
+        .learn(&samples, &temperatures, &devices, &device_samples, moment)
         .map_err(|error| PlanError::Supply {
             reason: format!("load profile could not be stored: {error}"),
         })
+}
+
+/// The outdoor temperature by UTC hour, or an empty series when nothing is configured.
+///
+/// A configured sensor that cannot be read is logged and left empty: the profile is still worth
+/// learning without its temperature term, and refusing the whole pass would freeze the buckets
+/// too.
+async fn temperatures(
+    connection: &Connection,
+    config: &LoadConfig,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> BTreeMap<DateTime<Utc>, f64> {
+    let Some(entity) = config.temperature_source() else {
+        return BTreeMap::new();
+    };
+    match mean_series_hourly(connection, entity, from, to).await {
+        Ok(series) => series,
+        Err(error) => {
+            tracing::warn!(entity, %error, "the outdoor temperature series is unreadable; the temperature term stays off");
+            BTreeMap::new()
+        }
+    }
+}
+
+/// One hourly kW series per configured load meter, keyed by device key.
+///
+/// A meter that cannot be read is absent from the map, which makes the split refuse it with a
+/// reason: it stays inside the base profile instead of being subtracted and then lost.
+async fn device_series(
+    connection: &Connection,
+    devices: &[LoadDevice],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> BTreeMap<String, BTreeMap<DateTime<Utc>, f64>> {
+    let mut out = BTreeMap::new();
+    for device in devices {
+        match fetch(connection, &device.entity, from, to).await {
+            Ok(hourly) => {
+                let series = hourly
+                    .into_iter()
+                    .filter_map(|(hour, kwh)| {
+                        DateTime::<Utc>::from_timestamp(hour, 0).map(|moment| (moment, kwh))
+                    })
+                    .collect();
+                out.insert(device.key.clone(), series);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    entity = device.entity,
+                    %error,
+                    "a load.devices meter is unreadable; it stays inside the base profile"
+                );
+            }
+        }
+    }
+    out
 }
 
 /// The dashboard's hourly counters: grid (required), PV and battery (optional).

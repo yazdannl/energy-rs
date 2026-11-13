@@ -22,10 +22,14 @@ pub struct DevicePlan {
 /// was learned and a profile of its own is stored. Adding a device the base still contains counts
 /// it twice, and a doubling hides in the temperature response as a steeper slope instead of looking
 /// like an error.
+///
+/// While the house is away, only the devices marked `keep_while_away` are added: the learned house
+/// shape is not served at all, so everything else in it is off by definition.
 pub fn device_plan(
     base: Option<&LoadProfile>,
     devices: &[LoadDevice],
     profiles: &BTreeMap<String, LoadProfile>,
+    holiday: bool,
 ) -> DevicePlan {
     let mut plan = DevicePlan::default();
     if devices.is_empty() {
@@ -43,6 +47,13 @@ pub fn device_plan(
         return plan;
     };
     for device in devices {
+        if holiday && !device.keep_while_away {
+            plan.excluded.push((
+                device.clone(),
+                "the house is away and it is not marked as running while away".to_string(),
+            ));
+            continue;
+        }
         let subtracted = base.devices_subtracted.contains(&device.key);
         if !subtracted {
             plan.excluded.push((

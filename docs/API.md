@@ -65,6 +65,8 @@ are safe to surface in the UI.
 | GET | `/api/v1/plans` | `limit?` (1–200, default 50) | 200 `plans` | 400 |
 | GET | `/api/v1/dispatch` | `limit?` (1–500, default 50) | 200 `dispatch` | 400 |
 | GET | `/api/v1/savings` | `period=day\|month\|year\|lifetime` (default `day`) | 200 `savings` | 400 |
+| GET | `/api/v1/loads` | — | 200 `loads` | 500 |
+| PATCH | `/api/v1/loads` | `{holiday, temperatureEntity, weatherEntity, devices}` | 200 `loads` | 400, 422, 500 |
 | GET | `/api/v1/settings` | `asOf?` (RFC3339) | 200 `settings` | 400 |
 | PATCH | `/api/v1/settings` | `{values, at?}` | 200 `settings` (written keys + schema) | 400, 409, 422 |
 | PATCH | `/api/v1/mode` | `{mode}` | 200 `mode` | 400, 422, 503 |
@@ -279,6 +281,32 @@ credentials and other private options never appear.
 * A write whose `at` predates a stored change for that key is `409 stale_write`; history is never
   rewritten. Writes at or after the newest change append a history row.
 * The response contains the keys that were written plus the schema; `200`.
+
+### `GET /loads` / `PATCH /loads`
+
+The load-prediction settings (see [LOAD.md](LOAD.md)). `GET` returns the stored configuration plus
+what the planner is using now:
+
+```json
+{ "holiday": false, "temperatureEntity": "sensor.outdoor_temperature",
+  "weatherEntity": "weather.home",
+  "devices": [{ "entity": "sensor.heat_pump_power", "kind": "heat_pump",
+                "name": "Heat pump", "keepWhileAway": true }],
+  "problems": [],
+  "profile": { "days": 34, "samples": 812, "baseKw": 0.18,
+               "updatedAt": "2026-01-01T09:00:00Z", "temperatureHours": 640 },
+  "modelled": [{ "entity": "sensor.heat_pump_power", "modelled": true }] }
+```
+
+`PATCH` replaces the **whole** configuration (there is no per-field merge; the device list is a
+list) and answers the same shape. `profile` is `null` when no profile is fresh enough.
+`modelled` says, per configured entity, whether its meter is currently split off the base and added
+back above it — after a write that is `false` until the relearn it triggers has finished.
+
+* Every device needs a non-empty, unique `entity`; anything else is `422`.
+* `kind` is one of `heat_pump`, `ev_charger`, `water_heater`, `pool_pump`; any other string is a
+  plain meter with no temperature term (reported in `problems`, not refused).
+* `holiday: true` serves the base floor plus the `keepWhileAway` loads only, and pauses learning.
 
 ### `PATCH /mode`
 

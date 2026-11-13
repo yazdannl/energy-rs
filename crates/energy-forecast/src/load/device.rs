@@ -18,6 +18,8 @@ pub struct LoadDevice {
     pub name: String,
     /// Whether its profile gets a temperature term; derived from the kind, never configured.
     pub temperature: bool,
+    /// Whether it keeps running while the house is away; holiday mode serves only these.
+    pub keep_while_away: bool,
 }
 
 impl LoadDevice {
@@ -36,7 +38,15 @@ impl LoadDevice {
                 name.to_string()
             },
             temperature,
+            keep_while_away: false,
         }
+    }
+
+    /// The same device with its away behaviour set, as `load.devices[].keep_while_away` says.
+    #[must_use]
+    pub fn with_keep_while_away(mut self, keep: bool) -> Self {
+        self.keep_while_away = keep;
+        self
     }
 
     /// `name (kind)`, used in forecast notes.

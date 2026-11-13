@@ -11,6 +11,25 @@ use energy_ledger::Ledger;
 
 const NOW: i64 = 1_790_000_000;
 
+fn learn(
+    profiles: &LoadProfiles,
+    house: &[LoadSample],
+    now: DateTime<Utc>,
+) -> energy_forecast::load::LoadProfile {
+    let empty_temperatures = std::collections::BTreeMap::new();
+    let empty_devices = Vec::new();
+    let empty_series = std::collections::BTreeMap::new();
+    profiles
+        .learn(
+            house,
+            &empty_temperatures,
+            &empty_devices,
+            &empty_series,
+            now,
+        )
+        .expect("learn")
+}
+
 fn samples(now: i64, days: i64) -> Vec<LoadSample> {
     let end = DateTime::<Utc>::from_timestamp(now - now.rem_euclid(3600), 0).unwrap();
     let mut samples = Vec::new();
@@ -30,7 +49,7 @@ fn a_profile_is_learned_persisted_and_expires() {
     let ledger = Arc::new(Ledger::open_in_memory().expect("ledger"));
     let profiles = LoadProfiles::new(Arc::clone(&ledger));
     let now = DateTime::<Utc>::from_timestamp(NOW, 0).unwrap();
-    let profile = profiles.refresh(&samples(NOW, 10), now).expect("learn");
+    let profile = learn(&profiles, &samples(NOW, 10), now);
     assert!(profile.days >= 9, "the profile saw {} days", profile.days);
 
     let loaded = profiles.current(NOW).expect("the stored profile is served");
@@ -55,7 +74,7 @@ fn a_thin_profile_is_not_used() {
     let ledger = Arc::new(Ledger::open_in_memory().expect("ledger"));
     let profiles = LoadProfiles::new(ledger);
     let now = DateTime::<Utc>::from_timestamp(NOW, 0).unwrap();
-    profiles.refresh(&samples(NOW, 1), now).expect("learn");
+    learn(&profiles, &samples(NOW, 1), now);
     assert!(
         profiles.current(NOW).is_none(),
         "one day of samples must not steer the battery"

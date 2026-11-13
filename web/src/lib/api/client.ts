@@ -11,6 +11,8 @@ import type {
   DispatchResponse,
   Health,
   LearningResponse,
+  LoadsInput,
+  LoadsResponse,
   Mode,
   ModeResponse,
   OverrideAction,
@@ -45,6 +47,9 @@ export interface ApiPort {
   savings(period: SavingsPeriod): Promise<Savings>;
   settings(): Promise<SettingsResponse>;
   saveSettings(values: Record<string, SettingValue>): Promise<SettingsResponse>;
+  /** The load-prediction settings: holiday mode, the weather sources and the named loads. */
+  loads(): Promise<LoadsResponse>;
+  saveLoads(input: LoadsInput): Promise<LoadsResponse>;
   setMode(mode: Mode): Promise<ModeResponse>;
   override(input: {
     pack: string;
@@ -164,6 +169,14 @@ export class HttpApi implements ApiPort {
 
   saveSettings(values: Record<string, SettingValue>): Promise<SettingsResponse> {
     return this.command<SettingsResponse>('settings', 'PATCH', { values });
+  }
+
+  loads(): Promise<LoadsResponse> {
+    return this.get<LoadsResponse>('loads');
+  }
+
+  saveLoads(input: LoadsInput): Promise<LoadsResponse> {
+    return this.command<LoadsResponse>('loads', 'PATCH', input);
   }
 
   setMode(mode: Mode): Promise<ModeResponse> {

@@ -24,6 +24,26 @@ what makes the add-on actually run end to end; the real UI is P11. The newest no
 | P14 | Read-only diagnostics: `doctor` and `plan-once` | `docs/DOCTOR.md`, CLI tests | **done** |
 | P15 | Control-layer hardening from the independent safety review (`crates/energy-core`) | one regression test per finding, `docs/RUNBOOK.md` §2 safety invariants | **done** |
 | P16 | Battery-layer hardening from the independent safety review (`crates/energy-battery`) | one regression test per finding (`tests/echo.rs`, `tests/control.rs`, `tests/clamp.rs`) | **done** |
+| P17 | Load prediction: base-load floor, named loads, weather and holiday mode | floor/holiday/device tests, `docs/LOAD.md`, `GET/PATCH /loads` | **done** |
+
+## P17 notes (load prediction)
+
+The forecast had a learned 48-bucket house profile but three things it could not use, and one it
+could not say:
+
+- **Base-load floor.** A bucket learned from a mis-metered or unoccupied afternoon could serve
+  10 W while the house stood at > 100 W. The profile now learns `base_kw` (p10 of the last 14
+  days' night hours) and no served hour may fall below it.
+- **Named loads.** The subtraction/add-back model already existed but the engine passed an empty
+  device list. `load.devices` is now stored (`forecast.learning.load.config`), split off the house
+  history before learning, learned as its own profile (temperature term for heat pump / water
+  heater / pool pump, never for an EV charger), and added back only when the served base says it
+  was subtracted.
+- **Weather.** The temperature regression existed but both learning and serving passed an empty
+  temperature map. An outdoor °C sensor now feeds the fit and a `weather.*` hourly forecast feeds
+  the horizon; without a forecast the newest measured hour is held flat.
+- **Holiday mode.** Serves the base floor plus only the loads marked `keep_while_away`, and pauses
+  learning so an empty house never becomes the profile.
 
 ## P15 notes (control-layer safety review)
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import BatteryCharging from '@lucide/svelte/icons/battery-charging';
   import Database from '@lucide/svelte/icons/database';
+  import House from '@lucide/svelte/icons/house';
   import KeyRound from '@lucide/svelte/icons/key-round';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Scale from '@lucide/svelte/icons/scale';
@@ -20,6 +21,7 @@
   import SettingsContract from '../components/settings/SettingsContract.svelte';
   import SettingsHealth from '../components/settings/SettingsHealth.svelte';
   import SettingsLimits from '../components/settings/SettingsLimits.svelte';
+  import SettingsLoads from '../components/settings/SettingsLoads.svelte';
   import SettingsPolicy from '../components/settings/SettingsPolicy.svelte';
   import SettingsProvider from '../components/settings/SettingsProvider.svelte';
   import SettingsRetention from '../components/settings/SettingsRetention.svelte';
@@ -137,6 +139,14 @@
       {:else}
         <SettingsPolicy {draft} />
       {/if}
+    </Panel>
+
+    <Panel
+      title="Load prediction"
+      subtitle="Base-load floor, holiday mode, weather and named loads"
+    >
+      {#snippet icon()}<House class="size-4 text-grid" />{/snippet}
+      <SettingsLoads />
     </Panel>
 
     <Panel

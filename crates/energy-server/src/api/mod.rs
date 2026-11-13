@@ -12,6 +12,7 @@ mod error;
 mod extract;
 mod health;
 mod learning;
+mod loads;
 mod mode;
 mod pack_alias;
 mod pack_lookup;
@@ -54,6 +55,7 @@ pub fn router() -> Router<Arc<Service>> {
         .route("/plans", get(plans::plans))
         .route("/dispatch", get(dispatch::dispatch))
         .route("/savings", get(savings::savings))
+        .route("/loads", get(loads::get_loads).patch(loads::patch_loads))
         .route(
             "/settings",
             get(settings::get_settings).patch(settings::patch_settings),

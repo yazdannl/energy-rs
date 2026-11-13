@@ -4,6 +4,7 @@ mod bands;
 mod bucket;
 mod build;
 mod confidence;
+mod config;
 mod device;
 mod device_kind;
 mod forecast;
@@ -21,8 +22,9 @@ mod temperature_fit;
 
 pub use bands::{HourlyBands, hourly_bands};
 pub use bucket::{BIAS_MAX, BIAS_MIN, Bucket, EWMA_ALPHA, MIN_SAMPLES, SCALE_MAX, SCALE_MIN};
-pub use build::{WINDOW_DAYS, build_profile};
+pub use build::{BASE_WINDOW_DAYS, WINDOW_DAYS, build_profile};
 pub use confidence::Confidence;
+pub use config::LoadConfig;
 pub use device::LoadDevice;
 pub use device_kind::DeviceKind;
 pub use forecast::{LoadForecast, interpolated, load_forecast};
