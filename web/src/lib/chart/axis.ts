@@ -4,6 +4,17 @@
 
 import type { ChartTheme } from './theme';
 
+/// The power panel's plot starts 56 px in (4 px padding plus its 52 px axis). The price strip has no
+/// left axis, so it buys the same 56 px with padding.
+export const PANEL_LEFT = 56;
+
+/// The right axis column: wide enough for `3.2 kWh · 40 %`, and shared by the price strip so both
+/// plots end on the same pixel.
+export const SOC_AXIS_SIZE = 94;
+
+/// The cursor sync key shared by the power panel and the price strip.
+export const PRICE_SYNC_KEY = 'plan-timeline';
+
 /** The tick, grid and font styling every plan axis shares. */
 export function axisStyle(theme: ChartTheme, side: 0 | 1 | 2 | 3) {
   return {

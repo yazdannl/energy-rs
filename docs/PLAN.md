@@ -165,7 +165,7 @@ Daily rollups + lifetime total, all derived from ledger rows (never from planned
 
 Screens: **Now** (animated energy-flow diagram, live PV/grid/battery/load, current slot, today's
 money), **Plan** (36 h × 15 min timeline: one panel with PV, load and battery bars in kW on the left axis
-and SoC in percent of the fleet on the right (kWh in the readout), plus a short strip underneath carrying buy and feed-in on their own
+and SoC on the right labelled in kWh and in percent of the fleet, plus a short strip underneath carrying buy and feed-in on their own
 euro axis, sharing the time axis and the cursor),
 **Prices** (heatmap + net-metering toggle preview), **Batteries** (per-pack cards: SoC, power,
 learned capacity/efficiency with confidence, protection latches, manual override), **Savings**

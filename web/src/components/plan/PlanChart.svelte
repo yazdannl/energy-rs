@@ -4,12 +4,8 @@
   import uPlot from 'uplot';
 
   import type { Plan, PlanSlot } from '../../lib/api/types';
-  import {
-    layerVisibility,
-    planChart,
-    planPriceChart,
-    type PlanLayers,
-  } from '../../lib/chart/planChart';
+  import { layerVisibility, planChart, type PlanLayers } from '../../lib/chart/planChart';
+  import { planPriceChart } from '../../lib/chart/priceChart';
   import { themeFor } from '../../lib/chart/theme';
   import { clock } from '../../lib/format/time';
   import { scheme } from '../../lib/state/scheme.svelte';

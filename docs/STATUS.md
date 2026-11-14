@@ -33,6 +33,7 @@ what makes the add-on actually run end to end; the real UI is P11. The newest no
 | P23 | Peak-aware load: serve `loadQuantile` (default p65) instead of the median hour | `Bucket::at`, `LoadInputs::quantile`, Settings "Planning band" | **done** (0.14.0) |
 | P24 | 36 h horizon (144 slots) so a plan sees tomorrow's evening once the day-ahead book covers it | `HORIZON_SLOTS`, load horizon derived from the slot count | **done** (0.14.0) |
 | P25 | SoC as a percentage of the fleet (axis + readout) and honest efficiency provenance | `SlotDto.socPct`, `roundTripSource`, learning card wording | **done** (0.15.0) |
+| P26 | SoC axis carries both units per tick (`3.2 kWh · 40 %`), one column | `axis.ts` sizes, `priceChart.ts` split out | **done** (0.15.1) |
 
 ## P18 notes (action alignment)
 

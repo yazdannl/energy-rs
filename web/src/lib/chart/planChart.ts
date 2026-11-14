@@ -7,7 +7,7 @@
  * Two labelled scales in the main panel: kilowatts on the left for PV, load and the battery, and
  * kilowatt hours on the right for the state of charge. A second kilowatt axis would be a second
  * column of the same unit, which is unreadable on a 400 px phone; a third one is worse. Prices get
- * their own strip underneath (see [`planPriceChart`]) sharing the time axis, so the euro scale is
+ * their own strip underneath (`priceChart.ts`) sharing the time axis, so the euro scale is
  * legible without competing with the kilowatts.
  *
  * SoC is a third quantity — an amount, not a rate — so it gets a third labelled axis rather than a
@@ -20,7 +20,7 @@ import uPlot from 'uplot';
 
 import type { Plan } from '../api/types';
 import { clock, epochSeconds } from '../format/time';
-import { axisStyle, niceAxis } from './axis';
+import { PRICE_SYNC_KEY, SOC_AXIS_SIZE, axisStyle, niceAxis } from './axis';
 import type { ChartTheme } from './theme';
 
 export interface PlanLayers {
@@ -50,16 +50,6 @@ export interface PlanChartModel {
   data: uPlot.AlignedData;
   options: uPlot.Options;
 }
-
-/** The cursor sync key shared by the power panel and the price strip. */
-export const PRICE_SYNC_KEY = 'plan-timeline';
-
-/**
- * The power panel's plot starts 56 px in (4 px padding plus its 52 px axis) and ends 58 px before
- * the right edge (4 px padding plus its 54 px axis). The price strip has no left axis, so it buys
- * the same 56 px with padding; its own 54 px axis and 4 px padding finish the right side.
- */
-const PANEL_LEFT = 56;
 
 export function planChart(
   plan: Plan,
@@ -191,12 +181,16 @@ export function planChart(
         ...axisStyle(theme, 1),
         scale: 'soc',
         side: 1,
-        size: 54,
+        // Both units on every tick: the percentage is what an operator checks, the kWh is what the
+        // plan actually holds, and neither is worth a second column on a phone.
+        size: SOC_AXIS_SIZE,
         space: 48,
         grid: { show: false },
         values: (_, splits) =>
           splits.map((value) =>
-            socCeilingKwh === null ? `${value.toFixed(1)} kWh` : `${Math.round(value)} %`,
+            socCeilingKwh === null
+              ? `${value.toFixed(1)} kWh`
+              : `${((value / 100) * socCeilingKwh).toFixed(1)} kWh · ${Math.round(value)} %`,
           ),
       },
     ],
@@ -209,79 +203,6 @@ export function planChart(
         },
       ],
     },
-  };
-
-  return { data, options };
-}
-
-/**
- * The buy and feed-in prices, in their own short strip under the power panel.
- *
- * Same width, same time axis and the same cursor as the panel above; the padding reproduces the
- * main chart's axis indents so a quarter-hour sits at the same x in both.
- */
-export function planPriceChart(plan: Plan, theme: ChartTheme): PlanChartModel {
-  const xs = plan.slots.map((slot) => epochSeconds(slot.startAt));
-  const buy = plan.slots.map((slot) => slot.buyEurPerKwh);
-  const feedIn = plan.slots.map((slot) => slot.feedInEurPerKwh);
-  const data: uPlot.AlignedData = [xs, buy, feedIn] as uPlot.AlignedData;
-
-  const options: uPlot.Options = {
-    width: 640,
-    height: 76,
-    padding: [8, 4, 2, PANEL_LEFT],
-    legend: { show: false },
-    cursor: {
-      points: { size: 4 },
-      y: false,
-      drag: { x: false, y: false, setScale: false },
-      sync: { key: PRICE_SYNC_KEY },
-    },
-    tzDate: (ts) => new Date(ts * 1000),
-    scales: {
-      x: { time: true },
-      price: {
-        // Prices never start at zero in a day-ahead tariff; padding the real range keeps the shape
-        // readable instead of pinning it to a baseline that no slot uses.
-        range: (_u, min, max) => {
-          const pad = (max - min) * 0.05;
-          return niceAxis(min - pad, max + pad, 4);
-        },
-      },
-    },
-    axes: [
-      { ...axisStyle(theme, 2), show: false },
-      {
-        ...axisStyle(theme, 1),
-        scale: 'price',
-        size: 54,
-        space: 24,
-        values: (_, splits) => splits.map((value) => `€${value.toFixed(2)}`),
-      },
-    ],
-    series: [
-      {
-        label: 'Time',
-        value: (_, value) => new Date(value * 1000).toLocaleTimeString(),
-      },
-      {
-        label: 'Buy',
-        scale: 'price',
-        stroke: theme.buy,
-        width: 1.4,
-        points: { show: false },
-        value: (_, value) => `€${value.toFixed(3)}`,
-      },
-      {
-        label: 'Feed-in',
-        scale: 'price',
-        stroke: theme.feedIn,
-        width: 1.2,
-        dash: [4, 3],
-        points: { show: false },
-        value: (_, value) => `€${value.toFixed(3)}`,
-      },
-    ],
   };
 
   return { data, options };
