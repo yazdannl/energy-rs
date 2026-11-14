@@ -121,7 +121,8 @@ override.
                "capacityDecision": "capacity_learned", "capacityBandLowKwh": 1.7,
                "capacityBandHighKwh": 1.92, "roundTrip": 0.9, "etaCharge": 0.9486833,
                "etaDischarge": 0.9486833, "efficiencyConfidence": 0.7,
-               "efficiencyApplied": true, "sessionsUsed": 5, "updatedAt": "..." },
+               "efficiencyApplied": true, "roundTripSource": "measured",
+               "sessionsUsed": 5, "updatedAt": "..." },
   "latch": { "blocked": true, "forceCharge": false, "forceChargeW": 300, "since": "...",
              "reason": "cell_below_resume", "reasonAt": "...", "voltageV": 3.01,
              "lastFreshAt": "..." },
@@ -189,7 +190,9 @@ reasons. No plan yet is `404 not_found`.
               "socWh": 1000.0, "targetSocWh": 1250.0, "reason": "price_low" }] }
 ```
 
-Slot energy is the average power over the 15 minutes (`1 kW × 900 s = 250 Wh`).
+Slot energy is the average power over the 15 minutes (`1 kW × 900 s = 250 Wh`). `socPct` is the
+slot's state of charge against the fleet's learned capacity (`null` while no pack reports one), the
+same denominator `/packs` prints per pack.
 `bindingReasons` comes from the engine's snapshot for that plan id, else from the distinct slot
 reasons; a missed terminal target adds `terminal_target_unreachable`.
 

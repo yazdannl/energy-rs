@@ -27,6 +27,8 @@ import type {
 
 const QUARTER_MS = 900_000;
 const CAPACITY_WH = 3840;
+/// The pack the mock plan's percentages are measured against.
+const FLEET_KWH = CAPACITY_WH / 1000;
 const MAX_POWER_W = 1600;
 const MIN_SOC_PCT = 12;
 const MAX_SOC_PCT = 97;
@@ -177,6 +179,7 @@ export function makePlan(now: Date): Plan {
       loadWh: roundValue(loadWh),
       batteryPowerW: roundValue(powerW),
       socWh: roundValue(after),
+      socPct: Math.round((after / (FLEET_KWH * 1000)) * 1000) / 10,
       targetSocWh: Math.round(after),
       reason,
     };

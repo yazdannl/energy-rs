@@ -164,8 +164,9 @@
   <PlanReadout slot={shown} pinned={hovered !== null} />
   <p class="text-[10px] leading-relaxed text-faint">
     PV, load and the battery share the left kilowatt axis; bars above zero charge, below it they
-    discharge. SoC is the right axis in kWh — an amount, so it cannot share a power scale. Prices
-    get their own strip underneath on the same time axis. Hover a quarter-hour for exact values.
+    discharge. SoC is the right axis in percent of the fleet, with the exact kWh in the readout — an
+    amount cannot share a power scale. Prices get their own strip underneath on the same time axis.
+    Hover a quarter-hour for exact values.
   </p>
   <p class="sr-only">Plan from {clock(plan.horizonStartAt)} to {clock(plan.horizonEndAt)}</p>
 </div>

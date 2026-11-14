@@ -62,6 +62,6 @@
     value={learned.efficiencyConfidence}
     detail={learned.roundTrip === null
       ? 'No round-trip measurement yet'
-      : `round trip ${(learned.roundTrip * 100).toFixed(1)} % · η ${learned.etaCharge?.toFixed(3) ?? '—'} each way`}
+      : `${learned.roundTripSource === 'measured' ? 'measured' : 'typed default, no closed cycle yet'} · round trip ${(learned.roundTrip * 100).toFixed(1)} % · η ${learned.etaCharge?.toFixed(3) ?? '—'} each way`}
   />
 </div>

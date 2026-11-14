@@ -46,6 +46,8 @@ struct LearnedDto {
     eta_discharge: f64,
     efficiency_confidence: f64,
     efficiency_applied: bool,
+    /// `measured` when closed cycles produced the number, `default` while it is the typed fallback.
+    round_trip_source: &'static str,
     sessions_used: usize,
     updated_at: Timestamp,
 }
@@ -120,6 +122,11 @@ fn learned_dto(profile: &LearningProfile) -> LearnedDto {
         eta_discharge: profile.eta_discharge,
         efficiency_confidence: profile.efficiency_confidence,
         efficiency_applied: profile.efficiency_applied,
+        round_trip_source: if profile.efficiency_applied {
+            "measured"
+        } else {
+            "default"
+        },
         sessions_used: profile.sessions_used,
         updated_at: Timestamp::from_datetime(profile.updated_at),
     }

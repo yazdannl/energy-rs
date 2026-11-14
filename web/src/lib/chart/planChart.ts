@@ -10,9 +10,10 @@
  * their own strip underneath (see [`planPriceChart`]) sharing the time axis, so the euro scale is
  * legible without competing with the kilowatts.
  *
- * SoC is a third quantity — an amount, not a rate — so it gets a third labelled axis in kWh rather
- * than a hidden scale that would make 3.5 kWh look like 1.6 kW. A percentage would need the pack
- * capacity and the plan DTO does not carry it.
+ * SoC is a third quantity — an amount, not a rate — so it gets a third labelled axis rather than a
+ * hidden scale that would make 3.5 kWh look like 1.6 kW. The axis reads in percent of the fleet's
+ * capacity (the plan carries each slot's percentage), because that is the number an operator checks;
+ * the exact kWh stay in the readout.
  */
 
 import uPlot from 'uplot';
@@ -70,8 +71,18 @@ export function planChart(
   const pv = slots.map((slot) => (slot.pvWh * 4) / 1000);
   const load = slots.map((slot) => (slot.loadWh * 4) / 1000);
   const battery = slots.map((slot) => slot.batteryPowerW / 1000);
-  const soc = slots.map((slot) => slot.socWh / 1000);
-  const target = slots.map((slot) => slot.targetSocWh / 1000);
+  // State of charge reads as a percentage of the fleet: the plan carries it per slot against the
+  // capacity the solver used, and any slot with both numbers recovers that capacity exactly.
+  const socCeilingKwh = slots.reduce<number | null>((ceiling, slot) => {
+    if (ceiling !== null || slot.socPct === null || slot.socPct <= 0 || slot.socWh <= 0) {
+      return ceiling;
+    }
+    return slot.socWh / (slot.socPct / 100) / 1000;
+  }, null);
+  const socValue = (wh: number): number =>
+    socCeilingKwh === null ? wh / 1000 : (wh / 1000 / socCeilingKwh) * 100;
+  const soc = slots.map((slot) => socValue(slot.socWh));
+  const target = slots.map((slot) => socValue(slot.targetSocWh));
 
   const data: uPlot.AlignedData = [xs, pv, load, battery, soc, target] as uPlot.AlignedData;
   const barPaths = uPlot.paths.bars?.({ size: [0.66, 14], align: 0, radius: 0.25 });
@@ -116,7 +127,8 @@ export function planChart(
       stroke: theme.soc,
       width: 2,
       points: { show: false },
-      value: (_, value) => `${value.toFixed(2)} kWh`,
+      value: (_, value) =>
+        socCeilingKwh === null ? `${value.toFixed(2)} kWh` : `${value.toFixed(0)} %`,
     },
     {
       label: 'Target SoC',
@@ -125,7 +137,8 @@ export function planChart(
       width: 1,
       dash: [3, 4],
       points: { show: false },
-      value: (_, value) => `${value.toFixed(2)} kWh`,
+      value: (_, value) =>
+        socCeilingKwh === null ? `${value.toFixed(2)} kWh` : `${value.toFixed(0)} %`,
     },
   ];
 
@@ -153,7 +166,10 @@ export function planChart(
         // reach under it as well.
         range: (_u, min, max) => niceAxis(Math.min(0, min), Math.max(max, 0.2), 6),
       },
-      soc: { range: (_u, _min, max) => niceAxis(0, Math.max(max, 0.2), 5) },
+      soc: {
+        range: (_u, _min, max) =>
+          socCeilingKwh === null ? niceAxis(0, Math.max(max, 0.2), 5) : [0, 100],
+      },
     },
     axes: [
       {
@@ -178,7 +194,10 @@ export function planChart(
         size: 54,
         space: 48,
         grid: { show: false },
-        values: (_, splits) => splits.map((value) => `${value.toFixed(1)} kWh`),
+        values: (_, splits) =>
+          splits.map((value) =>
+            socCeilingKwh === null ? `${value.toFixed(1)} kWh` : `${Math.round(value)} %`,
+          ),
       },
     ],
     series,

@@ -16,7 +16,7 @@
     { label: 'PV', color: theme.pv, on: layers.forecast, dash: false },
     { label: 'Load', color: theme.load, on: layers.forecast, dash: true },
     { label: 'Battery', color: theme.battery, on: layers.battery, dash: false },
-    { label: 'SoC (kWh)', color: theme.soc, on: layers.soc, dash: false },
+    { label: 'SoC', color: theme.soc, on: layers.soc, dash: false },
     { label: 'Target SoC', color: theme.target, on: layers.soc, dash: true },
   ]);
 </script>

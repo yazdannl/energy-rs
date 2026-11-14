@@ -51,6 +51,8 @@ struct SlotDto {
     load_wh: f64,
     battery_power_w: f64,
     soc_wh: f64,
+    /// State of charge as a percentage of the fleet's learned capacity, when it is known.
+    soc_pct: Option<f64>,
     target_soc_wh: f64,
     reason: String,
 }
@@ -92,8 +94,11 @@ fn summary_dto(summary: &PlanSummary) -> SummaryDto {
     }
 }
 
-fn slot_dto(slot: &PlanSlot) -> Result<SlotDto, ApiError> {
+fn slot_dto(slot: &PlanSlot, ceiling_kwh: Option<f64>) -> Result<SlotDto, ApiError> {
     let start = slot.t_start;
+    let soc_pct = ceiling_kwh
+        .filter(|ceiling| *ceiling > 0.0 && ceiling.is_finite())
+        .map(|ceiling| (slot.soc_kwh / ceiling * 100.0).clamp(0.0, 100.0));
     Ok(SlotDto {
         idx: slot.idx,
         start_at: Timestamp::from_epoch(start)?,
@@ -104,9 +109,22 @@ fn slot_dto(slot: &PlanSlot) -> Result<SlotDto, ApiError> {
         load_wh: kw_slot_to_wh(slot.load_kw, SLOT_SECONDS),
         battery_power_w: kw_to_w(slot.battery_kw),
         soc_wh: kwh_to_wh(slot.soc_kwh),
+        soc_pct,
         target_soc_wh: kwh_to_wh(slot.target_soc_kwh),
         reason: slot.reason.clone(),
     })
+}
+
+/// The fleet's learned capacity, kWh, summed over the packs that report one.
+fn capacity_ceiling(service: &Service) -> Option<f64> {
+    let total: f64 = service
+        .snapshot()
+        .packs
+        .iter()
+        .filter_map(|pack| pack.profile.as_ref()?.capacity_kwh)
+        .filter(|capacity| capacity.is_finite() && *capacity > 0.0)
+        .sum();
+    (total > 0.0).then_some(total)
 }
 
 /// The reasons that shaped the plan: the engine's own when it published this plan id, otherwise the
@@ -169,9 +187,12 @@ pub(crate) async fn current_plan(
         serde_json::from_str(&plan.summary_json).map_err(ApiError::corrupt_plan)?;
     let feasible = summary.infeasible_reason.is_none();
     let reasons = binding_reasons(&service, plan.id, &slots, !feasible);
+    // The percentage the UI shows is against the same capacity the solver carried, so the readout
+    // and the packs page cannot drift apart.
+    let ceiling_kwh = capacity_ceiling(&service);
     let slots = slots
         .iter()
-        .map(slot_dto)
+        .map(|slot| slot_dto(slot, ceiling_kwh))
         .collect::<Result<Vec<_>, ApiError>>()?;
     Ok(Json(CurrentPlan {
         plan_id: plan.id,

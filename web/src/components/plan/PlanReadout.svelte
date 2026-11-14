@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PlanSlot } from '../../lib/api/types';
   import { fmtEurPerKwh } from '../../lib/format/money';
-  import { fmtW, fmtWh } from '../../lib/format/energy';
+  import { fmtPct, fmtW, fmtWh } from '../../lib/format/energy';
   import { clock } from '../../lib/format/time';
 
   interface Props {
@@ -28,7 +28,13 @@
     <span class="text-faint"
       >battery <span class="num text-batt">{fmtW(slot.batteryPowerW)}</span></span
     >
-    <span class="text-faint">SoC <span class="num text-ink">{fmtWh(slot.socWh)}</span></span>
+    <span class="text-faint"
+      >SoC <span class="num text-ink">{fmtWh(slot.socWh)}</span>{#if slot.socPct !== null}<span
+          class="num text-muted"
+        >
+          · {fmtPct(slot.socPct)}</span
+        >{/if}</span
+    >
     <!-- The chart plots a slot's average power, so the readout shows the same: a 141 Wh
          quarter-hour is 564 W on the axis, and printing the energy made the two disagree. -->
     <span class="text-faint">PV <span class="num text-pv">{fmtW(slot.pvWh * 4)}</span></span>

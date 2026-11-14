@@ -78,6 +78,8 @@ export interface PackLearned {
   etaDischarge: number | null;
   efficiencyConfidence: number | null;
   efficiencyApplied: boolean;
+  /** `measured` when closed cycles produced the round trip, `default` while it is the fallback. */
+  roundTripSource?: 'measured' | 'default';
   sessionsUsed: number | null;
   updatedAt: Instant | null;
 }
@@ -178,6 +180,8 @@ export interface PlanSlot {
   loadWh: number;
   batteryPowerW: number;
   socWh: number;
+  /** State of charge against the fleet's learned capacity; null when no pack reports one. */
+  socPct: number | null;
   targetSocWh: number;
   reason: string | null;
 }
