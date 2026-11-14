@@ -143,14 +143,17 @@ fn serving_matches_the_reference_slots_exactly() {
     let first_hour = time(serving["first_hour"].as_str().unwrap());
     let last_hour = time(serving["last_hour"].as_str().unwrap());
     let temperatures = temperatures(&serving["temperature_c"]);
-    let bands = hourly_bands(
-        Some(&profile),
-        first_hour,
-        last_hour,
-        AMSTERDAM,
-        serving["base_kwh_per_day"].as_f64().unwrap(),
+    // The reference slots were served at the median; the quantile is pinned to 0.5 on purpose.
+    let no_profiles = BTreeMap::new();
+    let inputs = LoadInputs::new(
+        &no_profiles,
         &temperatures,
+        serving["base_kwh_per_day"].as_f64().unwrap(),
+        first_hour,
+        AMSTERDAM,
+        None,
     );
+    let bands = hourly_bands(Some(&profile), first_hour, last_hour, &inputs);
     let slots = serving["slots"].as_array().expect("slots");
     assert_eq!(slots.len(), 96);
     for (index, slot) in slots.iter().enumerate() {

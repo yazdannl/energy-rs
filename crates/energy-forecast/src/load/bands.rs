@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Timelike, Utc};
-use chrono_tz::Tz;
 
+use super::inputs::LoadInputs;
 use super::profile::LoadProfile;
 use super::shape::{DEFAULT_SHAPE, FALLBACK_P10_RATIO, FALLBACK_P90_RATIO};
 use super::temperature_fit::MIN_TEMPERATURE_R2;
@@ -46,19 +46,20 @@ pub fn hourly_bands(
     profile: Option<&LoadProfile>,
     first_hour: DateTime<Utc>,
     last_hour: DateTime<Utc>,
-    zone: Tz,
-    base_kwh_per_day: f64,
-    temperatures: &BTreeMap<DateTime<Utc>, f64>,
+    inputs: &LoadInputs<'_>,
 ) -> HourlyBands {
     let Some(profile) = profile else {
-        return fallback_bands(first_hour, last_hour, zone, base_kwh_per_day);
+        return fallback_bands(first_hour, last_hour, inputs.zone, inputs.base_kwh_per_day);
     };
     let mut bands = HourlyBands::default();
     let mut cursor = first_hour;
     while cursor <= last_hour {
-        let index = weekday_hour_bucket(cursor, zone);
-        let midpoint = profile.median(index) * profile.scale * profile.bias[index];
-        let value = profile_value(profile, midpoint, cursor, temperatures);
+        let index = weekday_hour_bucket(cursor, inputs.zone);
+        // The plan is served above the median: a median hour under-buys exactly when the house
+        // peaks, and the extra energy is the cheapest insurance the battery can hold.
+        let midpoint =
+            profile.quantile(index, inputs.quantile) * profile.scale * profile.bias[index];
+        let value = profile_value(profile, midpoint, cursor, inputs.temperatures);
         bands.band.insert(cursor, value);
         let bucket_median = profile.median(index);
         let (low, high) = if value > 0.0 && bucket_median > 0.0 {
@@ -85,18 +86,9 @@ pub fn house_bands(
     profile: Option<&LoadProfile>,
     first_hour: DateTime<Utc>,
     last_hour: DateTime<Utc>,
-    zone: Tz,
-    base_kwh_per_day: f64,
-    temperatures: &BTreeMap<DateTime<Utc>, f64>,
+    inputs: &LoadInputs<'_>,
 ) -> HourlyBands {
-    let mut bands = hourly_bands(
-        profile,
-        first_hour,
-        last_hour,
-        zone,
-        base_kwh_per_day,
-        temperatures,
-    );
+    let mut bands = hourly_bands(profile, first_hour, last_hour, inputs);
     let Some(profile) = profile else {
         return bands;
     };
@@ -134,7 +126,7 @@ fn profile_value(
 fn fallback_bands(
     first_hour: DateTime<Utc>,
     last_hour: DateTime<Utc>,
-    zone: Tz,
+    zone: chrono_tz::Tz,
     base_kwh_per_day: f64,
 ) -> HourlyBands {
     let total = fsum(DEFAULT_SHAPE.iter().copied());

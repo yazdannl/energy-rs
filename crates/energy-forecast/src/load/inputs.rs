@@ -24,6 +24,8 @@ pub struct LoadInputs<'a> {
     pub hours: Option<u32>,
     /// The house is away: serve the base floor plus only the devices that keep running.
     pub holiday: bool,
+    /// Which quantile of each bucket the plan is served, clamped to `0.5..=0.9`.
+    pub quantile: f64,
 }
 
 impl<'a> LoadInputs<'a> {
@@ -44,7 +46,15 @@ impl<'a> LoadInputs<'a> {
             zone,
             hours,
             holiday: false,
+            quantile: 0.5,
         }
+    }
+
+    /// Serve `quantile` of each bucket instead of the median.
+    #[must_use]
+    pub fn with_quantile(mut self, quantile: f64) -> Self {
+        self.quantile = quantile.clamp(0.5, 0.9);
+        self
     }
 
     /// The same inputs with the house away.

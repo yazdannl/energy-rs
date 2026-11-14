@@ -594,6 +594,7 @@ export function makeLoads(now: Date, holiday = false): LoadsResponse {
     temperatureEntity: 'sensor.outdoor_temperature',
     weatherEntity: 'weather.home',
     loadEntity: 'sensor.home_load_power',
+    loadQuantile: 0.75,
     devices: [
       {
         entity: 'sensor.heat_pump_power',

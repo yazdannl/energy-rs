@@ -108,23 +108,9 @@ fn summed_bands(
     for (index, component) in components.into_iter().enumerate() {
         // Only the first component is the house base, and only at home; the rest are named loads.
         let bands = if index == 0 && !inputs.holiday {
-            house_bands(
-                component,
-                first_hour,
-                last_hour,
-                inputs.zone,
-                inputs.base_kwh_per_day,
-                inputs.temperatures,
-            )
+            house_bands(component, first_hour, last_hour, inputs)
         } else {
-            hourly_bands(
-                component,
-                first_hour,
-                last_hour,
-                inputs.zone,
-                inputs.base_kwh_per_day,
-                inputs.temperatures,
-            )
+            hourly_bands(component, first_hour, last_hour, inputs)
         };
         total.add(&bands);
     }

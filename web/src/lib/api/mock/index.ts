@@ -159,6 +159,7 @@ export class MockApi implements ApiPort {
       temperatureEntity: input.temperatureEntity,
       weatherEntity: input.weatherEntity,
       loadEntity: input.loadEntity,
+      loadQuantile: input.loadQuantile,
       devices: input.devices,
       modelled: input.devices.map((device) => ({ entity: device.entity, modelled: true })),
     };

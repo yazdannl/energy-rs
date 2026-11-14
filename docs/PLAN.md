@@ -25,7 +25,7 @@ Research inputs (full detail):
 | Capacity learning | Long session history with heavy recency weighting (last 3 dominate) |
 | Protection | Keep cell-voltage guard + full-charge maintenance |
 | Savings | New, accurate: per-day + lifetime |
-| Horizon | 120 native 15-min slots (30 h), replan every 15 min |
+| Horizon | 144 native 15-min slots (36 h), replan every 15 min |
 | Ledger retention | 30 d 1-min, 1 y 5-min, daily forever |
 | SoC/power | 10–100 % SoC, hardware max power |
 | Screens | Now, Plan timeline, Prices, Batteries (+ Savings, Settings) |
@@ -164,7 +164,7 @@ Daily rollups + lifetime total, all derived from ledger rows (never from planned
 ## 9. UI (Svelte 5, embedded)
 
 Screens: **Now** (animated energy-flow diagram, live PV/grid/battery/load, current slot, today's
-money), **Plan** (30 h × 15 min timeline: one panel with PV, load and battery bars in kW on the left axis
+money), **Plan** (36 h × 15 min timeline: one panel with PV, load and battery bars in kW on the left axis
 and SoC in kWh on the right, plus a short strip underneath carrying buy and feed-in on their own
 euro axis, sharing the time axis and the cursor),
 **Prices** (heatmap + net-metering toggle preview), **Batteries** (per-pack cards: SoC, power,

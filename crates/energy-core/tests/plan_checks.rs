@@ -94,12 +94,15 @@ fn a_short_forecast_is_refused() {
     .with_forecasts(forecasts(0.0, 3), forecasts(0.5, HORIZON_SLOTS), NOW);
     assert!(matches!(
         request.plan(),
-        Err(PlanError::ForecastLength { expected: 120, .. })
+        Err(PlanError::ForecastLength {
+            expected: HORIZON_SLOTS,
+            ..
+        })
     ));
 }
 
 #[test]
-fn the_plan_is_a_deterministic_120_slot_timeline() {
+fn the_plan_is_a_deterministic_slot_timeline() {
     let request = input(book(NOW, HORIZON_SLOTS, |index| {
         if index % 8 < 4 { 0.15 } else { 0.35 }
     }));
@@ -108,7 +111,10 @@ fn the_plan_is_a_deterministic_120_slot_timeline() {
     assert_eq!(first, second);
     assert_eq!(first.slots.len(), HORIZON_SLOTS);
     assert_eq!(first.horizon_start, NOW);
-    assert_eq!(first.horizon_end, NOW + 120 * 900);
+    assert_eq!(
+        first.horizon_end,
+        NOW + i64::try_from(HORIZON_SLOTS).unwrap() * 900
+    );
     assert_eq!(first.slots[0].t_start, NOW);
     assert_eq!(first.slots[1].idx, 1);
     // No static sale floor any more: whether an export pays is the solver's horizon question. The

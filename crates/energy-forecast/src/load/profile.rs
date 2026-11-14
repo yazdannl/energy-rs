@@ -218,6 +218,13 @@ impl LoadProfile {
         self.buckets.get(index).map_or(0.0, |bucket| bucket.median)
     }
 
+    /// The bucket's load at `quantile`; zero when the payload carried no bucket.
+    pub fn quantile(&self, index: usize, quantile: f64) -> f64 {
+        self.buckets
+            .get(index)
+            .map_or(0.0, |bucket| bucket.at(quantile))
+    }
+
     /// Force the temperature term off, as serving does for a kind that forbids one.
     pub fn without_temperature(&mut self) {
         self.fit.b = 0.0;

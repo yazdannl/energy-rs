@@ -1,7 +1,7 @@
 # energy-rs
 
 A ground-up, deliberately small Rust rewrite of the Home Assistant energy manager: it reads the
-Energy dashboard, forecasts PV and load in-process, optimizes a 30-hour battery plan with the proven
+Energy dashboard, forecasts PV and load in-process, optimizes a 36-hour battery plan with the proven
 C DP solver, and drives the SolarFlow 800 Plus packs over the local zenSDK HTTP API — with the
 forecasts, prices, settlement, ledger, savings and UI all rebuilt around that core.
 

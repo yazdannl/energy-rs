@@ -30,6 +30,8 @@ what makes the add-on actually run end to end; the real UI is P11. The newest no
 | P20 | Multi-plane array: one row per roof plane, summed, clipped once | `pv_planes` setting, model tests, planes imported from the old add-on | **done** (0.11.0) |
 | P21 | Timeline chart readable on a phone: one kilowatt axis, SoC in kWh, decimals | `planChart.ts`, legend/toggles trimmed | **done** (0.13.0) |
 | P22 | Prices back as their own strip under the power panel, same time axis and cursor | `planPriceChart`, Prices toggle, 0.13.1 | **done** (0.13.1) |
+| P23 | Peak-aware load: serve `loadQuantile` (default p75) instead of the median hour | `Bucket::at`, `LoadInputs::quantile`, Settings "Planning band" | **done** (0.14.0) |
+| P24 | 36 h horizon (144 slots) so a plan sees tomorrow's evening once the day-ahead book covers it | `HORIZON_SLOTS`, load horizon derived from the slot count | **done** (0.14.0) |
 
 ## P18 notes (action alignment)
 

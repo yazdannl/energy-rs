@@ -19,6 +19,18 @@ pub(crate) struct Served<'a> {
     pub device_profiles: &'a BTreeMap<String, LoadProfile>,
     pub temperatures: &'a BTreeMap<DateTime<Utc>, f64>,
     pub holiday: bool,
+    /// Which bucket quantile the plan is served; see `energy_forecast::load::LoadConfig::quantile`.
+    pub quantile: f64,
+}
+
+/// The load forecast's own horizon for a plan of `slots` quarter-hours.
+///
+/// The plan's horizon is the price book's, which is now longer than the forecast's old 30 h default;
+/// asking for less would make `serve` refuse a plan the prices actually cover. One extra hour covers
+/// the quarter-hour the grid starts on.
+fn hours_for(slots: usize) -> u32 {
+    let minutes = slots.saturating_mul(15);
+    u32::try_from(minutes.div_ceil(60) + 1).unwrap_or(48)
 }
 
 /// The load series at `now`, from the learned profile or the residential fallback shape.
@@ -43,9 +55,10 @@ pub(crate) fn serve(
         base_kwh_per_day,
         moment,
         TARIFF_TZ,
-        Some(30),
+        Some(hours_for(slots)),
     )
-    .with_holiday(served.holiday);
+    .with_holiday(served.holiday)
+    .with_quantile(served.quantile);
     let forecast: LoadForecast = load_forecast(profile, served.devices, &inputs);
     notes.extend(forecast.notes.iter().cloned());
     if forecast.slots.len() < slots {

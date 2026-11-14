@@ -6,13 +6,16 @@
 
 use serde_json::{Map, Value};
 
+/// The served bucket quantile when the payload does not say.
+pub const DEFAULT_LOAD_QUANTILE: f64 = 0.75;
+
 use super::device::LoadDevice;
 use super::parse::parse_devices;
 
 /// `load.devices` plus holiday mode and the two weather sources.
 ///
 /// Every field has a value that keeps the previous behaviour: at home, no weather, no named loads.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LoadConfig {
     /// The house is away: serve the base floor plus only the loads that keep running.
     pub holiday: bool,
@@ -22,6 +25,8 @@ pub struct LoadConfig {
     pub weather_entity: String,
     /// The house load meter. Empty means the energy dashboard's balance is the house.
     pub load_entity: String,
+    /// Which bucket quantile the plan is served, `0.5` (median) to `0.9` (near-peak).
+    pub load_quantile: f64,
     /// The configured `load.devices` entries, kept verbatim so an unknown key is not lost.
     pub devices: Vec<Value>,
 }
@@ -37,6 +42,7 @@ impl LoadConfig {
             temperature_entity: text(map, "temperatureEntity"),
             weather_entity: text(map, "weatherEntity"),
             load_entity: text(map, "loadEntity"),
+            load_quantile: number(map, "loadQuantile", DEFAULT_LOAD_QUANTILE),
             devices: map
                 .get("devices")
                 .and_then(Value::as_array)
@@ -61,6 +67,7 @@ impl LoadConfig {
             "loadEntity".to_string(),
             Value::String(self.load_entity.clone()),
         );
+        map.insert("loadQuantile".to_string(), Value::from(self.load_quantile));
         map.insert("devices".to_string(), Value::Array(self.devices.clone()));
         Value::Object(map)
     }
@@ -79,6 +86,18 @@ impl LoadConfig {
         (!entity.is_empty()).then_some(entity)
     }
 
+    /// The served bucket quantile, clamped to `0.5..=0.9`.
+    ///
+    /// The median hour is the middle of the house's day, not its peak: serving p50 under-buys
+    /// exactly when the oven, the heat pump and the EV line up. The shipped default is the upper
+    /// quartile, and the operator can move it back to the median.
+    pub fn quantile(&self) -> f64 {
+        if !self.load_quantile.is_finite() {
+            return DEFAULT_LOAD_QUANTILE;
+        }
+        self.load_quantile.clamp(0.5, 0.9)
+    }
+
     /// The house load meter, trimmed; `None` means the dashboard balance is the house.
     pub fn load_source(&self) -> Option<&str> {
         let entity = self.load_entity.trim();
@@ -90,6 +109,13 @@ impl LoadConfig {
         let entity = self.weather_entity.trim();
         (!entity.is_empty()).then_some(entity)
     }
+}
+
+fn number(map: &Map<String, Value>, key: &str, fallback: f64) -> f64 {
+    map.get(key)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(fallback)
 }
 
 fn text(map: &Map<String, Value>, key: &str) -> String {
@@ -113,6 +139,10 @@ mod tests {
         assert!(config.temperature_source().is_none());
         assert!(config.load_source().is_none());
         assert!(config.weather_source().is_none());
+        assert!(
+            (config.quantile() - 0.75).abs() < 1e-12,
+            "the plan serves the upper quartile"
+        );
         assert_eq!(config.parsed_devices().0, Vec::new());
     }
 
@@ -123,11 +153,13 @@ mod tests {
             "temperatureEntity": " sensor.outdoor ",
             "weatherEntity": "weather.home",
             "loadEntity": " sensor.home_load_power ",
+            "loadQuantile": 0.6,
             "devices": [{"entity": "sensor.heat_pump", "kind": "heat_pump", "keep_while_away": true, "future": 1}],
         });
         let config = LoadConfig::from_payload(&payload);
         assert_eq!(config.temperature_source(), Some("sensor.outdoor"));
         assert_eq!(config.load_source(), Some("sensor.home_load_power"));
+        assert!((config.quantile() - 0.6).abs() < 1e-12);
         let (devices, problems) = config.parsed_devices();
         assert!(problems.is_empty(), "{problems:?}");
         assert!(devices[0].keep_while_away);

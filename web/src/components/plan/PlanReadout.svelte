@@ -29,8 +29,10 @@
       >battery <span class="num text-batt">{fmtW(slot.batteryPowerW)}</span></span
     >
     <span class="text-faint">SoC <span class="num text-ink">{fmtWh(slot.socWh)}</span></span>
-    <span class="text-faint">PV <span class="num text-pv">{fmtWh(slot.pvWh)}</span></span>
-    <span class="text-faint">load <span class="num text-muted">{fmtWh(slot.loadWh)}</span></span>
+    <!-- The chart plots a slot's average power, so the readout shows the same: a 141 Wh
+         quarter-hour is 564 W on the axis, and printing the energy made the two disagree. -->
+    <span class="text-faint">PV <span class="num text-pv">{fmtW(slot.pvWh * 4)}</span></span>
+    <span class="text-faint">load <span class="num text-muted">{fmtW(slot.loadWh * 4)}</span></span>
     {#if slot.reason}
       <span class="rounded bg-ink/[0.05] px-1.5 py-0.5 text-[10px] text-muted">{slot.reason}</span>
     {/if}

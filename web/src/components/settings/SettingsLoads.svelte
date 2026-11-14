@@ -20,6 +20,7 @@
     temperatureEntity: '',
     weatherEntity: '',
     loadEntity: '',
+    loadQuantile: 0.75,
     devices: [],
   });
   let loading = $state(true);
@@ -33,6 +34,7 @@
         temperatureEntity: loads.temperatureEntity,
         weatherEntity: loads.weatherEntity,
         loadEntity: loads.loadEntity,
+        loadQuantile: loads.loadQuantile,
         devices: loads.devices,
       }) !== JSON.stringify(draft),
   );
@@ -44,6 +46,7 @@
       temperatureEntity: response.temperatureEntity,
       weatherEntity: response.weatherEntity,
       loadEntity: response.loadEntity,
+      loadQuantile: response.loadQuantile,
       devices: response.devices.map((device) => ({ ...device })),
     };
   }
@@ -145,6 +148,25 @@
         ></span>
       </button>
     </div>
+
+    <label class="block">
+      <span class="text-[11px] text-muted">Planning band</span>
+      <select
+        value={draft.loadQuantile}
+        onchange={(event) => (draft.loadQuantile = Number(event.currentTarget.value))}
+        class="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1 text-[11px] text-ink focus:border-line-strong focus:outline-none"
+      >
+        <option value={0.5}>Median hour — cheapest plan, runs out at the peak</option>
+        <option value={0.6}>Above the median (p60)</option>
+        <option value={0.75}>Upper quartile — the peak is expected (p75)</option>
+        <option value={0.85}>Near-peak (p85) — reserves the most energy</option>
+      </select>
+      <span class="mt-0.5 block text-[10px] text-faint">
+        Which quantile of the learned hour is planned for. A median hour is the middle of the
+        house's day, not its oven-and-heat-pump peak; the higher the band, the more energy the plan
+        holds cheap, and the less it buys at the evening price.
+      </span>
+    </label>
 
     <LoadSources
       bind:loadEntity={draft.loadEntity}

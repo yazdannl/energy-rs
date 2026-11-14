@@ -14,6 +14,7 @@ Code: `crates/energy-forecast/src/load` (model), `crates/energy-core/src/plan_so
 | quantity | source | notes |
 |---|---|---|
 | house hourly load | a configured **load meter** (`loadEntity`), else the energy dashboard balance `import − export + PV + discharge − charge` | an hour missing any required counter is skipped, never zeroed |
+| served level | the `loadQuantile` of each bucket, default **p75** | a plan built on the median hour runs out of energy exactly when the house peaks |
 | 48 buckets | weekday/weekend × hour, median + p10/p90 | 56-day window |
 | level `scale` | `recent_7d_mean / profile_mean`, clamped `[0.5, 2.0]` | absorbs a growing or shrinking house |
 | `bias[48]` | EWMA of the last seven days' per-bucket mean over median, `α = 0.2`, clamped `[0.5, 2.0]` | a recent weekday pattern |
@@ -73,6 +74,18 @@ When a whole-house meter is configured (`POST/PATCH /loads`, `loadEntity`), its 
 house instead: one sensor, one number, no balance arithmetic. It may be a W power sensor (the hourly
 mean is the kW) or a kWh counter (`change` is the kWh). Served history, savings and the price book
 are unaffected; only the learned profile changes source.
+
+### The planning band
+
+Each bucket stores p10, p50 and p90 per weekday-hour. Serving the median is the middle of the house's
+day, not its peak: the oven, the heat pump and the EV line up in the same hour often enough that a
+p50 plan under-buys, then imports the shortfall at the evening price. `loadQuantile` (`POST/PATCH
+/loads`) serves a quantile above the median instead — the shipped default is **0.75**, interpolated
+between the stored p50 and p90 (the percentiles are the only evidence there is, so nothing is
+invented). `0.5` restores the old median behaviour; `0.85` reserves more.
+
+The house floor (`houseBaseKw`) still applies, and the served *display* bands stay p10/p90 scaled
+from the served level.
 
 ## 3. Weather
 

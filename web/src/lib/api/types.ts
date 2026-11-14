@@ -405,6 +405,8 @@ export interface LoadsResponse {
   weatherEntity: string;
   /** The house load meter; empty means the energy dashboard's balance is the house. */
   loadEntity: string;
+  /** Which bucket quantile the served plan uses, 0.5 (median) to 0.9 (near-peak). */
+  loadQuantile: number;
   devices: LoadDevice[];
   problems: string[];
   profile: LearnedLoadProfile | null;
@@ -417,5 +419,6 @@ export interface LoadsInput {
   temperatureEntity: string;
   weatherEntity: string;
   loadEntity: string;
+  loadQuantile: number;
   devices: LoadDevice[];
 }

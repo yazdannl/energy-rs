@@ -29,6 +29,24 @@ pub struct Bucket {
 }
 
 impl Bucket {
+    /// The load at `quantile`, interpolated between the stored p10, p50 and p90.
+    ///
+    /// A plan that serves the median hour runs out of energy exactly when the house peaks, so the
+    /// served level is a quantile above the median (see `LoadInputs::quantile`). The stored
+    /// percentiles are the only evidence there is; interpolating between them invents no data.
+    pub fn at(&self, quantile: f64) -> f64 {
+        let q = quantile.clamp(0.0, 1.0);
+        // Exact at the stored percentiles: the golden fixtures compare bits, and `p50 + (p50 - p10)`
+        // is not bit-identical to `p50`.
+        if q < 0.5 {
+            self.p10 + (self.median - self.p10) * (q / 0.5)
+        } else if q > 0.5 {
+            self.median + (self.p90 - self.median) * ((q - 0.5) / 0.5)
+        } else {
+            self.median
+        }
+    }
+
     /// Read one payload bucket, defaulting every missing statistic to zero.
     pub fn from_payload(value: &Value) -> Self {
         let Some(map) = value.as_object() else {

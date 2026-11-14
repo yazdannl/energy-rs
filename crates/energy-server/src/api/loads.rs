@@ -95,6 +95,8 @@ pub(crate) struct Loads {
     weather_entity: String,
     /// The house load meter; empty means the dashboard balance is the house.
     load_entity: String,
+    /// Which bucket quantile the served plan uses, `0.5` (median) to `0.9` (near-peak).
+    load_quantile: f64,
     devices: Vec<Device>,
     /// Entries that had to be dropped or noted before they could be modelled.
     problems: Vec<String>,
@@ -116,6 +118,8 @@ pub(crate) struct LoadsRequest {
     weather_entity: String,
     #[serde(default)]
     load_entity: String,
+    #[serde(default)]
+    load_quantile: f64,
     #[serde(default)]
     devices: Vec<Device>,
 }
@@ -157,6 +161,11 @@ fn config_from_request(body: &LoadsRequest) -> Result<LoadConfig, ApiError> {
         temperature_entity: body.temperature_entity.trim().to_string(),
         weather_entity: body.weather_entity.trim().to_string(),
         load_entity: body.load_entity.trim().to_string(),
+        load_quantile: if body.load_quantile.is_finite() && body.load_quantile >= 0.5 {
+            body.load_quantile
+        } else {
+            energy_forecast::load::DEFAULT_LOAD_QUANTILE
+        },
         devices: body.devices.iter().map(Device::payload).collect(),
     })
 }
@@ -210,6 +219,7 @@ fn render(config: &LoadConfig, profiles: &LoadProfiles, now: i64) -> Loads {
         temperature_entity: config.temperature_entity.clone(),
         weather_entity: config.weather_entity.clone(),
         load_entity: config.load_entity.clone(),
+        load_quantile: config.quantile(),
         devices,
         problems,
         profile,

@@ -164,15 +164,32 @@ impl HaPlanSupply {
             device_profiles: &prepared.device_profiles,
             temperatures: &prepared.temperatures,
             holiday: prepared.holiday,
+            quantile: prepared.quantile,
         };
+        let load_kw = Self::load_kw(history, profile.as_ref(), now, slots, &served, &mut notes)?;
+        Ok(if notes.is_empty() {
+            Forecast::fresh(pv_kw, load_kw, now)
+        } else {
+            Forecast::degraded(pv_kw, load_kw, now, notes.join("; "))
+        })
+    }
+
+    /// The served load series: the profile, the residential shape, or the measured fallback.
+    fn load_kw(
+        history: &MeasuredHistory,
+        profile: Option<&LoadProfile>,
+        now: i64,
+        slots: usize,
+        served: &Served<'_>,
+        notes: &mut Vec<String>,
+    ) -> Result<Vec<f64>, PlanError> {
+        let start = ha_series::slot_floor(now);
         let base = history.load_kwh_over(24);
-        let load_kw = match (&profile, base) {
-            (Some(profile), _) => {
-                load_serve::serve(Some(profile), 0.0, now, slots, &served, &mut notes)?
-            }
+        match (profile, base) {
+            (Some(profile), _) => load_serve::serve(Some(profile), 0.0, now, slots, served, notes),
             (None, base) if base > 0.0 => {
                 notes.push("load profile missing; residential fallback shape".to_string());
-                load_serve::serve(None, base, now, slots, &served, &mut notes)?
+                load_serve::serve(None, base, now, slots, served, notes)
             }
             (None, _) => {
                 notes.push("load profile missing; EWMA fallback from measured load".to_string());
@@ -181,14 +198,9 @@ impl HaPlanSupply {
                     .ok_or(PlanError::ForecastUnavailable {
                         name: "load_kw",
                         reason: "no measured load level and no full day of history".to_owned(),
-                    })?
+                    })
             }
-        };
-        Ok(if notes.is_empty() {
-            Forecast::fresh(pv_kw, load_kw, now)
-        } else {
-            Forecast::degraded(pv_kw, load_kw, now, notes.join("; "))
-        })
+        }
     }
 
     /// Everything the load forecast needs beside the house profile and the measured level.
@@ -219,6 +231,7 @@ impl HaPlanSupply {
             device_profiles,
             temperatures: temperatures.clone(),
             holiday: config.holiday,
+            quantile: config.quantile(),
             notes,
         }
     }
@@ -268,5 +281,6 @@ struct Prepared {
     device_profiles: BTreeMap<String, LoadProfile>,
     temperatures: BTreeMap<DateTime<Utc>, f64>,
     holiday: bool,
+    quantile: f64,
     notes: Vec<String>,
 }

@@ -82,7 +82,10 @@ async fn a_full_book_plans_the_whole_horizon() {
     let plan = plan(&source).await;
     assert_eq!(plan.slots.len(), HORIZON_SLOTS);
     assert_eq!(plan.horizon_start, NOW);
-    assert_eq!(plan.horizon_end, NOW + 120 * 900);
+    assert_eq!(
+        plan.horizon_end,
+        NOW + i64::try_from(HORIZON_SLOTS).unwrap() * 900
+    );
     assert_eq!(plan.slots[0].pv_kw, 0.4);
     assert_eq!(plan.slots[0].load_kw, 0.6);
     assert!(plan.degraded.is_none());
