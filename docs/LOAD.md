@@ -80,9 +80,14 @@ are unaffected; only the learned profile changes source.
 Each bucket stores p10, p50 and p90 per weekday-hour. Serving the median is the middle of the house's
 day, not its peak: the oven, the heat pump and the EV line up in the same hour often enough that a
 p50 plan under-buys, then imports the shortfall at the evening price. `loadQuantile` (`POST/PATCH
-/loads`) serves a quantile above the median instead — the shipped default is **0.75**, interpolated
+/loads`) serves a quantile above the median instead — the shipped default is **0.65**, interpolated
 between the stored p50 and p90 (the percentiles are the only evidence there is, so nothing is
-invented). `0.5` restores the old median behaviour; `0.85` reserves more.
+invented). `0.5` restores the old median behaviour; `0.75` and `0.85` reserve more.
+
+The default is deliberately not `0.75`: a house hour is heavily skewed (a median of 0.5 kW against
+2 kW peaks), so a linear step from p50 to p90 puts p75 at roughly 2.5x the median and the plan buys
+energy the house never uses. p65 sits just above the measured typical hour, and the peaks stay with
+the named loads that actually model them.
 
 The house floor (`houseBaseKw`) still applies, and the served *display* bands stay p10/p90 scaled
 from the served level.

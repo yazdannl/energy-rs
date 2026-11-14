@@ -7,7 +7,12 @@
 use serde_json::{Map, Value};
 
 /// The served bucket quantile when the payload does not say.
-pub const DEFAULT_LOAD_QUANTILE: f64 = 0.75;
+///
+/// Not 0.75: house load is heavily skewed (a median hour of 0.5 kW against 2 kW peaks), so the
+/// linear step from p50 to p90 pushes p75 to ~2.5x the median and the plan buys energy the house
+/// never uses. p65 is the point where the served level sits just above the measured typical hour
+/// while the peaks still belong to the named loads that model them.
+pub const DEFAULT_LOAD_QUANTILE: f64 = 0.65;
 
 use super::device::LoadDevice;
 use super::parse::parse_devices;
@@ -129,7 +134,7 @@ fn text(map: &Map<String, Value>, key: &str) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    use super::LoadConfig;
+    use super::{DEFAULT_LOAD_QUANTILE, LoadConfig};
     use serde_json::json;
 
     #[test]
@@ -139,10 +144,7 @@ mod tests {
         assert!(config.temperature_source().is_none());
         assert!(config.load_source().is_none());
         assert!(config.weather_source().is_none());
-        assert!(
-            (config.quantile() - 0.75).abs() < 1e-12,
-            "the plan serves the upper quartile"
-        );
+        assert_eq!(config.quantile(), DEFAULT_LOAD_QUANTILE);
         assert_eq!(config.parsed_devices().0, Vec::new());
     }
 

@@ -20,7 +20,7 @@
     temperatureEntity: '',
     weatherEntity: '',
     loadEntity: '',
-    loadQuantile: 0.75,
+    loadQuantile: 0.65,
     devices: [],
   });
   let loading = $state(true);
@@ -156,10 +156,11 @@
         onchange={(event) => (draft.loadQuantile = Number(event.currentTarget.value))}
         class="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1 text-[11px] text-ink focus:border-line-strong focus:outline-none"
       >
-        <option value={0.5}>Median hour — cheapest plan, runs out at the peak</option>
-        <option value={0.6}>Above the median (p60)</option>
-        <option value={0.75}>Upper quartile — the peak is expected (p75)</option>
-        <option value={0.85}>Near-peak (p85) — reserves the most energy</option>
+        <option value={0.5}>Median hour (p50) — cheapest, runs out at the peak</option>
+        <option value={0.6}>Slightly above the median (p60)</option>
+        <option value={0.65}>Typical-plus (p65) — the shipped default</option>
+        <option value={0.75}>Upper quartile (p75) — reserves more energy</option>
+        <option value={0.85}>Near-peak (p85) — reserves the most</option>
       </select>
       <span class="mt-0.5 block text-[10px] text-faint">
         Which quantile of the learned hour is planned for. A median hour is the middle of the
