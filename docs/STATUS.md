@@ -28,7 +28,8 @@ what makes the add-on actually run end to end; the real UI is P11. The newest no
 | P18 | Solver action alignment and the PV-charge attribution fix | `tests/align.rs`, summary tests, live plan with zero export | **done** (0.9.1) |
 | P19 | PV forecast from the learned model + Open-Meteo weather | `docs/SOLAR.md`, `pv_mode` settings, model tests | **done** (0.10.0) |
 | P20 | Multi-plane array: one row per roof plane, summed, clipped once | `pv_planes` setting, model tests, planes imported from the old add-on | **done** (0.11.0) |
-| P21 | Timeline chart readable on a phone: one kilowatt axis, SoC in kWh, decimals, no price axis | `planChart.ts`, legend/toggles trimmed | **done** (0.13.0) |
+| P21 | Timeline chart readable on a phone: one kilowatt axis, SoC in kWh, decimals | `planChart.ts`, legend/toggles trimmed | **done** (0.13.0) |
+| P22 | Prices back as their own strip under the power panel, same time axis and cursor | `planPriceChart`, Prices toggle, 0.13.1 | **done** (0.13.1) |
 
 ## P18 notes (action alignment)
 

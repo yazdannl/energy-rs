@@ -4,7 +4,12 @@
   import uPlot from 'uplot';
 
   import type { Plan, PlanSlot } from '../../lib/api/types';
-  import { layerVisibility, planChart, type PlanLayers } from '../../lib/chart/planChart';
+  import {
+    layerVisibility,
+    planChart,
+    planPriceChart,
+    type PlanLayers,
+  } from '../../lib/chart/planChart';
   import { themeFor } from '../../lib/chart/theme';
   import { clock } from '../../lib/format/time';
   import { scheme } from '../../lib/state/scheme.svelte';
@@ -19,6 +24,7 @@
   let { plan, layers }: Props = $props();
 
   let host = $state<HTMLDivElement | null>(null);
+  let priceHost = $state<HTMLDivElement | null>(null);
   let chart = $state<uPlot | null>(null);
   let hovered = $state<number | null>(null);
   let resetView = $state<(() => void) | null>(null);
@@ -40,19 +46,23 @@
 
   $effect(() => {
     const element = host;
+    const priceElement = priceHost;
     const data = plan;
     const theme = themeFor(scheme.current);
-    if (element === null) return;
+    if (element === null || priceElement === null) return;
+    const width = Math.max(280, element.clientWidth);
     const model = planChart(data, theme, (index) => {
       hovered = index;
     });
-    const instance = new uPlot(
-      { ...model.options, width: Math.max(280, element.clientWidth), height: 288 },
-      model.data,
-      element,
-    );
+    const instance = new uPlot({ ...model.options, width, height: 288 }, model.data, element);
+    // The price strip shares the time axis with the panel above, so the two must be resized
+    // together; the sync keeps the cursor crosshair on the same quarter-hour in both.
+    const priceModel = planPriceChart(data, theme);
+    const price = new uPlot({ ...priceModel.options, width }, priceModel.data, priceElement);
     const observer = new ResizeObserver(() => {
-      instance.setSize({ width: Math.max(280, element.clientWidth), height: 288 });
+      const next = Math.max(280, element.clientWidth);
+      instance.setSize({ width: next, height: 288 });
+      price.setSize({ width: next, height: 76 });
     });
     observer.observe(element);
 
@@ -71,6 +81,7 @@
       const end = start + span;
       if (end > fullTo) start = fullTo - span;
       instance.setScale('x', { min: start, max: start + span });
+      price.setScale('x', { min: start, max: start + span });
     };
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
@@ -111,6 +122,7 @@
 
     chart = instance;
     return () => {
+      price.destroy();
       observer.disconnect();
       over.removeEventListener('wheel', onWheel);
       over.removeEventListener('pointerdown', onPointerDown);
@@ -144,12 +156,16 @@
       reset view
     </button>
   </div>
+  <div
+    bind:this={priceHost}
+    class="pointer-events-none w-full overflow-hidden select-none"
+    class:hidden={!layers.prices}
+  ></div>
   <PlanReadout slot={shown} pinned={hovered !== null} />
   <p class="text-[10px] leading-relaxed text-faint">
-    PV and load share the left axis. The battery gets the right one, because a 4 kW charge burst
-    would otherwise flatten a 0.4 kW load shape; bars above zero charge, below it they discharge.
-    SoC is the outer right axis in kWh — an amount, so it cannot share a power scale. Prices live in
-    the readout above. Hover a quarter-hour for exact values.
+    PV, load and the battery share the left kilowatt axis; bars above zero charge, below it they
+    discharge. SoC is the right axis in kWh — an amount, so it cannot share a power scale. Prices
+    get their own strip underneath on the same time axis. Hover a quarter-hour for exact values.
   </p>
   <p class="sr-only">Plan from {clock(plan.horizonStartAt)} to {clock(plan.horizonEndAt)}</p>
 </div>
