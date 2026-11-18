@@ -79,13 +79,13 @@ impl HaPlanSupply {
         }
         let window = ha_series::history_window(now, HISTORY_HOURS);
         let import = self
-            .statistic(site.grid.import.as_ref(), "grid_import", window)
+            .statistic(&site.grid.import_sources, "grid_import", window)
             .await?;
         let export = self
-            .statistic(site.grid.export.as_ref(), "grid_export", window)
+            .statistic(&site.grid.export_sources, "grid_export", window)
             .await?;
         let pv = self
-            .statistic(site.solar.energy.as_ref(), "solar_energy", window)
+            .statistic(site.solar.energy.as_slice(), "solar_energy", window)
             .await?;
         let charge = self.battery(&site, window, true).await?;
         let discharge = self.battery(&site, window, false).await?;
@@ -96,17 +96,22 @@ impl HaPlanSupply {
         ha_series::timeline(&import, &export, &pv, &charge, &discharge, window)
     }
 
-    /// One configured statistic, refused when the dashboard does not name it.
+    /// The sum of one direction's configured sources; a missing slot stays a gap.
+    /// A slot needs all sources ([`ha_series::sum_series`]), never a partial sum or a zero.
     async fn statistic(
         &self,
-        entity: Option<&String>,
+        entities: &[String],
         name: &'static str,
         window: (i64, i64),
     ) -> Result<BTreeMap<i64, f64>, PlanError> {
-        let entity = entity
-            .filter(|id| !id.trim().is_empty())
-            .ok_or(PlanError::StatsMissing { series: name })?;
-        ha_series::fetch(&self.connection, entity, window).await
+        if entities.is_empty() {
+            return Err(PlanError::StatsMissing { series: name });
+        }
+        let mut series = Vec::with_capacity(entities.len());
+        for entity in entities {
+            series.push(ha_series::fetch(&self.connection, entity, window).await?);
+        }
+        Ok(ha_series::sum_series(&series))
     }
 
     /// The summed battery statistics of one direction; empty when no battery configures one.

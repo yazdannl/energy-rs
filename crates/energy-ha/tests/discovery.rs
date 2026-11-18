@@ -136,6 +136,66 @@ fn grid_difference_uses_import_minus_export() {
 }
 
 #[test]
+fn two_grid_sources_keep_both_statistics_and_the_first_as_primary() {
+    let site = SiteModel::from_prefs(&prefs(json!({
+        "energy_sources": [
+            {
+                "type": "grid",
+                "name": "P1 tariff 1",
+                "stat_energy_from": "sensor.p1_grid_sensor_energy_delivered_tariff_1",
+                "stat_energy_to": "sensor.p1_grid_sensor_energy_returned_tariff_1"
+            },
+            {
+                "type": "grid",
+                "name": "P1 tariff 2",
+                "stat_energy_from": "sensor.p1_grid_sensor_energy_delivered_tariff_2",
+                "stat_energy_to": "sensor.p1_grid_sensor_energy_returned_tariff_2"
+            }
+        ]
+    })));
+
+    assert_eq!(
+        site.grid.import_sources,
+        [
+            "sensor.p1_grid_sensor_energy_delivered_tariff_1",
+            "sensor.p1_grid_sensor_energy_delivered_tariff_2"
+        ]
+    );
+    assert_eq!(
+        site.grid.export_sources,
+        [
+            "sensor.p1_grid_sensor_energy_returned_tariff_1",
+            "sensor.p1_grid_sensor_energy_returned_tariff_2"
+        ]
+    );
+    assert_eq!(
+        site.grid.import.as_deref(),
+        Some("sensor.p1_grid_sensor_energy_delivered_tariff_1"),
+        "the live meter keeps the first source as primary"
+    );
+    assert_eq!(
+        site.grid.export.as_deref(),
+        Some("sensor.p1_grid_sensor_energy_returned_tariff_1")
+    );
+}
+
+#[test]
+fn one_grid_source_maps_one_statistic_pair() {
+    let site = SiteModel::from_prefs(&prefs(json!({
+        "energy_sources": [{
+            "type": "grid",
+            "stat_energy_from": "sensor.grid_import",
+            "stat_energy_to": "sensor.grid_export"
+        }]
+    })));
+
+    assert_eq!(site.grid.import.as_deref(), Some("sensor.grid_import"));
+    assert_eq!(site.grid.export.as_deref(), Some("sensor.grid_export"));
+    assert_eq!(site.grid.import_sources, ["sensor.grid_import"]);
+    assert_eq!(site.grid.export_sources, ["sensor.grid_export"]);
+}
+
+#[test]
 fn battery_difference_uses_discharge_minus_charge() {
     let site = SiteModel::from_prefs(&prefs(json!({
         "energy_sources": [{

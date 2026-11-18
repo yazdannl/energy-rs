@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{SLOT_SECONDS, gap_free_window, published_end, timeline};
+use super::{SLOT_SECONDS, gap_free_window, published_end, sum_series, timeline};
 use crate::plan::PlanError;
 
 const START: i64 = 1_790_000_000 - 1_790_000_000 % SLOT_SECONDS;
@@ -14,6 +14,13 @@ const WINDOW: (i64, i64) = (START, START + 192 * SLOT_SECONDS);
 fn series(slots: i64) -> BTreeMap<i64, f64> {
     (0..slots)
         .map(|index| (START + index * SLOT_SECONDS, 1.0))
+        .collect()
+}
+
+/// A window of `slots` constant kWh values from `START`.
+fn valued_series(slots: i64, kwh: f64) -> BTreeMap<i64, f64> {
+    (0..slots)
+        .map(|index| (START + index * SLOT_SECONDS, kwh))
         .collect()
 }
 
@@ -60,6 +67,55 @@ fn an_interior_hole_is_still_refused() {
         window,
     )
     .expect_err("an interior gap must refuse");
+    assert!(error.to_string().contains("gap"), "{error}");
+}
+
+#[test]
+fn two_import_sources_sum_to_the_true_import_per_slot() {
+    let tariff_1 = valued_series(192, 0.10);
+    let tariff_2 = valued_series(192, 0.26);
+    let import = sum_series(&[tariff_1, tariff_2]);
+
+    assert_eq!(import.len(), 192);
+    assert_eq!(import.get(&(START + SLOT_SECONDS)), Some(&0.36));
+    let (window, gap) = gap_free_window(&import, &series_except(&[]), &series_except(&[]), WINDOW)
+        .expect("a sum of complete sources has no gaps");
+    assert_eq!(window, WINDOW);
+    assert_eq!(gap, None);
+}
+
+#[test]
+fn a_missing_slot_in_one_import_source_is_a_gap_not_a_partial_sum() {
+    let at = START + 72 * SLOT_SECONDS;
+    let mut tariff_2 = valued_series(192, 0.26);
+    tariff_2.remove(&at);
+    let import = sum_series(&[valued_series(192, 0.10), tariff_2]);
+
+    assert!(
+        !import.contains_key(&at),
+        "a source's hole stays a hole in the sum"
+    );
+    assert_ne!(
+        import.get(&at).copied(),
+        Some(0.10),
+        "the other tariff alone is not the import"
+    );
+    let (window, gap) = gap_free_window(&import, &series_except(&[]), &series_except(&[]), WINDOW)
+        .expect("a long gap-free tail is still usable");
+    assert_eq!(window.0, at + SLOT_SECONDS, "start after the gap");
+    assert_eq!(window.1, WINDOW.1);
+    assert_eq!(gap, Some(at));
+
+    let full = series_except(&[]);
+    let error = timeline(
+        &import,
+        &full,
+        &full,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        WINDOW,
+    )
+    .expect_err("an unshrunk window still refuses the missing slot");
     assert!(error.to_string().contains("gap"), "{error}");
 }
 
