@@ -54,6 +54,10 @@ pub(crate) fn target(
 /// slot's grid is an artefact of the load and PV the plan assumed, and the site holds the meter at
 /// zero instead — absorb what the sun delivers, cover what the house draws, rather than importing
 /// to match a forecast that turned out wrong.
+///
+/// The planner's convention is `battery_kw > 0` charges and `battery_kw < 0` discharges, with
+/// `planned_grid = load_kw - pv_kw + battery_kw` (positive imports). A discharging slot with
+/// negative planned grid is therefore exporting on purpose, not idle.
 fn desired_grid_w(slot: &PlanSlot) -> Option<f64> {
     if ![slot.load_kw, slot.pv_kw, slot.battery_kw]
         .iter()
@@ -63,7 +67,7 @@ fn desired_grid_w(slot: &PlanSlot) -> Option<f64> {
         // ladder's missing-telemetry rule do its job.
         return None;
     }
-    let planned_grid = slot.load_kw - slot.pv_kw - slot.battery_kw;
+    let planned_grid = slot.load_kw - slot.pv_kw + slot.battery_kw;
     let exchanging = slot.battery_kw * planned_grid > 0.0;
     (!exchanging).then_some(0.0)
 }
@@ -76,4 +80,53 @@ fn capability_w(fleet: &FleetView) -> f64 {
         .map(|pack| pack.spec.max_charge_w.max(pack.spec.max_discharge_w))
         .filter(|watts| watts.is_finite() && *watts > 0.0)
         .sum()
+}
+
+#[cfg(test)]
+#[allow(clippy::float_cmp)]
+mod tests {
+    use super::{desired_grid_w, target};
+    use crate::dispatch::{FleetView, MeterReading};
+    use crate::safety::SafetyLimits;
+    use energy_ledger::plan::PlanSlot;
+
+    fn slot(load_kw: f64, pv_kw: f64, battery_kw: f64) -> PlanSlot {
+        let mut slot = PlanSlot::at(0, 0);
+        slot.load_kw = load_kw;
+        slot.pv_kw = pv_kw;
+        slot.battery_kw = battery_kw;
+        slot
+    }
+
+    #[test]
+    fn peak_discharge_keeps_its_export_setpoint() {
+        let slot = slot(0.4646, 0.0, -3.2);
+        let fleet = FleetView::default();
+        let target_w = target(
+            -3_200.0,
+            Some(&slot),
+            &MeterReading::grid(0.0),
+            &fleet,
+            &SafetyLimits::default(),
+            false,
+        );
+        assert_eq!(desired_grid_w(&slot), None, "a deliberate export");
+        assert_eq!(target_w, -3_200.0, "the plan's discharge rate stands");
+    }
+
+    #[test]
+    fn self_consumption_follows_the_grid_to_zero() {
+        let slot = slot(0.5, 0.0, -0.2);
+        let fleet = FleetView::default();
+        let target_w = target(
+            -200.0,
+            Some(&slot),
+            &MeterReading::grid(500.0),
+            &fleet,
+            &SafetyLimits::default(),
+            false,
+        );
+        assert_eq!(desired_grid_w(&slot), Some(0.0), "grid is an artefact");
+        assert_eq!(target_w, -500.0, "discharge the measured import away");
+    }
 }
