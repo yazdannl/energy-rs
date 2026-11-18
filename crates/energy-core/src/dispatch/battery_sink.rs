@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::Utc;
-use energy_battery::control::{Command, DeviceController, Direction};
+use energy_battery::control::{Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW};
 use energy_battery::transport::DeviceIo;
 
 use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt, advance};
@@ -13,9 +13,11 @@ use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt,
 ///
 /// Every write goes through the controller, so the protocol rules hold by construction: at least
 /// two seconds between writes to one device, one command in flight, `smartMode: 1` on every write,
-/// no `acMode` on a hold, and confirmation only when the *next report* echoes the limit. A fault
-/// the controller reports (wedge, restart, echo mismatch) is returned as a [`SinkError`], which the
-/// dispatcher turns into exactly one fail-safe hold and a backoff.
+/// no `acMode` on a hold, and confirmation only when a later report echoes the limit. A fault
+/// the controller reports (wedge, restart, a mismatched echo that never lands) is returned as a
+/// [`SinkError`], which the dispatcher turns into exactly one fail-safe hold and a backoff. The
+/// write and every step of the bounded echo wait mark the watchdog, so a slow device is not
+/// mistaken for a stalled loop.
 pub struct BatterySink<T: DeviceIo> {
     devices: BTreeMap<String, Arc<DeviceController<T>>>,
 }
@@ -62,10 +64,19 @@ impl<T: DeviceIo> BatterySink<T> {
                 reason: error.to_string(),
             })?;
         advance(progress, Utc::now().timestamp());
-        let observation = controller.poll().await.map_err(|error| SinkError::Device {
-            pack_id: pack_id.clone(),
-            reason: error.to_string(),
-        })?;
+        // A fresh report can still carry the pre-write limits while the device applies the
+        // command: wait out that bounded doubt instead of failing a write that is landing. The
+        // callback marks the watchdog on every wait step, and the same path covers the single
+        // fail-safe hold, so an expired write still gets exactly one hold.
+        let observation = controller
+            .poll_confirming(ECHO_CONFIRM_WINDOW, || {
+                advance(progress, Utc::now().timestamp());
+            })
+            .await
+            .map_err(|error| SinkError::Device {
+                pack_id: pack_id.clone(),
+                reason: error.to_string(),
+            })?;
         advance(progress, Utc::now().timestamp());
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
@@ -137,4 +148,22 @@ fn whole_watts(watts: f64) -> u32 {
         return 0;
     }
     watts.round().clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ECHO_CONFIRM_WINDOW;
+    use crate::engine::MIN_STALL_AFTER_S;
+
+    #[test]
+    fn the_echo_window_stays_well_inside_the_watchdog_stall_bound() {
+        let window_s = ECHO_CONFIRM_WINDOW.as_secs();
+        let stall_s = u64::try_from(MIN_STALL_AFTER_S).unwrap_or(u64::MAX);
+        // Two whole echo windows must fit inside the floor: a write still waiting for its echo
+        // can never look like a stalled tick, even with one extra window of scheduling slack.
+        assert!(
+            window_s.saturating_mul(2) < stall_s,
+            "echo window {window_s}s must stay well inside the {stall_s}s stall bound"
+        );
+    }
 }

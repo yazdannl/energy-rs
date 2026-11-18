@@ -13,6 +13,7 @@ pub struct FakeState {
     pub version: u32,
     /// Counts like the real thing: one per report or answered write, wrapping in 8 bits.
     pub message_id: u32,
+    /// Device wall-clock seconds. Reports advance `message_id`, never the clock.
     pub timestamp: i64,
     pub ac_mode: i32,
     pub input_limit_w: u32,
@@ -117,9 +118,11 @@ impl FakeState {
     }
 
     /// Advance the report counter like the device does, before this report is built.
-    pub(crate) fn advance_report(&mut self) {
+    ///
+    /// The device emits fresh-ID reports while applying a write, but its clock is wall time:
+    /// bumping the timestamp here too would put the fake's clock in the future and look skewed.
+    pub(crate) fn advance_report_id(&mut self) {
         self.message_id = self.message_id.wrapping_add(1);
-        self.timestamp = self.timestamp.saturating_add(1);
     }
 
     /// Apply a deferred write *after* the report with the stale limits was emitted.

@@ -15,8 +15,8 @@
 //!
 //! [`DeviceController::poll_confirming`] keeps the engine's progress heartbeat alive through its
 //! `on_progress` callback. In energy-core, `crates/energy-core/src/dispatch/battery_sink.rs`
-//! (`BatterySink::send`) replaces `controller.poll().await` with the one line
-//! `controller.poll_confirming(ECHO_CONFIRM_WINDOW, || progress.mark(now)).await`, threading the
+//! (`BatterySink::send`) replaces `controller.poll().await` with
+//! `controller.poll_confirming(ECHO_CONFIRM_WINDOW, || advance(progress, now))`, threading the
 //! `progress` already held by `Dispatcher::send` into the sink. That one `send` covers both the
 //! setpoint write and its single fail-safe hold.
 

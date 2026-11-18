@@ -141,7 +141,7 @@ async fn report_handler(State(state): State<Arc<Mutex<FakeState>>>) -> Response 
             json!({"code": status, "success": false, "sn": guard.sn, "error": "injected http status"}),
         )
     } else {
-        guard.advance_report();
+        guard.advance_report_id();
         let report = guard.report_json();
         guard.settle_deferred_write();
         (StatusCode::OK, Json(report)).into_response()
