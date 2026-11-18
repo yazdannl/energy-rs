@@ -3,6 +3,7 @@
 use energy_battery::protection::CellConfig;
 use energy_battery::protection::full_charge::FullChargeSettings;
 
+use crate::engine::watchdog::stall_bound_for;
 use crate::safety::Authority;
 
 /// The engine's persisted policy.
@@ -96,9 +97,11 @@ impl EngineConfig {
             .max(self.stale_plan_seconds)
     }
 
-    /// The watchdog's stall bound: three tick intervals.
+    /// The watchdog's stall bound: `max(3 × tick, MIN_STALL_AFTER_S)`.
+    ///
+    /// Four devices × 2 s pacing plus an echo round trip take longer than a 3 × 1 s bound, so a
+    /// fast tick cannot make the watchdog tighter than one legitimate tick of work.
     pub fn stall_after_s(&self) -> i64 {
-        let tick = i64::try_from(self.tick_seconds).unwrap_or(i64::MAX);
-        tick.saturating_mul(3)
+        stall_bound_for(self.tick_seconds)
     }
 }

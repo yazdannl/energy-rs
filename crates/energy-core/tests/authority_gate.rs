@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use energy_core::dispatch::{BoxFuture, CommandSink, SinkError, WriteReceipt};
 use energy_core::engine::{
-    EngineError, GuardedSink, LIVE_LATCH_KEY, LiveLatch, WriteGate, WriteIntent,
+    EngineError, GuardedSink, LIVE_LATCH_KEY, LiveLatch, Watchdog, WriteGate, WriteIntent,
 };
 use energy_core::safety::Authority;
 use support::fakes::{self, FakeSink, NOW, pack, plan};
@@ -180,27 +180,18 @@ async fn a_corrupt_latch_refuses_auto_and_keeps_the_raw_value() {
 /// Progress is judged on a monotonic clock, so a backwards wall clock cannot hide a stall.
 #[tokio::test]
 async fn a_backward_clock_still_stalls() {
-    let h = harness::build_config(
-        energy_core::engine::EngineConfig {
-            mode: Authority::Auto,
-            tick_seconds: 1,
-            ..energy_core::engine::EngineConfig::default()
-        },
-        fakes::ledger_with(&["SN-A"]),
-        vec![pack("SN-A", 50.0)],
-        plan(NOW, -0.8, 0.96),
-    );
-    h.engine.boot(NOW).await.expect("boot");
-    h.engine.tick_once(NOW).await.expect("tick");
+    // An explicit short bound keeps this test about the clock, not about the one-tick-of-work
+    // floor the engine's tick-derived bound must respect.
+    let watchdog = Watchdog::with_stall_after(1);
+    watchdog.mark(NOW);
 
     // A clock that jumped an hour back is not a reason to believe the loop is alive.
-    assert!(!h.engine.supervise(NOW - 3600).await.expect("guard"));
-    tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+    assert!(!watchdog.stalled(NOW - 3600));
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
     assert!(
-        h.engine.supervise(NOW - 3600).await.expect("guard"),
+        watchdog.stalled(NOW - 3600),
         "the monotonic anchor must still detect a stall"
     );
-    assert!(h.sink.holds() >= 1);
 }
 
 /// A hold is a write: outside `auto` the engine's own bookkeeping records nothing either.

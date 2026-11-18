@@ -3,10 +3,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use chrono::Utc;
 use energy_battery::control::{Command, DeviceController, Direction};
 use energy_battery::transport::DeviceIo;
 
-use crate::dispatch::{BoxFuture, CommandSink, SinkError, WriteReceipt};
+use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt, advance};
 
 /// A [`CommandSink`] over the device controllers.
 ///
@@ -36,7 +37,17 @@ impl<T: DeviceIo> BatterySink<T> {
     }
 
     /// Apply one command and poll for its echo.
-    async fn send(&self, pack_id: String, command: Command) -> Result<WriteReceipt, SinkError> {
+    ///
+    /// Both halves of the confirmation wait are transport steps: a write can wait on the device's
+    /// 2 s pacer, and the echo only arrives on a later report. Mark after each one that succeeds so
+    /// the watchdog sees a slow-but-progressing tick instead of a stalled loop. The mark takes the
+    /// clock at the step, not the tick's start, so the epoch half of the watchdog stays fresh too.
+    async fn send(
+        &self,
+        pack_id: String,
+        command: Command,
+        progress: Option<&dyn Progress>,
+    ) -> Result<WriteReceipt, SinkError> {
         let controller = self
             .devices
             .get(&pack_id)
@@ -50,10 +61,12 @@ impl<T: DeviceIo> BatterySink<T> {
                 pack_id: pack_id.clone(),
                 reason: error.to_string(),
             })?;
+        advance(progress, Utc::now().timestamp());
         let observation = controller.poll().await.map_err(|error| SinkError::Device {
             pack_id: pack_id.clone(),
             reason: error.to_string(),
         })?;
+        advance(progress, Utc::now().timestamp());
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
                 pack_id,
@@ -69,12 +82,28 @@ impl<T: DeviceIo> BatterySink<T> {
 
 impl<T: DeviceIo> CommandSink for BatterySink<T> {
     fn write(&self, pack_id: &str, watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        let command = command_for(watts);
-        Box::pin(self.send(pack_id.to_owned(), command))
+        self.write_with_progress(pack_id, watts, None)
+    }
+
+    fn write_with_progress<'a>(
+        &'a self,
+        pack_id: &str,
+        watts: f64,
+        progress: Option<&'a dyn Progress>,
+    ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
+        Box::pin(self.send(pack_id.to_owned(), command_for(watts), progress))
     }
 
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        Box::pin(self.send(pack_id.to_owned(), Command::Hold))
+        self.hold_with_progress(pack_id, None)
+    }
+
+    fn hold_with_progress<'a>(
+        &'a self,
+        pack_id: &str,
+        progress: Option<&'a dyn Progress>,
+    ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
+        Box::pin(self.send(pack_id.to_owned(), Command::Hold, progress))
     }
 }
 

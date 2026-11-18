@@ -48,7 +48,7 @@ pub use latched_write::LatchedWrite;
 pub use live_latch::LiveLatch;
 pub use plan_source::PlanSource;
 pub use refusal::Refusal;
-pub use watchdog::Watchdog;
+pub use watchdog::{MIN_STALL_AFTER_S, Watchdog, stall_bound_for};
 pub use write_gate::WriteGate;
 pub use write_intent::WriteIntent;
 
