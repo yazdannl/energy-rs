@@ -24,6 +24,13 @@ fn valued_series(slots: i64, kwh: f64) -> BTreeMap<i64, f64> {
         .collect()
 }
 
+/// A constant kWh series published only in the last `slots` quarters of the window.
+fn tail_series(slots: i64, kwh: f64) -> BTreeMap<i64, f64> {
+    (192 - slots..192)
+        .map(|index| (START + index * SLOT_SECONDS, kwh))
+        .collect()
+}
+
 /// A full window of one kWh per slot, minus the given missing starts.
 fn series_except(missing: &[i64]) -> BTreeMap<i64, f64> {
     (0..192)
@@ -117,6 +124,61 @@ fn a_missing_slot_in_one_import_source_is_a_gap_not_a_partial_sum() {
     )
     .expect_err("an unshrunk window still refuses the missing slot");
     assert!(error.to_string().contains("gap"), "{error}");
+}
+
+#[test]
+fn an_empty_grid_source_does_not_poison_a_48h_history_window() {
+    // Live shape: two tariff counters publish only the last 11 quarters of a 48 h window, a legacy
+    // grid source has no rows in it at all, and PV covers the whole window.
+    let legacy = BTreeMap::new();
+    let import = sum_series(&[tail_series(11, 0.10), tail_series(11, 0.26), legacy.clone()]);
+    let export = sum_series(&[tail_series(11, 0.05), tail_series(11, 0.02), legacy]);
+    let pv = series_except(&[]);
+
+    assert_eq!(import.len(), 11, "an absent source must not erase the tail");
+    assert_eq!(import.get(&(START + 181 * SLOT_SECONDS)), Some(&0.36));
+    let (window, gap) = gap_free_window(&import, &export, &pv, WINDOW)
+        .expect("a three-hour gap-free tail is enough");
+    assert_eq!(window.0, START + 181 * SLOT_SECONDS);
+    assert_eq!(window.1, WINDOW.1);
+    assert_eq!(gap, Some(START + 180 * SLOT_SECONDS));
+
+    let history = timeline(
+        &import,
+        &export,
+        &pv,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        window,
+    )
+    .expect("the shortened window is a valid measured history");
+    assert_eq!(history.len(), 11);
+}
+
+#[test]
+fn an_absent_source_does_not_hide_a_hole_in_a_publishing_source() {
+    let at = START + 185 * SLOT_SECONDS;
+    let mut tariff_2 = tail_series(11, 0.26);
+    tariff_2.remove(&at);
+    let import = sum_series(&[tail_series(11, 0.10), tariff_2, BTreeMap::new()]);
+    let export = sum_series(&[tail_series(11, 0.05), tail_series(11, 0.02)]);
+
+    assert!(
+        !import.contains_key(&at),
+        "a hole in a publishing tariff is still a hole"
+    );
+    assert_ne!(import.get(&at).copied(), Some(0.10));
+    let (window, gap) = gap_free_window(&import, &export, &series_except(&[]), WINDOW)
+        .expect("a shorter gap-free tail is still usable");
+    assert_eq!(window.0, at + SLOT_SECONDS);
+    assert_eq!(gap, Some(at));
+}
+
+#[test]
+fn one_grid_source_keeps_its_existing_series() {
+    let tail = tail_series(11, 0.10);
+    assert_eq!(sum_series(std::slice::from_ref(&tail)), tail);
+    assert!(sum_series(&[BTreeMap::new()]).is_empty());
 }
 
 #[test]

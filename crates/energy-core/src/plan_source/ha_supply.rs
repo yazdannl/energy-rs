@@ -97,7 +97,7 @@ impl HaPlanSupply {
     }
 
     /// The sum of one direction's configured sources; a missing slot stays a gap.
-    /// A slot needs all sources ([`ha_series::sum_series`]), never a partial sum or a zero.
+    /// A slot needs all publishing sources ([`ha_series::sum_sources`]), never a partial sum/zero.
     async fn statistic(
         &self,
         entities: &[String],
@@ -111,7 +111,7 @@ impl HaPlanSupply {
         for entity in entities {
             series.push(ha_series::fetch(&self.connection, entity, window).await?);
         }
-        Ok(ha_series::sum_series(&series))
+        Ok(ha_series::sum_sources(&series, name))
     }
 
     /// The summed battery statistics of one direction; empty when no battery configures one.

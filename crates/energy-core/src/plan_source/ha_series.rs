@@ -51,26 +51,46 @@ pub(crate) async fn fetch(
     Ok(series)
 }
 
-/// Add aligned grid-source series, keeping a slot only when every source has a value for it.
+/// Add aligned grid-source series, keeping a slot only when every publishing source has one.
 ///
-/// A missing source slot stays absent instead of being read as zero: it would otherwise look as
-/// though only the other tariff's energy was imported. The resulting gap shortens or refuses the
-/// measured window exactly as for one missing series; no slot is ever zero-filled or invented.
+/// A source with no complete quarter in the window is absent and skipped: a legacy hourly-only
+/// counter must not erase the live tariff counters' whole tail. A source that published any slot
+/// stays in the intersection, so a slot it misses remains a gap and is never silently replaced by
+/// the other tariff's value. A single source (or no source publishing at all) keeps its existing
+/// behaviour; no slot is ever zero-filled or invented.
 pub(crate) fn sum_series(series: &[BTreeMap<i64, f64>]) -> BTreeMap<i64, f64> {
-    let Some((first, rest)) = series.split_first() else {
-        return BTreeMap::new();
-    };
-    first
-        .iter()
-        .filter(|(slot, _)| rest.iter().all(|source| source.contains_key(*slot)))
-        .map(|(slot, kwh)| {
-            let total = rest
-                .iter()
-                .filter_map(|source| source.get(slot))
-                .fold(*kwh, |total, value| total + *value);
-            (*slot, total)
-        })
-        .collect()
+    let publishing: Vec<&BTreeMap<i64, f64>> =
+        series.iter().filter(|source| !source.is_empty()).collect();
+    match publishing.as_slice() {
+        [] => BTreeMap::new(),
+        [only] => (*only).clone(),
+        [first, rest @ ..] => first
+            .iter()
+            .filter(|(slot, _)| rest.iter().all(|source| source.contains_key(*slot)))
+            .map(|(slot, kwh)| {
+                let total = rest
+                    .iter()
+                    .filter_map(|source| source.get(slot))
+                    .fold(*kwh, |total, value| total + *value);
+                (*slot, total)
+            })
+            .collect(),
+    }
+}
+
+/// [`sum_series`] with one warning when an absent source is skipped among several.
+///
+/// A lone source stays silent so single-source dashboards behave exactly as before.
+pub(crate) fn sum_sources(series: &[BTreeMap<i64, f64>], name: &'static str) -> BTreeMap<i64, f64> {
+    let absent = series.iter().filter(|source| source.is_empty()).count();
+    if series.len() > 1 && absent > 0 && absent < series.len() {
+        tracing::warn!(
+            series = name,
+            absent_sources = absent,
+            "skipped grid sources with no complete quarter in the window; no slots invented"
+        );
+    }
+    sum_series(series)
 }
 
 /// Build the validated PV/load history from the aligned statistics maps.
