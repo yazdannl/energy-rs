@@ -51,6 +51,28 @@ pub(crate) async fn fetch(
     Ok(series)
 }
 
+/// Add aligned grid-source series, keeping a slot only when every source has a value for it.
+///
+/// A missing source slot stays absent instead of being read as zero: it would otherwise look as
+/// though only the other tariff's energy was imported. The resulting gap shortens or refuses the
+/// measured window exactly as for one missing series; no slot is ever zero-filled or invented.
+pub(crate) fn sum_series(series: &[BTreeMap<i64, f64>]) -> BTreeMap<i64, f64> {
+    let Some((first, rest)) = series.split_first() else {
+        return BTreeMap::new();
+    };
+    first
+        .iter()
+        .filter(|(slot, _)| rest.iter().all(|source| source.contains_key(*slot)))
+        .map(|(slot, kwh)| {
+            let total = rest
+                .iter()
+                .filter_map(|source| source.get(slot))
+                .fold(*kwh, |total, value| total + *value);
+            (*slot, total)
+        })
+        .collect()
+}
+
 /// Build the validated PV/load history from the aligned statistics maps.
 ///
 /// Load follows `import - export + PV + discharge - charge`, per slot: the dashboard's own energy
