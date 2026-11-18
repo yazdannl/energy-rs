@@ -1,6 +1,7 @@
 //! A transmitted command that no report has confirmed yet.
 
 use crate::control::command::Command;
+use crate::control::fault::ControlFault;
 
 /// One command that is on the wire (or already acknowledged) and not yet echoed by a report.
 ///
@@ -9,7 +10,10 @@ use crate::control::command::Command;
 /// the report that was current when the command went out: only a report strictly newer than it (see
 /// [`is_fresh`](crate::control::echo::is_fresh)) may confirm or fault the command, so a duplicated or
 /// pre-command report can never do either.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// A fresh report that still echoes the old limits is only [`inconclusive`](Self::inconclusive):
+/// the device emits reports before it applies a write, so that is a doubt, not a verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pending {
     /// The clamped command that was sent.
     pub command: Command,
@@ -21,4 +25,11 @@ pub struct Pending {
     pub acked_after: Option<u32>,
     /// An emergency neutralising hold sent while the AC path was wedged.
     pub emergency: bool,
+    /// The freshest limit mismatch seen so far, held while the write gets a chance to land.
+    ///
+    /// Only echo faults are kept here; wedge, restart, foreign and wrong-mode reports still fail
+    /// the command at once. A matching report clears the doubt and confirms; a bounded wait
+    /// ([`ECHO_CONFIRM_WINDOW`](crate::control::echo::ECHO_CONFIRM_WINDOW)) turns it into a
+    /// fault exactly once.
+    pub inconclusive: Option<ControlFault>,
 }

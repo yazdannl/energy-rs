@@ -36,7 +36,7 @@ fn fast_controller(
     (device, controller)
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_duplicate_report_cannot_confirm_a_command() {
     // H10: the zero limits of the report that was already there before the hold used to "confirm"
     // it, so a hold that never took looked applied.
@@ -62,12 +62,20 @@ async fn a_duplicate_report_cannot_confirm_a_command() {
         "a duplicate must not clear ownership of the command"
     );
 
-    // A genuinely newer report that still shows the old limit is the real fault.
+    // A genuinely newer report that still shows the old limit is a doubt until the bounded
+    // wait expires; only then is it the real fault.
     device.push_report(echo(
         1,
         json!({"acMode": 2, "inputLimit": 500, "outputLimit": 0}),
     ));
-    let observation = controller.poll().await.unwrap();
+    device.push_report(echo(
+        2,
+        json!({"acMode": 2, "inputLimit": 500, "outputLimit": 0}),
+    ));
+    let observation = controller
+        .poll_confirming(Duration::from_millis(100), || {})
+        .await
+        .unwrap();
     assert!(matches!(
         observation.fault,
         Some(ControlFault::HoldEcho { input_w: 500, .. })

@@ -1,14 +1,17 @@
 //! One device: pacing, clamping, echo confirmation and fault memory.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 use tokio::sync::Mutex as Transaction;
+use tokio::time::Instant;
 
 use crate::control::applied::Applied;
 use crate::control::clamp::clamp_command;
 use crate::control::command::Command;
+use crate::control::echo::ECHO_POLL_INTERVAL;
+use crate::control::emergency;
 use crate::control::fault::ControlFault;
 use crate::control::limits::ControlLimits;
 use crate::control::observation::Observation;
@@ -46,6 +49,10 @@ pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 ///   readback of one command belongs to that command;
 /// * only a report newer than the pre-write report can confirm or fault the pending command, and a
 ///   report from another serial is ignored as a fault;
+/// * a newer report that still echoes the old limits leaves the write in doubt for at most
+///   [`ECHO_CONFIRM_WINDOW`](crate::control::ECHO_CONFIRM_WINDOW) (see
+///   [`poll_confirming`](Self::poll_confirming)); duplicates, foreign
+///   reports and safety faults are never tolerated;
 /// * a wedged device rejects every command except a bounded emergency hold.
 pub struct DeviceController<T: DeviceIo> {
     transport: T,
@@ -93,7 +100,7 @@ impl<T: DeviceIo> DeviceController<T> {
     }
 
     pub fn pending(&self) -> Option<Pending> {
-        self.lock().and_then(|inner| inner.pending)
+        self.lock().and_then(|inner| inner.pending.clone())
     }
 
     pub fn last_fault(&self) -> Option<ControlFault> {
@@ -106,9 +113,7 @@ impl<T: DeviceIo> DeviceController<T> {
 
     /// Read the device and fold the report into the controller's state.
     ///
-    /// A wedge or a restart means "back off, re-read, surface a fault": the fault is returned, and
-    /// the pacer is pushed out by [`FAULT_BACKOFF`] so a caller that ignores the fault still cannot
-    /// write for a while.
+    /// A wedge or a restart surfaces a fault and pushes the pacer out by [`FAULT_BACKOFF`].
     pub async fn poll(&self) -> Result<Observation, BatteryError> {
         let (report, confirmed, fault) = {
             let _transaction = self.transaction.lock().await;
@@ -128,6 +133,39 @@ impl<T: DeviceIo> DeviceController<T> {
         })
     }
 
+    /// Poll once, then keep polling while the newest report is fresh but still echoes the old
+    /// limits, for at most `window`.
+    ///
+    /// The first fresh report with the new limit confirms immediately; a duplicate, a foreign
+    /// report or a safety fault ends the wait at once. If the window expires, the stored mismatch
+    /// is returned as a single fault and the command is released, so one failed write gets exactly
+    /// one fail-safe hold from the caller. `on_progress` runs before each sleep: the engine's
+    /// watchdog must be marked while this call is waiting (see [`crate::control`] for the wiring).
+    ///
+    /// This does not claim the pacer slot and does not write: the one-write-at-a-time rule still
+    /// refuses another `apply` until this call resolves the command.
+    pub async fn poll_confirming(
+        &self,
+        window: Duration,
+        on_progress: impl Fn(),
+    ) -> Result<Observation, BatteryError> {
+        let deadline = Instant::now() + window;
+        let mut observation = self.poll().await?;
+        while observation.confirmed.is_none()
+            && observation.fault.is_none()
+            && self.is_inconclusive()
+        {
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(self.expire_inconclusive(observation));
+            }
+            on_progress();
+            tokio::time::sleep((deadline - now).min(ECHO_POLL_INTERVAL)).await;
+            observation = self.poll().await?;
+        }
+        Ok(observation)
+    }
+
     /// Pace, revalidate, clamp, send and remember one command.
     ///
     /// The write slot is taken before the device state is read again, the pending command is
@@ -144,7 +182,8 @@ impl<T: DeviceIo> DeviceController<T> {
                 pending.command.properties(),
             );
             let outcome = self.transport.write(request).await;
-            (pending, self.finish(pending, outcome))
+            let ack = self.finish(&pending, outcome);
+            (pending, ack)
         };
         drop(claim);
         Ok(Applied {
@@ -155,7 +194,9 @@ impl<T: DeviceIo> DeviceController<T> {
 
     /// Revalidate and reserve the command, with the write slot already held.
     fn prepare(&self, command: Command) -> Result<Pending, BatteryError> {
-        let mut inner = self.lock().ok_or_else(|| self.poisoned())?;
+        let mut inner = self.lock().ok_or_else(|| BatteryError::Invalid {
+            reason: format!("device {} state is poisoned", self.transport.sn()),
+        })?;
         let sn = self.transport.sn().to_owned();
         if inner.pending.is_some() {
             return Err(BatteryError::Unconfirmed { sn });
@@ -164,53 +205,32 @@ impl<T: DeviceIo> DeviceController<T> {
             return Err(BatteryError::NotRead { sn });
         };
         if let Some(ac_mode) = inner.wedged {
-            return self.prepare_wedged(&mut inner, command, ac_mode);
+            return emergency::prepare_wedged(self, &mut inner, command, ac_mode);
         }
         let clamped = clamp_command(command, &self.limits, Some(&report))?;
         Ok(self.install(&mut inner, clamped, &report, false))
     }
 
-    /// While wedged only a hold may go out, and only a bounded number of times per episode.
-    fn prepare_wedged(
-        &self,
-        inner: &mut Inner,
-        command: Command,
-        ac_mode: i32,
-    ) -> Result<Pending, BatteryError> {
-        let sn = self.transport.sn().to_owned();
-        if !command.is_hold() || inner.emergency_holds >= MAX_EMERGENCY_HOLDS {
-            return Err(ControlFault::Wedged { sn, ac_mode }.into());
-        }
-        let Some(report) = inner.last_report.clone() else {
-            return Err(BatteryError::NotRead { sn });
-        };
-        inner.emergency_holds += 1;
-        tracing::warn!(
-            sn,
-            ac_mode,
-            attempt = inner.emergency_holds,
-            max = MAX_EMERGENCY_HOLDS,
-            "wedged device: sending an emergency neutralising hold"
-        );
-        // A hold has no magnitude, so it needs no ceiling; its write body never carries `acMode`.
-        Ok(self.install(inner, command, &report, true))
-    }
-
-    fn install(
+    pub(super) fn install(
         &self,
         inner: &mut Inner,
         command: Command,
         report: &Report,
         emergency: bool,
     ) -> Pending {
+        let request_id = self
+            .request_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .wrapping_add(1);
         let pending = Pending {
             command,
-            request_id: self.next_request_id(),
+            request_id,
             baseline: (report.message_id, report.timestamp),
             acked_after: None,
             emergency,
+            inconclusive: None,
         };
-        inner.pending = Some(pending);
+        inner.pending = Some(pending.clone());
         pending
     }
 
@@ -220,7 +240,7 @@ impl<T: DeviceIo> DeviceController<T> {
     /// released and the command is not believed sent.
     fn finish(
         &self,
-        pending: Pending,
+        pending: &Pending,
         outcome: Result<WriteAck, BatteryError>,
     ) -> Result<WriteAck, BatteryError> {
         let Ok(mut inner) = self.inner.lock() else {
@@ -235,7 +255,7 @@ impl<T: DeviceIo> DeviceController<T> {
                 Ok(ack)
             }
             Err(error) => {
-                if inner.pending.is_some_and(|sent| ours(&sent)) {
+                if inner.pending.as_ref().is_some_and(ours) {
                     inner.pending = None;
                 }
                 Err(error)
@@ -243,20 +263,29 @@ impl<T: DeviceIo> DeviceController<T> {
         }
     }
 
-    fn next_request_id(&self) -> u32 {
-        self.request_id
-            .fetch_add(1, Ordering::Relaxed)
-            .wrapping_add(1)
+    fn is_inconclusive(&self) -> bool {
+        self.lock().is_some_and(|inner| inner.is_inconclusive())
+    }
+
+    fn expire_inconclusive(&self, observation: Observation) -> Observation {
+        let Some(mut inner) = self.lock() else {
+            return observation;
+        };
+        match inner.expire_inconclusive() {
+            Some(fault) => {
+                tracing::warn!(sn = self.transport.sn(), %fault, "echo confirmation timed out");
+                Observation {
+                    report: observation.report,
+                    confirmed: None,
+                    fault: Some(fault),
+                }
+            }
+            None => observation,
+        }
     }
 
     fn lock(&self) -> Option<std::sync::MutexGuard<'_, Inner>> {
         self.inner.lock().ok()
-    }
-
-    fn poisoned(&self) -> BatteryError {
-        BatteryError::Invalid {
-            reason: format!("device {} state is poisoned", self.transport.sn()),
-        }
     }
 
     /// Fold one report into the device state.

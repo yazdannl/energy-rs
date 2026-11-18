@@ -132,15 +132,19 @@ fn router(state: Arc<Mutex<FakeState>>) -> Router {
 }
 
 async fn report_handler(State(state): State<Arc<Mutex<FakeState>>>) -> Response {
-    let Ok(guard) = state.lock() else {
+    let Ok(mut guard) = state.lock() else {
         return poisoned();
     };
-    match guard.behaviour.http_status {
-        Some(status) => status_response(
+    if let Some(status) = guard.behaviour.http_status {
+        status_response(
             status,
             json!({"code": status, "success": false, "sn": guard.sn, "error": "injected http status"}),
-        ),
-        None => (StatusCode::OK, Json(guard.report_json())).into_response(),
+        )
+    } else {
+        guard.advance_report();
+        let report = guard.report_json();
+        guard.settle_deferred_write();
+        (StatusCode::OK, Json(report)).into_response()
     }
 }
 

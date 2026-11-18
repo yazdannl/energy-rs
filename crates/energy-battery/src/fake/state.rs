@@ -11,7 +11,7 @@ pub struct FakeState {
     pub sn: String,
     pub product: String,
     pub version: u32,
-    /// Counts like the real thing: one per answered write, wrapping in 8 bits.
+    /// Counts like the real thing: one per report or answered write, wrapping in 8 bits.
     pub message_id: u32,
     pub timestamp: i64,
     pub ac_mode: i32,
@@ -35,6 +35,10 @@ pub struct FakeState {
     pub applied: Vec<bool>,
     /// Writes acknowledged but not applied.
     pub dropped: u32,
+    /// Properties of a write whose limits are applied only after a few stale reports.
+    pub(crate) deferred_limits: Option<serde_json::Value>,
+    /// How many more reports must still show the pre-write limits.
+    pub(crate) deferred_reports: u32,
     pub(crate) last_write_at: Option<Instant>,
 }
 
@@ -64,6 +68,8 @@ impl FakeState {
             writes: Vec::new(),
             applied: Vec::new(),
             dropped: 0,
+            deferred_limits: None,
+            deferred_reports: 0,
             last_write_at: None,
         }
     }
@@ -108,5 +114,22 @@ impl FakeState {
 
     pub fn last_body(&self) -> Option<&serde_json::Value> {
         self.writes.last()
+    }
+
+    /// Advance the report counter like the device does, before this report is built.
+    pub(crate) fn advance_report(&mut self) {
+        self.message_id = self.message_id.wrapping_add(1);
+        self.timestamp = self.timestamp.saturating_add(1);
+    }
+
+    /// Apply a deferred write *after* the report with the stale limits was emitted.
+    pub(crate) fn settle_deferred_write(&mut self) {
+        if self.deferred_reports > 0 {
+            self.deferred_reports -= 1;
+            if self.deferred_reports == 0 {
+                let properties = self.deferred_limits.take();
+                self.apply_properties(properties.as_ref());
+            }
+        }
     }
 }
