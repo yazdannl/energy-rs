@@ -1,4 +1,8 @@
 //! The live supply: Home Assistant statistics, the solar forecast and the price store.
+//!
+//! A hole in the middle of the statistics shortens the measured window to its gap-free tail (at
+//! least one hour), never a zero-fill. A short window makes `history.load_kwh_over(24)` cover less
+//! than 24 h, which only matters when there is no learned load profile.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -85,6 +89,10 @@ impl HaPlanSupply {
             .await?;
         let charge = self.battery(&site, window, true).await?;
         let discharge = self.battery(&site, window, false).await?;
+        let (window, gap) = ha_series::gap_free_window(&import, &export, &pv, window)?;
+        if let Some(gap) = gap {
+            ha_series::warn_shortened(window, gap);
+        }
         ha_series::timeline(&import, &export, &pv, &charge, &discharge, window)
     }
 

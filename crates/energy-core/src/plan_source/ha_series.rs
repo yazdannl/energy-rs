@@ -10,6 +10,9 @@ use energy_ha::{Connection, SiteModel, SolarForecast, slot_series_15min};
 use crate::plan::{HORIZON_SLOTS, PlanError, SLOT_SECONDS};
 use crate::plan_source::MeasuredHistory;
 
+/// Shortest gap-free tail worth validating: one hour of real measurements.
+const MIN_GAP_FREE_SLOTS: i64 = 4;
+
 /// The quarter-hour window a supply reads: `hours` before the last complete slot.
 pub(crate) fn history_window(now: i64, hours: i64) -> (i64, i64) {
     let end = slot_floor(now);
@@ -83,12 +86,66 @@ pub(crate) fn timeline(
     MeasuredHistory::new(starts, pv_kw, load_kw)
 }
 
+/// The most recent window with no missing quarter-hour in the required statistics.
+///
+/// The series were read once over the full window; a wipe only shortens the anchor to the tail
+/// after the last missing slot, which [`timeline`] then validates strictly. `charge`/`discharge`
+/// are ignored here because they are optional and default to zero. Returns the window to validate
+/// and the gap that shortened it, or a refusal naming the first missing slot when even one hour of
+/// contiguous measurements is unavailable. No slot is ever zero-filled or invented.
+pub(crate) fn gap_free_window(
+    import: &BTreeMap<i64, f64>,
+    export: &BTreeMap<i64, f64>,
+    pv: &BTreeMap<i64, f64>,
+    window: (i64, i64),
+) -> Result<((i64, i64), Option<i64>), PlanError> {
+    let (start, end) = window;
+    let published = published_end(import, export, pv, start, end);
+    let mut first_missing = None;
+    let mut tail = start;
+    let mut last_gap = None;
+    let mut t = start;
+    while t < end {
+        if !import.contains_key(&t) || !export.contains_key(&t) || !pv.contains_key(&t) {
+            if first_missing.is_none() {
+                first_missing = Some(t);
+            }
+            // Trailing holes are unpublished slots, which `timeline` trims as usual.
+            if t < published {
+                tail = t.saturating_add(SLOT_SECONDS);
+                last_gap = Some(t);
+            }
+        }
+        t = t.saturating_add(SLOT_SECONDS);
+    }
+    if published.saturating_sub(tail) < MIN_GAP_FREE_SLOTS.saturating_mul(SLOT_SECONDS) {
+        return Err(PlanError::StatsGap {
+            series: "pv/load",
+            t_start: first_missing.unwrap_or(start),
+        });
+    }
+    Ok(((tail, end), last_gap))
+}
+
+/// One warning for a shortened window, naming its coverage and the statistics gap behind it.
+pub(crate) fn warn_shortened(window: (i64, i64), gap: i64) {
+    let iso = DateTime::<Utc>::from_timestamp(gap, 0)
+        .map_or_else(|| gap.to_string(), |moment| moment.to_rfc3339());
+    let minutes = (window.1 - window.0) / 60;
+    tracing::warn!(
+        covered_minutes = minutes,
+        covered_hours = minutes as f64 / 60.0,
+        reason = format!("statistics gap at {iso}"),
+        "shortened measured history; no slots were invented"
+    );
+}
+
 /// The window end after dropping the trailing slots Home Assistant has not published yet.
 ///
 /// Only the tail is dropped: an interior hole is still a refusal, because a zero-fill there would
 /// teach the planner a house that was empty and dark. A window with nothing published at all comes
 /// back empty and is refused by [`MeasuredHistory::new`].
-fn published_end(
+pub(crate) fn published_end(
     import: &BTreeMap<i64, f64>,
     export: &BTreeMap<i64, f64>,
     pv: &BTreeMap<i64, f64>,
@@ -192,56 +249,5 @@ fn timestamp(seconds: i64) -> Result<DateTime<Utc>, PlanError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use super::{SLOT_SECONDS, published_end, timeline};
-
-    const START: i64 = 1_790_000_000 - 1_790_000_000 % SLOT_SECONDS;
-
-    /// A series covering `slots` quarter-hours from `START`.
-    fn series(slots: i64) -> BTreeMap<i64, f64> {
-        (0..slots)
-            .map(|index| (START + index * SLOT_SECONDS, 1.0))
-            .collect()
-    }
-
-    #[test]
-    fn the_unpublished_tail_is_trimmed_not_refused() {
-        let window = (START, START + 4 * SLOT_SECONDS);
-        let end = published_end(&series(3), &series(3), &series(3), window.0, window.1);
-        assert_eq!(
-            end,
-            START + 3 * SLOT_SECONDS,
-            "the last published slot wins"
-        );
-        let history = timeline(
-            &series(3),
-            &series(3),
-            &series(3),
-            &BTreeMap::new(),
-            &BTreeMap::new(),
-            window,
-        )
-        .expect("a lagging publication is not a refusal");
-        assert_eq!(history.len(), 3);
-    }
-
-    #[test]
-    fn an_interior_hole_is_still_refused() {
-        let window = (START, START + 3 * SLOT_SECONDS);
-        let mut holed = series(3);
-        holed.remove(&(START + SLOT_SECONDS));
-        let error = timeline(
-            &holed,
-            &series(3),
-            &series(3),
-            &BTreeMap::new(),
-            &BTreeMap::new(),
-            window,
-        )
-        .expect_err("an interior gap must refuse");
-        assert!(error.to_string().contains("gap"), "{error}");
-    }
-}
+#[path = "ha_series_tests.rs"]
+mod tests;
