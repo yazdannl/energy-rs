@@ -10,6 +10,15 @@
 //! * a hold is both limits at 0 and never writes `acMode`;
 //! * `acMode` outside {1, 2} means the AC path is wedged: stop writing and surface a fault;
 //! * a `messageId` that went backwards means the device rebooted: re-read before commanding.
+//!
+//! # Heartbeat wiring for the echo wait
+//!
+//! [`DeviceController::poll_confirming`] keeps the engine's progress heartbeat alive through its
+//! `on_progress` callback. In energy-core, `crates/energy-core/src/dispatch/battery_sink.rs`
+//! (`BatterySink::send`) replaces `controller.poll().await` with the one line
+//! `controller.poll_confirming(ECHO_CONFIRM_WINDOW, || progress.mark(now)).await`, threading the
+//! `progress` already held by `Dispatcher::send` into the sink. That one `send` covers both the
+//! setpoint write and its single fail-safe hold.
 
 pub mod applied;
 pub mod clamp;
@@ -17,6 +26,7 @@ pub mod command;
 pub mod controller;
 pub mod direction;
 pub mod echo;
+mod emergency;
 pub mod fault;
 pub mod hard_limit;
 pub mod limits;
@@ -32,7 +42,7 @@ pub use clamp::{Ceiling, ceiling_for, clamp_command, clamp_watts};
 pub use command::Command;
 pub use controller::{DeviceController, FAULT_BACKOFF, MAX_EMERGENCY_HOLDS};
 pub use direction::Direction;
-pub use echo::{ECHO_TOLERANCE_W, verify};
+pub use echo::{ECHO_CONFIRM_WINDOW, ECHO_POLL_INTERVAL, ECHO_TOLERANCE_W, is_echo_doubt, verify};
 pub use fault::ControlFault;
 pub use hard_limit::{HardLimit, MAX_HARD_LIMIT_W};
 pub use limits::ControlLimits;

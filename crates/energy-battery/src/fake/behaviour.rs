@@ -12,6 +12,9 @@ pub struct FakeBehaviour {
     pub drop_writes_below: Duration,
     /// Acknowledge writes but never apply them (the "lost write" case).
     pub ignore_writes: bool,
+    /// Reports to emit after a write ack that still show the *old* limits, while the device is
+    /// applying the write. Their `messageId` still advances, as on the real hardware.
+    pub stale_reports_after_write: u32,
     /// Report `acMode` 127 and ignore limit writes (the wedged AC path).
     pub wedged: bool,
     /// Answer every request with this HTTP status (401 = local API disabled).
@@ -25,6 +28,7 @@ impl Default for FakeBehaviour {
         Self {
             drop_writes_below: Duration::from_millis(1300),
             ignore_writes: false,
+            stale_reports_after_write: 0,
             wedged: false,
             http_status: None,
             write_code: None,
@@ -44,6 +48,13 @@ impl FakeBehaviour {
     #[must_use]
     pub fn ignoring_writes(mut self) -> Self {
         self.ignore_writes = true;
+        self
+    }
+
+    /// Echo the pre-write limits in the first `reports` reports after each write ack.
+    #[must_use]
+    pub fn with_stale_echo_reports(mut self, reports: u32) -> Self {
+        self.stale_reports_after_write = reports;
         self
     }
 

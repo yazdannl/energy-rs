@@ -8,8 +8,7 @@ use crate::report::decode;
 impl FakeState {
     /// Handle one `POST /properties/write`: record it, then answer what the real device would.
     ///
-    /// A dropped write (too close to the previous one) still answers `success: true` — that is
-    /// exactly why a write is only believed after the next report echoes it.
+    /// A dropped write still answers `success: true`; only a report echo proves a write.
     pub(crate) fn apply_write(&mut self, body: &Value) -> (u16, Value) {
         self.writes.push(body.clone());
         if let Some(status) = self.behaviour.http_status {
@@ -47,7 +46,14 @@ impl FakeState {
         self.last_write_at = Some(now);
         let applies = !too_close && !self.behaviour.ignore_writes && !self.behaviour.wedged;
         if applies {
-            self.apply_properties(body.get("properties"));
+            let properties = body.get("properties").cloned();
+            if self.behaviour.stale_reports_after_write > 0 {
+                // New messageId, old limits: the race seen on the SolarFlow800 Plus.
+                self.deferred_limits = properties;
+                self.deferred_reports = self.behaviour.stale_reports_after_write;
+            } else {
+                self.apply_properties(properties.as_ref());
+            }
         } else {
             self.dropped += 1;
         }
@@ -70,7 +76,7 @@ impl FakeState {
         (status.unwrap_or(200), body)
     }
 
-    fn apply_properties(&mut self, properties: Option<&Value>) {
+    pub(crate) fn apply_properties(&mut self, properties: Option<&Value>) {
         let Some(properties) = properties.and_then(Value::as_object) else {
             return;
         };

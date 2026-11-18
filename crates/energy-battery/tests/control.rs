@@ -62,18 +62,22 @@ async fn a_write_is_confirmed_by_the_next_report() {
     assert!(controller.pending().is_none());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_echo_outside_the_tolerance_is_a_typed_fault() {
     let (_, controller) = fast_controller(vec![
         echo(0, json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0})),
         echo(1, json!({"acMode": 1, "inputLimit": 400, "outputLimit": 0})),
+        echo(2, json!({"acMode": 1, "inputLimit": 400, "outputLimit": 0})),
     ]);
     controller.poll().await.unwrap();
     controller
         .apply(Command::Charge { watts: 650 })
         .await
         .unwrap();
-    let observation = controller.poll().await.unwrap();
+    let observation = controller
+        .poll_confirming(Duration::from_millis(100), || {})
+        .await
+        .unwrap();
     assert_eq!(observation.confirmed, None);
     match observation.fault {
         Some(ControlFault::EchoMismatch {
@@ -129,15 +133,19 @@ async fn a_hold_is_confirmed_by_zero_limits() {
     assert_eq!(properties.smart_mode(), Some(1));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_hold_that_did_not_take_is_a_typed_fault() {
     let (_, controller) = fast_controller(vec![
         echo(0, json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0})),
         echo(1, json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0})),
+        echo(2, json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0})),
     ]);
     controller.poll().await.unwrap();
     controller.apply(Command::Hold).await.unwrap();
-    let observation = controller.poll().await.unwrap();
+    let observation = controller
+        .poll_confirming(Duration::from_millis(100), || {})
+        .await
+        .unwrap();
     assert!(matches!(
         observation.fault,
         Some(ControlFault::HoldEcho {

@@ -67,18 +67,52 @@ impl Inner {
     /// Verify the pending command against a report that is actually newer than the command.
     ///
     /// A duplicate, stale or foreign report never confirms and never clears the pending command: it
-    /// says nothing about the write, so ownership stays with the command that is in doubt.
+    /// says nothing about the write, so ownership stays with the command that is in doubt. A fresh
+    /// report with the old limits is likewise inconclusive: the duty to decide belongs to
+    /// [`poll_confirming`](crate::control::controller::DeviceController::poll_confirming), which
+    /// keeps waiting inside a bound instead of failing a write the device is still applying.
     fn confirm(&mut self, report: &Report) -> (Option<Command>, Option<ControlFault>) {
-        let Some(pending) = self.pending else {
+        let Some(mut pending) = self.pending.clone() else {
             return (None, None);
         };
         if !echo::is_fresh(&pending, report) {
             return (None, None);
         }
-        self.pending = None;
         match echo::verify(&pending.command, report) {
-            Ok(()) => (Some(pending.command), None),
-            Err(fault) => (None, Some(fault)),
+            Ok(()) => {
+                self.pending = None;
+                (Some(pending.command), None)
+            }
+            Err(fault) if echo::is_echo_doubt(&fault) => {
+                // The command stays owned; only the decision is deferred to the bounded wait.
+                pending.inconclusive = Some(fault);
+                self.pending = Some(pending);
+                (None, None)
+            }
+            Err(fault) => {
+                self.pending = None;
+                (None, Some(fault))
+            }
         }
+    }
+
+    /// The pending command is waiting for a report that actually echoes it, not failing yet.
+    pub(super) fn is_inconclusive(&self) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.inconclusive.is_some())
+    }
+
+    /// Turn a timed-out doubt into one fault and release the command.
+    ///
+    /// Nothing is emitted on later polls: the fail-safe caller sees this fault once.
+    pub(super) fn expire_inconclusive(&mut self) -> Option<ControlFault> {
+        if !self.is_inconclusive() {
+            return None;
+        }
+        let pending = self.pending.take()?;
+        let fault = pending.inconclusive?;
+        self.last_fault = Some(fault.clone());
+        Some(fault)
     }
 }
