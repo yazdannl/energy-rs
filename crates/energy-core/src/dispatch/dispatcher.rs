@@ -229,10 +229,12 @@ impl Dispatcher {
         watts: f64,
         sink: &dyn CommandSink,
     ) -> Sent {
+        // The heartbeat goes into the sink so the write/confirmation wait can mark every
+        // successful transport step, not just the tick boundaries around it.
         let result = if watts.abs() <= HOLD_DEADBAND_W {
-            sink.hold(pack_id).await
+            sink.hold_with_progress(pack_id, progress).await
         } else {
-            sink.write(pack_id, watts).await
+            sink.write_with_progress(pack_id, watts, progress).await
         };
         match result {
             Ok(receipt) => {
@@ -274,7 +276,7 @@ impl Dispatcher {
                 ..Sent::none()
             };
         }
-        match sink.hold(pack_id).await {
+        match sink.hold_with_progress(pack_id, progress).await {
             Ok(receipt) => {
                 advance(progress, now);
                 Sent {

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::dispatch::{BoxFuture, CommandSink, SinkError, WriteReceipt};
+use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt};
 use crate::engine::write_gate::WriteGate;
 use crate::engine::write_intent::WriteIntent;
 
@@ -57,19 +57,36 @@ impl GuardedSink {
 
 impl CommandSink for GuardedSink {
     fn write(&self, pack_id: &str, watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+        self.write_with_progress(pack_id, watts, None)
+    }
+
+    fn write_with_progress<'a>(
+        &'a self,
+        pack_id: &str,
+        watts: f64,
+        progress: Option<&'a dyn Progress>,
+    ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         if let Some(error) = self.refused(pack_id) {
             return Box::pin(async move { Err(error) });
         }
         if let Err(error) = self.intent.claim(pack_id, watts, self.now) {
             return Box::pin(async move { Err(error) });
         }
-        self.inner.write(pack_id, watts)
+        self.inner.write_with_progress(pack_id, watts, progress)
     }
 
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+        self.hold_with_progress(pack_id, None)
+    }
+
+    fn hold_with_progress<'a>(
+        &'a self,
+        pack_id: &str,
+        progress: Option<&'a dyn Progress>,
+    ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         if let Some(error) = self.refused(pack_id) {
             return Box::pin(async move { Err(error) });
         }
-        self.inner.hold(pack_id)
+        self.inner.hold_with_progress(pack_id, progress)
     }
 }

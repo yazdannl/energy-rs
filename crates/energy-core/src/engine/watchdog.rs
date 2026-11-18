@@ -4,12 +4,27 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Instant;
 
+/// The shortest stall bound we allow, seconds.
+///
+/// One tick legitimately waits for four devices: 4 × 2 s write pacing = 8 s, plus one echo round
+/// trip (~2 s) and slack for the slowest report. A 1 s tick would otherwise give a 3 s bound and
+/// declare a stall in the middle of that work. Bounds derived from `tick_seconds` never go below
+/// this floor; an explicit [`Watchdog::with_stall_after`] bound remains available for tests.
+pub const MIN_STALL_AFTER_S: i64 = 15;
+
+/// The stall bound for a tick interval: `max(3 × tick, MIN_STALL_AFTER_S)`.
+pub fn stall_bound_for(tick_seconds: u64) -> i64 {
+    let tick = i64::try_from(tick_seconds).unwrap_or(i64::MAX);
+    tick.saturating_mul(3).max(MIN_STALL_AFTER_S)
+}
+
 /// A heartbeat that only moves forward.
 ///
 /// The old loop judged liveness by tick *start*, so a tick that spent ten seconds in four
 /// sequential read-backs looked dead (survey §7 trap 10). This one is marked at the moment progress
 /// actually happens -- after every successful read, after every write, after a tick completes -- and
-/// the supervisor only calls it stalled after three tick intervals without a mark.
+/// the supervisor only calls it stalled after the bound (three ticks, with a one-tick-of-work floor)
+/// without a mark.
 ///
 /// Two clocks are kept on purpose:
 ///
@@ -29,10 +44,9 @@ pub struct Watchdog {
 }
 
 impl Watchdog {
-    /// A watchdog for a given tick interval (stall bound = 3 × tick).
+    /// A watchdog for a given tick interval (bound = `max(3 × tick, MIN_STALL_AFTER_S)`).
     pub fn new(tick_seconds: u64) -> Self {
-        let tick = i64::try_from(tick_seconds).unwrap_or(i64::MAX);
-        Self::with_stall_after(tick.saturating_mul(3))
+        Self::with_stall_after(stall_bound_for(tick_seconds))
     }
 
     /// An explicit stall bound, seconds.
