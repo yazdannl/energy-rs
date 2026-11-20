@@ -184,17 +184,50 @@ impl Engine {
         &self,
         only: Option<&[String]>,
     ) -> Result<Vec<(String, Option<i64>)>, EngineError> {
-        let Some(ids) = only else {
+        let ids: Vec<String> = if let Some(ids) = only {
+            ids.to_vec()
+        } else {
             let state = self.lock()?;
-            let mut targets = state.known_packs.clone();
+            let mut ids: Vec<String> = state
+                .known_packs
+                .iter()
+                .map(|(pack_id, _)| pack_id.clone())
+                .collect();
             for pack_id in state.latch.pack_ids() {
-                if !targets.iter().any(|(known, _)| *known == pack_id) {
-                    targets.push((pack_id, None));
+                if !ids.contains(&pack_id) {
+                    ids.push(pack_id);
                 }
             }
-            return Ok(targets);
+            ids
         };
-        Ok(ids.iter().map(|pack_id| (pack_id.clone(), None)).collect())
+        Ok(ids
+            .into_iter()
+            .map(|pack_id| {
+                let ledger_id = self.pack_ledger_id(&pack_id);
+                if ledger_id.is_none() {
+                    tracing::warn!(pack = %pack_id, "holding a pack with no ledger id; its row will be anonymous");
+                }
+                (pack_id, ledger_id)
+            })
+            .collect())
+    }
+
+    /// The ledger id of a pack we own, so its hold row names the pack it neutralised.
+    fn pack_ledger_id(&self, pack_id: &str) -> Option<i64> {
+        if let Ok(state) = self.lock() {
+            if let Some(id) = state.pack_ids.get(pack_id) {
+                return Some(*id);
+            }
+            if let Some((_, Some(id))) = state.known_packs.iter().find(|(sn, _)| sn == pack_id) {
+                return Some(*id);
+            }
+        }
+        // A latched pack may not be in this tick's read; the ledger still knows its serial.
+        self.ledger
+            .packs()
+            .ok()
+            .and_then(|packs| packs.by_sn(pack_id).ok().flatten())
+            .map(|pack| pack.id)
     }
 
     /// One real hold through the gate; a verified echo clears the pack's latch.
@@ -231,12 +264,18 @@ impl Engine {
             // Authority or generation withdrew the command: nothing was sent and ownership stays.
             Ok(Err(SinkError::Fenced { .. })) => Ok(HoldState::Fenced),
             Ok(Err(error)) => {
+                // A hold that never landed is still a dispatch attempt we own: journal it with
+                // its cause and the pack's ledger id, instead of leaving a silent gap.
+                let cause = error.to_string();
                 self.event(
                     now,
                     EventLevel::Error,
                     "hold.failed",
-                    format!("{pack_id}: {error}"),
+                    format!("{pack_id}: {cause}"),
                 )?;
+                let entry = DispatchEntry::new(now, ledger_id, 0.0, 0.0, reason.as_str(), "auto")
+                    .failed(format!("hold failed: {cause}"));
+                self.ledger.dispatch()?.insert(&entry)?;
                 Ok(HoldState::Unverified)
             }
             Err(_) => {

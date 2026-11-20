@@ -42,7 +42,9 @@ impl Engine {
         });
         drop(state);
         for (pack_id, intended_w, at) in offenders {
-            self.dispatcher.faults().arm(&pack_id, at);
+            self.dispatcher
+                .faults()
+                .arm(&pack_id, at, "the pack ignored its command");
             if let Ok(mut state) = self.lock() {
                 // Keep ownership: whatever the pack is doing, it is doing it because we drove it.
                 if state.latch.record(&pack_id, intended_w, at) {

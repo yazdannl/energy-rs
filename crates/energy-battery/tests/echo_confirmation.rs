@@ -18,6 +18,7 @@ use energy_battery::{
     FakeDevice, FakeState, HttpTransport,
 };
 use serde_json::json;
+use support::read_flake::ReadFlake;
 use support::{SN, ScriptedDevice, report_at};
 use tokio::time::Instant;
 
@@ -324,4 +325,92 @@ async fn a_discharge_is_not_confused_with_a_hold_by_zero_input_limit() {
         Some(Command::Discharge { watts: 600 })
     );
     assert!(observation.fault.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_transient_read_miss_is_retried_until_the_echo_arrives() {
+    let scripted = Arc::new(ScriptedDevice::new(
+        SN,
+        vec![report_at(
+            SN,
+            4211,
+            T0,
+            json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0}),
+        )],
+    ));
+    let device = Arc::new(ReadFlake::new(Arc::clone(&scripted), 0));
+    let controller = DeviceController::new(device.clone(), ControlLimits::unlimited())
+        .with_spacing(Duration::ZERO);
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Discharge { watts: 700 })
+        .await
+        .unwrap();
+
+    // The first confirmation read times out; a later report carries the real echo.
+    device.set_misses(1);
+    scripted.push_report(report_at(
+        SN,
+        4212,
+        T0 + 1,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 700}),
+    ));
+    let observation = controller
+        .poll_confirming(ECHO_CONFIRM_WINDOW, || {})
+        .await
+        .unwrap();
+    assert_eq!(
+        observation.confirmed,
+        Some(Command::Discharge { watts: 700 })
+    );
+    assert!(observation.fault.is_none());
+    assert!(observation.read_error.is_none());
+    assert!(controller.pending().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_window_of_read_misses_ends_without_a_device_fault() {
+    let scripted = Arc::new(ScriptedDevice::new(
+        SN,
+        vec![report_at(
+            SN,
+            4211,
+            T0,
+            json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0}),
+        )],
+    ));
+    let device = Arc::new(ReadFlake::new(Arc::clone(&scripted), 0));
+    let controller = DeviceController::new(device.clone(), ControlLimits::unlimited())
+        .with_spacing(Duration::ZERO);
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Discharge { watts: 700 })
+        .await
+        .unwrap();
+    device.set_misses(100);
+
+    let marks = Arc::new(AtomicUsize::new(0));
+    let observation = {
+        let marks = Arc::clone(&marks);
+        controller
+            .poll_confirming(Duration::from_millis(200), move || {
+                marks.fetch_add(1, Ordering::Relaxed);
+            })
+            .await
+            .unwrap()
+    };
+    assert_eq!(observation.confirmed, None);
+    assert!(observation.fault.is_none(), "{:?}", observation.fault);
+    assert!(
+        observation
+            .read_error
+            .as_deref()
+            .is_some_and(|error| error.contains("scripted read timeout")),
+        "{observation:?}"
+    );
+    assert!(marks.load(Ordering::Relaxed) >= 1);
+    assert!(
+        controller.pending().is_none(),
+        "the next tick must not be refused as Unconfirmed"
+    );
 }

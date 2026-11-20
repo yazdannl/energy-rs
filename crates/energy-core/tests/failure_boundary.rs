@@ -232,3 +232,36 @@ async fn a_pack_that_ignores_its_command_is_held_and_backed_off() {
         "a pack that ignores its command is not commanded again: {after:?}"
     );
 }
+
+/// An orphan hold is hardware we own: its dispatch row must name that pack, not `NULL`.
+#[tokio::test]
+async fn orphan_hold_rows_name_the_pack_we_own() {
+    let h = driven().await;
+    h.sink.unverified_holds(true);
+    h.fleet.set(vec![pack("SN-A", 50.0)]);
+
+    h.engine.tick_once(NOW + 5).await.expect("tick");
+
+    let rows = h
+        .ledger
+        .dispatch()
+        .expect("dispatch")
+        .range(NOW, NOW + 20)
+        .expect("rows");
+    let orphans: Vec<_> = rows
+        .iter()
+        .filter(|row| row.reason == "orphan_hold")
+        .collect();
+    assert_eq!(orphans.len(), 1, "one vanished pack was held: {rows:?}");
+    let id = orphans[0]
+        .pack_id
+        .expect("the hold must have a ledger pack id");
+    let pack = h
+        .ledger
+        .packs()
+        .expect("packs")
+        .get(id)
+        .expect("lookup")
+        .expect("pack row");
+    assert_eq!(pack.sn, "SN-B");
+}

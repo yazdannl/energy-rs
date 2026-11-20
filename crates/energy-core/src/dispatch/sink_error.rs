@@ -20,6 +20,17 @@ pub enum SinkError {
         /// Human-readable cause.
         reason: String,
     },
+    /// The write reached the device, but a read miss prevented echo confirmation.
+    ///
+    /// Not a fault: the pack stays latched and no backoff is armed, because a slow read says
+    /// nothing about whether the device applied the command.
+    #[error("pack {pack_id}: accepted but not echoed; read failed: {reason}")]
+    ReadUnverified {
+        /// The pack whose echo could not be read.
+        pack_id: String,
+        /// The read error.
+        reason: String,
+    },
     /// The device reported a mode, echo or restart fault.
     #[error("pack {pack_id}: {fault}")]
     Fault {

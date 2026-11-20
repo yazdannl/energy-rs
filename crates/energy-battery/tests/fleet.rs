@@ -169,3 +169,26 @@ async fn freshness_is_measured_against_the_last_read() {
     tokio::time::advance(Duration::from_secs(31)).await;
     assert!(!device.is_fresh(Instant::now(), Duration::from_secs(30)));
 }
+
+#[tokio::test]
+async fn a_single_device_read_miss_is_retried_within_the_tick() {
+    let scripted = Arc::new(support::ScriptedDevice::new(SN_A, Vec::new()));
+    let device = Arc::new(support::read_flake::ReadFlake::new(
+        Arc::clone(&scripted),
+        1,
+    ));
+    let fleet = FleetClient::with_interval(
+        vec![Arc::new(DeviceController::new(
+            device,
+            ControlLimits::unlimited(),
+        ))],
+        Duration::ZERO,
+    );
+
+    let snapshot = fleet.refresh().await;
+    assert!(
+        snapshot.is_complete(),
+        "one timed-out read must not drop the pack for this tick"
+    );
+    assert!(snapshot.device(SN_A).is_some());
+}

@@ -29,6 +29,7 @@ pub struct FakeSink {
     supersede_writes: AtomicBool,
     unverified_writes: AtomicBool,
     unverified_holds: AtomicBool,
+    read_miss: AtomicBool,
     observer: Mutex<Option<Observer>>,
     hold_delays: Mutex<BTreeMap<String, Duration>>,
     stuck_holds: Mutex<BTreeSet<String>>,
@@ -44,6 +45,7 @@ impl Default for FakeSink {
             supersede_writes: AtomicBool::new(false),
             unverified_writes: AtomicBool::new(false),
             unverified_holds: AtomicBool::new(false),
+            read_miss: AtomicBool::new(false),
             observer: Mutex::new(None),
             hold_delays: Mutex::new(BTreeMap::new()),
             stuck_holds: Mutex::new(BTreeSet::new()),
@@ -96,6 +98,11 @@ impl FakeSink {
             .lock()
             .expect("sink fenced holds")
             .insert(pack_id.to_owned());
+    }
+
+    /// Script a read miss during echo confirmation: the write lands, but no echo is read.
+    pub fn read_miss(&self, miss: bool) {
+        self.read_miss.store(miss, Ordering::Relaxed);
     }
 
     /// Run `hook` at the instant of the transport write, i.e. after the intent was journalled.
@@ -181,10 +188,16 @@ impl CommandSink for FakeSink {
                     reason: "scripted rejection".to_owned(),
                 });
             }
+            let verified = !self.unverified_writes.load(Ordering::Relaxed);
             if self.supersede_writes.load(Ordering::Relaxed) {
                 return Ok(WriteReceipt::superseded());
             }
-            let verified = !self.unverified_writes.load(Ordering::Relaxed);
+            if self.read_miss.load(Ordering::Relaxed) {
+                return Err(SinkError::ReadUnverified {
+                    pack_id,
+                    reason: "scripted read miss during echo".to_owned(),
+                });
+            }
             Ok(WriteReceipt {
                 applied_w: watts,
                 verified,

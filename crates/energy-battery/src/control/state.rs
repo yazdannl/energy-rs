@@ -177,6 +177,19 @@ impl Inner {
         Some(fault)
     }
 
+    /// A neutralising hold or a read miss preempts its own pending command, never a replacement.
+    pub(super) fn cancel(&mut self, request_id: u32) -> bool {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.request_id == request_id)
+        {
+            self.pending = None;
+            return true;
+        }
+        false
+    }
+
     /// Atomically cancel an expired pending command for a safety hold.
     ///
     /// `None` means there is nothing left to clear (the slot is genuinely empty). `Some(delay)` keeps

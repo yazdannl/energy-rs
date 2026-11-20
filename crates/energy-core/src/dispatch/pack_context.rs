@@ -95,18 +95,28 @@ pub(crate) fn reason_for(
     overridden: Option<&ManualOverride>,
     backoff: bool,
 ) -> Reason {
+    let primary = decision.primary();
+    // A safety bound is the binding reason even while the pack is in backoff: a cell-voltage
+    // latch that refused the discharge must not be logged as a transport write failure.
+    if primary != Reason::Ok {
+        return primary;
+    }
     if backoff {
         return Reason::FaultBackoff;
     }
     let maintenance_hold = overridden.is_some_and(|entry| {
         entry.source == OverrideSource::Maintenance && entry.action == OverrideAction::Hold
     });
-    match decision.primary() {
-        Reason::Ok if maintenance_hold => Reason::MaintenanceHold,
-        Reason::Ok if overridden.is_some() => Reason::ManualOverride,
-        Reason::Ok if context.stale => Reason::StaleInput,
-        other => other,
+    if maintenance_hold {
+        return Reason::MaintenanceHold;
     }
+    if overridden.is_some() {
+        return Reason::ManualOverride;
+    }
+    if context.stale {
+        return Reason::StaleInput;
+    }
+    Reason::Ok
 }
 
 /// The human note that belongs in the dispatch log for this pack's override.

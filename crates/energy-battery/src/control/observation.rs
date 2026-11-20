@@ -16,6 +16,9 @@ pub struct Observation {
     pub resolved_request: Option<u32>,
     /// This waiter's command was cancelled or replaced by a safety hold: resolved, not faulted.
     pub superseded: bool,
+    /// The device could not be read back while waiting for an echo. The write was accepted, so a
+    /// read miss is not a control fault; the caller must keep the command latched instead.
+    pub read_error: Option<String>,
 }
 
 impl Observation {
@@ -31,6 +34,7 @@ impl Observation {
             fault,
             resolved_request,
             superseded: false,
+            read_error: None,
         }
     }
 
@@ -41,10 +45,11 @@ impl Observation {
             fault: None,
             resolved_request: None,
             superseded: true,
+            read_error: None,
         }
     }
 
     pub fn is_healthy(&self) -> bool {
-        self.fault.is_none()
+        self.fault.is_none() && self.read_error.is_none()
     }
 }

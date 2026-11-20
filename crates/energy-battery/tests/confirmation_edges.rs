@@ -125,7 +125,7 @@ async fn a_slow_read_marks_progress_and_a_late_echo_is_rejected() {
 }
 
 #[tokio::test]
-async fn a_stalled_transport_releases_the_command() {
+async fn a_stalled_transport_releases_the_command_without_a_fault() {
     let device = Arc::new(BrokenReads::new(SN));
     device.start_healthy();
     let controller = DeviceController::new(Arc::clone(&device), ControlLimits::unlimited())
@@ -141,14 +141,14 @@ async fn a_stalled_transport_releases_the_command() {
         .poll_confirming(Duration::from_millis(100), || {})
         .await
         .unwrap();
+    assert_eq!(observation.fault, None, "a read miss is not a write fault");
     assert!(
-        matches!(
-            &observation.fault,
-            Some(ControlFault::ConfirmationTimeout { detail, .. })
-                if detail.contains("report read failed")
-        ),
+        observation
+            .read_error
+            .as_deref()
+            .is_some_and(|detail| detail.contains("stalled transport")),
         "{:?}",
-        observation.fault
+        observation.read_error
     );
     assert!(controller.pending().is_none());
 }

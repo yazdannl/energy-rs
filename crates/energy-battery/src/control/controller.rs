@@ -134,31 +134,16 @@ impl<T: DeviceIo> DeviceController<T> {
     ///
     /// Every read is bounded by the same hard deadline; `on_progress` marks progress while a read
     /// is in flight, and a report after the deadline is never accepted. One read stays pinned across
-    /// heartbeat beats. A read error resolves the command immediately; a waiter is bound to its
-    /// [`request_id`](Pending::request_id) and reports replacement as superseded, not as a fault.
+    /// heartbeat beats. Duplicates, stalled reads and read misses are retried inside the window and
+    /// end as a read miss, never as a fault. The waiter is bound to its
+    /// [`request_id`](Pending::request_id): it never resolves a command that replaced the one it
+    /// started with, and reports such a replacement as superseded rather than as a fault.
     pub async fn poll_confirming(
         &self,
         window: Duration,
         on_progress: impl Fn(),
     ) -> Result<Observation, BatteryError> {
-        let deadline = Instant::now() + window;
-        let Some(target) = self.pending().map(|pending| pending.request_id) else {
-            return match tokio::time::timeout_at(deadline, self.poll()).await {
-                Ok(result) => result,
-                Err(_) => Err(BatteryError::Invalid {
-                    reason: "report read exceeded the confirmation deadline".to_owned(),
-                }),
-            };
-        };
-        match tokio::time::timeout_at(
-            deadline,
-            confirmation::confirm_loop(self, target, &on_progress),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => confirmation::expire(self, target, "confirmation deadline"),
-        }
+        confirmation::wait(self, window, &on_progress).await
     }
 
     /// Pace, revalidate, clamp, send and remember one command.
@@ -195,16 +180,21 @@ impl<T: DeviceIo> DeviceController<T> {
             .and_then(|mut inner| inner.clear_pending_for_hold(Instant::now(), deadline))
     }
 
-    /// Atomically expire one command and take a report for the returned observation.
-    pub(super) fn expire_pending(
+    /// Cancel exactly the command this waiter owns, without touching a replacement.
+    pub(super) fn cancel(&self, request_id: u32) {
+        if let Some(mut inner) = self.lock() {
+            inner.cancel(request_id);
+        }
+    }
+
+    /// Expire exactly the command this waiter owns, keeping the typed fault for the journal.
+    pub(super) fn record_timeout(
         &self,
         request_id: u32,
         fallback: ControlFault,
-    ) -> Option<(ControlFault, Report)> {
-        let mut inner = self.lock()?;
-        let fault = inner.expire(request_id, fallback)?;
-        let report = inner.last_report.clone()?;
-        Some((fault, report))
+    ) -> Option<ControlFault> {
+        self.lock()
+            .and_then(|mut inner| inner.expire(request_id, fallback))
     }
 
     /// Revalidate and reserve the command, with the write slot already held.
@@ -285,7 +275,7 @@ impl<T: DeviceIo> DeviceController<T> {
         }
     }
 
-    fn lock(&self) -> Option<std::sync::MutexGuard<'_, Inner>> {
+    pub(super) fn lock(&self) -> Option<std::sync::MutexGuard<'_, Inner>> {
         self.inner.lock().ok()
     }
 

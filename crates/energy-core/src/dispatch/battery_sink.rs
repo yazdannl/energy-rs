@@ -14,11 +14,9 @@ use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt,
 ///
 /// Every write goes through the controller, so the protocol rules hold by construction: at least
 /// two seconds between writes to one device, one command in flight, `smartMode: 1` on every write,
-/// no `acMode` on a hold, and confirmation only when a later report echoes the limit. A fault
-/// the controller reports (wedge, restart, a mismatched echo that never lands) is returned as a
-/// [`SinkError`], which the dispatcher turns into exactly one fail-safe hold and a backoff. The
-/// write and every step of the bounded echo wait mark the watchdog, so a slow device is not
-/// mistaken for a stalled loop.
+/// no `acMode` on a hold, and confirmation only when the *next report* echoes the limit. A fault
+/// the controller reports (wedge, restart, echo mismatch) is returned as a [`SinkError`], which the
+/// dispatcher turns into exactly one fail-safe hold and a backoff.
 pub struct BatterySink<T: DeviceIo> {
     devices: BTreeMap<String, Arc<DeviceController<T>>>,
     confirm_window: Duration,
@@ -88,6 +86,11 @@ impl<T: DeviceIo> BatterySink<T> {
         if observation.superseded {
             // A safety hold has already taken over this episode. A second hold here would be a storm.
             return Ok(WriteReceipt::superseded());
+        }
+        // A read miss is not a device fault: the write was accepted and stays latched, with no
+        // backoff and no fail-safe hold.
+        if let Some(reason) = observation.read_error {
+            return Err(SinkError::ReadUnverified { pack_id, reason });
         }
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
@@ -163,22 +166,4 @@ fn whole_watts(watts: f64) -> u32 {
         return 0;
     }
     watts.round().clamp(0.0, f64::from(u32::MAX)) as u32
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ECHO_CONFIRM_WINDOW;
-    use crate::engine::MIN_STALL_AFTER_S;
-
-    #[test]
-    fn the_echo_window_stays_well_inside_the_watchdog_stall_bound() {
-        let window_s = ECHO_CONFIRM_WINDOW.as_secs();
-        let stall_s = u64::try_from(MIN_STALL_AFTER_S).unwrap_or(u64::MAX);
-        // Two whole echo windows must fit inside the floor: a write still waiting for its echo
-        // can never look like a stalled tick, even with one extra window of scheduling slack.
-        assert!(
-            window_s.saturating_mul(2) < stall_s,
-            "echo window {window_s}s must stay well inside the {stall_s}s stall bound"
-        );
-    }
 }

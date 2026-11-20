@@ -47,10 +47,12 @@ impl DeviceSnapshot {
         }
     }
 
-    /// Record a failed poll, keeping the last good report.
-    pub fn record_failure(&mut self, error: &str, at: Instant) {
+    /// Record a failed poll, keeping the last good report and its age.
+    ///
+    /// A failed read is not fresh data: moving `fetched_at` forward would make an old report look
+    /// current and hide exactly the outage the error records.
+    pub fn record_failure(&mut self, error: &str) {
         self.error = Some(error.to_owned());
-        self.fetched_at = Some(at);
     }
 
     /// Age of the cached report, `None` when nothing was ever read.
