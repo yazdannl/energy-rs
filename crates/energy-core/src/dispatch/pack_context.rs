@@ -65,12 +65,27 @@ pub(crate) fn requested_watts(
     if context.stale { 0.0 } else { allocated_w }
 }
 
-/// Whether this pack needs the safety hold rather than a normal command.
+/// A cell-latch command that must bypass write backoff, and its log reason.
 ///
-/// A cell latch that forbids discharge and a neutral ladder answer means the pack must be held
-/// now, even while a write fault has it backed off: the guard cannot rely on the path it guards.
-pub(crate) fn cell_hold(latch: Option<&CellLatch>, allowed_w: f64) -> bool {
-    latch.is_some_and(CellLatch::blocks_discharge) && allowed_w.abs() <= HOLD_DEADBAND_W
+/// Both halves of the guard are safety traffic: a blocked pack needs a neutral hold, and a pack
+/// below cutoff needs its emergency charge. Neither may wait for a write fault to expire, and the
+/// guard cannot rely on the write path it protects. Outside `auto` nothing is written at all.
+pub(crate) fn cell_safety(
+    latch: Option<&CellLatch>,
+    allowed_w: f64,
+    mode: Authority,
+) -> Option<Reason> {
+    if !mode.may_write() {
+        return None;
+    }
+    let latch = latch?;
+    if latch.blocks_discharge() && allowed_w.abs() <= HOLD_DEADBAND_W {
+        Some(Reason::CellVoltageGuard)
+    } else if latch.forces_charge() && allowed_w > HOLD_DEADBAND_W {
+        Some(Reason::CellVoltageEmergencyCharge)
+    } else {
+        None
+    }
 }
 
 /// The binding reason for what this pack's row reports.
@@ -79,11 +94,7 @@ pub(crate) fn reason_for(
     decision: &SafetyDecision,
     overridden: Option<&ManualOverride>,
     backoff: bool,
-    cell_hold: bool,
 ) -> Reason {
-    if cell_hold {
-        return Reason::CellVoltageGuard;
-    }
     if backoff {
         return Reason::FaultBackoff;
     }
