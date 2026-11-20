@@ -78,6 +78,8 @@ fn desired_grid_w(slot: &PlanSlot) -> Option<f64> {
         // ladder's missing-telemetry rule do its job.
         return None;
     }
+    // `buy_all_in`/`feed_in` are the settlement prices with taxes and fees included, so their
+    // equality is the economic test here, not the operator's regime flag.
     // A zero-setpoint slot whose prices net 1:1 is a hold, not a self-consumption slot: buying the
     // house's energy now and selling the same kWh from the pack later have the same price, so
     // following the meter to zero only pays wear and round-trip loss. The plan left that energy in
@@ -220,5 +222,48 @@ mod tests {
         let slot = priced_slot(0.8, 0.0, 0.5, 0.32, 0.32);
         assert_eq!(desired_grid_w(&slot), None, "a deliberate grid charge");
         assert_eq!(follow(&slot, 500.0, 1300.0, &FleetView::default()), 500.0);
+    }
+
+    #[test]
+    fn a_positive_spread_inside_tolerance_is_netting() {
+        let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_555);
+        assert_eq!(desired_grid_w(&slot), None, "50 micro-euro is rounding");
+        assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), 0.0);
+    }
+
+    #[test]
+    fn a_positive_spread_outside_tolerance_still_follows() {
+        let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_705);
+        assert_eq!(
+            desired_grid_w(&slot),
+            Some(0.0),
+            "0.0002 EUR is a real spread"
+        );
+        assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
+    }
+
+    #[test]
+    fn a_negative_spread_inside_tolerance_is_netting() {
+        let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_455);
+        assert_eq!(desired_grid_w(&slot), None, "50 micro-euro either way");
+        assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), 0.0);
+    }
+
+    #[test]
+    fn a_negative_spread_outside_tolerance_still_follows() {
+        let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_305);
+        assert_eq!(desired_grid_w(&slot), Some(0.0), "dearer import is real");
+        assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
+    }
+
+    #[test]
+    fn an_equal_negative_price_pair_is_not_netting() {
+        let slot = priced_slot(0.5, 0.0, 0.0, -0.05, -0.05);
+        assert_eq!(
+            desired_grid_w(&slot),
+            Some(0.0),
+            "negative prices are a signal"
+        );
+        assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
     }
 }
