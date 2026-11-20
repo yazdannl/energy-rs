@@ -107,7 +107,7 @@ impl ProbeSink {
 
 impl CommandSink for ProbeSink {
     fn write(&self, pack_id: &str, watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        self.write_with_progress(pack_id, watts, None)
+        self.write_with_progress(pack_id, watts, None, NOW)
     }
 
     fn write_with_progress<'a>(
@@ -115,6 +115,7 @@ impl CommandSink for ProbeSink {
         pack_id: &str,
         watts: f64,
         progress: Option<&'a dyn Progress>,
+        _now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         let pack_id = pack_id.to_owned();
         Box::pin(async move {
@@ -147,13 +148,14 @@ impl CommandSink for ProbeSink {
     }
 
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        self.hold_with_progress(pack_id, None)
+        self.hold_with_progress(pack_id, None, NOW)
     }
 
     fn hold_with_progress<'a>(
         &'a self,
         pack_id: &str,
         _progress: Option<&'a dyn Progress>,
+        _now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         let pack_id = pack_id.to_owned();
         Box::pin(async move {
@@ -402,7 +404,7 @@ async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
     let spy = MarkSpy(AtomicUsize::new(0));
 
     let write = sink
-        .write_with_progress("SN-A", -800.0, Some(&spy))
+        .write_with_progress("SN-A", -800.0, Some(&spy), NOW)
         .await
         .expect("write");
     assert!(write.verified, "the fresh report must echo the command");
@@ -412,7 +414,7 @@ async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
         "write ack and echo poll must both mark"
     );
     let hold = sink
-        .hold_with_progress("SN-A", Some(&spy))
+        .hold_with_progress("SN-A", Some(&spy), NOW)
         .await
         .expect("hold");
     assert!(hold.verified, "the fresh report must echo the hold");

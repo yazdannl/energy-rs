@@ -24,7 +24,7 @@ pub(super) async fn fail_safe(
             ..Sent::none()
         };
     }
-    match sink.hold_with_progress(pack_id, progress).await {
+    match sink.hold_with_progress(pack_id, progress, now).await {
         // The hold was sent but its own readback missed. It is already the one hold this fault
         // gets: do not loop into another hold or extend the backoff.
         Err(SinkError::ReadUnverified { reason, .. }) => Sent {

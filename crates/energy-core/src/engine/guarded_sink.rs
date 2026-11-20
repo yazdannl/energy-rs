@@ -57,7 +57,20 @@ impl GuardedSink {
 
 impl CommandSink for GuardedSink {
     fn write(&self, pack_id: &str, watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        self.write_with_progress(pack_id, watts, None)
+        if let Some(error) = self.refused(pack_id) {
+            return Box::pin(async move { Err(error) });
+        }
+        if let Err(error) = self.intent.claim(pack_id, watts, self.now) {
+            return Box::pin(async move { Err(error) });
+        }
+        self.inner.write(pack_id, watts)
+    }
+
+    fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+        if let Some(error) = self.refused(pack_id) {
+            return Box::pin(async move { Err(error) });
+        }
+        self.inner.hold(pack_id)
     }
 
     fn write_with_progress<'a>(
@@ -65,6 +78,7 @@ impl CommandSink for GuardedSink {
         pack_id: &str,
         watts: f64,
         progress: Option<&'a dyn Progress>,
+        now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         if let Some(error) = self.refused(pack_id) {
             return Box::pin(async move { Err(error) });
@@ -72,21 +86,19 @@ impl CommandSink for GuardedSink {
         if let Err(error) = self.intent.claim(pack_id, watts, self.now) {
             return Box::pin(async move { Err(error) });
         }
-        self.inner.write_with_progress(pack_id, watts, progress)
-    }
-
-    fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        self.hold_with_progress(pack_id, None)
+        self.inner
+            .write_with_progress(pack_id, watts, progress, now)
     }
 
     fn hold_with_progress<'a>(
         &'a self,
         pack_id: &str,
         progress: Option<&'a dyn Progress>,
+        now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         if let Some(error) = self.refused(pack_id) {
             return Box::pin(async move { Err(error) });
         }
-        self.inner.hold_with_progress(pack_id, progress)
+        self.inner.hold_with_progress(pack_id, progress, now)
     }
 }

@@ -238,9 +238,10 @@ impl Dispatcher {
         // The heartbeat goes into the sink so the write/confirmation wait can mark every
         // successful transport step, not just the tick boundaries around it.
         let result = if watts.abs() <= HOLD_DEADBAND_W {
-            sink.hold_with_progress(pack_id, progress).await
+            sink.hold_with_progress(pack_id, progress, now).await
         } else {
-            sink.write_with_progress(pack_id, watts, progress).await
+            sink.write_with_progress(pack_id, watts, progress, now)
+                .await
         };
         match result {
             Ok(receipt) => {

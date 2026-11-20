@@ -187,7 +187,7 @@ async fn an_expired_write_gets_exactly_one_fail_safe_hold() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_duplicate_report_never_confirms_during_the_wait() {
+async fn a_duplicate_report_times_out_without_confirming() {
     let (device, controller) = charge_pending().await;
     // A duplicate of the pre-write report, even with the requested limit, proves nothing.
     device.push_report(report_at(
@@ -201,23 +201,15 @@ async fn a_duplicate_report_never_confirms_during_the_wait() {
         .await
         .unwrap();
     assert_eq!(observation.confirmed, None);
-    assert!(observation.fault.is_none());
-    assert_eq!(
-        controller.pending().map(|pending| pending.command),
-        Some(Command::Charge { watts: 500 })
+    assert!(
+        matches!(
+            observation.fault,
+            Some(ControlFault::ConfirmationTimeout { request_id: 1, .. })
+        ),
+        "a duplicate cannot hold the command past the deadline: {:?}",
+        observation.fault
     );
-
-    // Ownership is still with the command, so its own fresh echo can confirm it.
-    device.push_report(report_at(
-        SN,
-        4212,
-        T0 + 1,
-        json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0}),
-    ));
-    assert_eq!(
-        controller.poll().await.unwrap().confirmed,
-        Some(Command::Charge { watts: 500 })
-    );
+    assert!(controller.pending().is_none());
 }
 
 #[tokio::test(start_paused = true)]

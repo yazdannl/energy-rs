@@ -39,7 +39,7 @@ pub use control::{
     Applied, Ceiling, Command, ControlFault, ControlLimits, DeviceController, Direction,
     ECHO_CONFIRM_WINDOW, ECHO_POLL_INTERVAL, ECHO_TOLERANCE_W, FAULT_BACKOFF, HardLimit,
     MAX_EMERGENCY_HOLDS, MAX_HARD_LIMIT_W, MIN_WRITE_SPACING, Observation, Pacer, Pending,
-    ceiling_for, clamp_command, clamp_watts,
+    SAFETY_HOLD_WINDOW, ceiling_for, clamp_command, clamp_watts,
 };
 pub use discovery::{
     DiscoveredDevice, DiscoveryRegistry, DiscoverySource, browse_mdns, build_hostname,

@@ -21,6 +21,8 @@ pub struct FakeBehaviour {
     pub http_status: Option<u16>,
     /// Answer every write with this body code (400 / 401 / 413).
     pub write_code: Option<i32>,
+    /// Delay each report response, to test bounded reads and stalled transports.
+    pub report_delay: Duration,
 }
 
 impl Default for FakeBehaviour {
@@ -32,6 +34,7 @@ impl Default for FakeBehaviour {
             wedged: false,
             http_status: None,
             write_code: None,
+            report_delay: Duration::ZERO,
         }
     }
 }
@@ -76,6 +79,13 @@ impl FakeBehaviour {
     #[must_use]
     pub fn with_write_code(mut self, code: i32) -> Self {
         self.write_code = Some(code);
+        self
+    }
+
+    /// Delay every report by `delay`.
+    #[must_use]
+    pub fn with_report_delay(mut self, delay: Duration) -> Self {
+        self.report_delay = delay;
         self
     }
 }
