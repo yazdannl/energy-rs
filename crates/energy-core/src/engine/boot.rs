@@ -162,7 +162,7 @@ impl Engine {
             format!(
                 "{}/{held} setpoint(s) neutralised",
                 pending.len(),
-                held = held.len()
+                held = held.verified().len()
             ),
         )?;
         Ok(())

@@ -10,10 +10,12 @@
 )]
 #![allow(dead_code)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use energy_core::dispatch::{BoxFuture, CommandSink, SinkError, WriteReceipt};
+use energy_core::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt};
 
 use super::sent::Sent;
 
@@ -28,6 +30,10 @@ pub struct FakeSink {
     unverified_writes: AtomicBool,
     unverified_holds: AtomicBool,
     observer: Mutex<Option<Observer>>,
+    hold_delays: Mutex<BTreeMap<String, Duration>>,
+    stuck_holds: Mutex<BTreeSet<String>>,
+    fenced_holds: Mutex<BTreeSet<String>>,
+    hold_observer: Mutex<Option<Observer>>,
 }
 
 impl Default for FakeSink {
@@ -39,6 +45,10 @@ impl Default for FakeSink {
             unverified_writes: AtomicBool::new(false),
             unverified_holds: AtomicBool::new(false),
             observer: Mutex::new(None),
+            hold_delays: Mutex::new(BTreeMap::new()),
+            stuck_holds: Mutex::new(BTreeSet::new()),
+            fenced_holds: Mutex::new(BTreeSet::new()),
+            hold_observer: Mutex::new(None),
         }
     }
 }
@@ -64,9 +74,38 @@ impl FakeSink {
         self.unverified_holds.store(unverified, Ordering::Relaxed);
     }
 
+    /// Make this pack's hold wait `delay` before its echo is available.
+    pub fn delay_hold(&self, pack_id: &str, delay: Duration) {
+        self.hold_delays
+            .lock()
+            .expect("sink hold delays")
+            .insert(pack_id.to_owned(), delay);
+    }
+
+    /// This pack's hold never echoes, so its verification budget expires.
+    pub fn never_confirm_hold(&self, pack_id: &str) {
+        self.stuck_holds
+            .lock()
+            .expect("sink stuck holds")
+            .insert(pack_id.to_owned());
+    }
+
+    /// This pack's hold is refused by the transport's generation check: no write, no echo.
+    pub fn fence_hold(&self, pack_id: &str) {
+        self.fenced_holds
+            .lock()
+            .expect("sink fenced holds")
+            .insert(pack_id.to_owned());
+    }
+
     /// Run `hook` at the instant of the transport write, i.e. after the intent was journalled.
     pub fn observe(&self, hook: Observer) {
         *self.observer.lock().expect("sink observer") = Some(hook);
+    }
+
+    /// Run `hook` at the instant a hold reaches the transport.
+    pub fn observe_holds(&self, hook: Observer) {
+        *self.hold_observer.lock().expect("sink hold observer") = Some(hook);
     }
 
     fn notify(&self, pack_id: &str) {
@@ -74,6 +113,18 @@ impl FakeSink {
             .observer
             .lock()
             .expect("sink observer")
+            .as_ref()
+            .map(Arc::clone);
+        if let Some(hook) = hook {
+            hook(pack_id);
+        }
+    }
+
+    fn notify_hold(&self, pack_id: &str) {
+        let hook = self
+            .hold_observer
+            .lock()
+            .expect("sink hold observer")
             .as_ref()
             .map(Arc::clone);
         if let Some(hook) = hook {
@@ -143,15 +194,51 @@ impl CommandSink for FakeSink {
     }
 
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+        self.hold_with_progress(pack_id, None)
+    }
+
+    fn hold_with_progress<'a>(
+        &'a self,
+        pack_id: &str,
+        _progress: Option<&'a dyn Progress>,
+    ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         self.record(pack_id, Sent::Hold);
+        self.notify_hold(pack_id);
+        let delay = self
+            .hold_delays
+            .lock()
+            .expect("sink hold delays")
+            .get(pack_id)
+            .copied()
+            .unwrap_or_default();
+        let stuck = self
+            .stuck_holds
+            .lock()
+            .expect("sink stuck holds")
+            .contains(pack_id);
+        let fenced = self
+            .fenced_holds
+            .lock()
+            .expect("sink fenced holds")
+            .contains(pack_id);
+        let unverified = self.unverified_holds.load(Ordering::Relaxed);
         let pack_id = pack_id.to_owned();
         Box::pin(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            if stuck {
+                std::future::pending::<()>().await;
+            }
+            if fenced {
+                return Err(SinkError::Fenced { pack_id });
+            }
             if pack_id == "SN-FAIL" {
                 return Err(SinkError::UnknownPack { pack_id });
             }
             Ok(WriteReceipt {
                 applied_w: 0.0,
-                verified: !self.unverified_holds.load(Ordering::Relaxed),
+                verified: !unverified,
                 superseded: false,
             })
         })
