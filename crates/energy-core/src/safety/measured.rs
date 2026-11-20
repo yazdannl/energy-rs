@@ -24,6 +24,9 @@ pub struct Measured {
     pub available: bool,
     /// Whether the driver marks the measurement stale.
     pub stale: bool,
+    /// Whether the reactive import ceiling is armed this tick (the ladder then lets a discharge
+    /// relieve an already-breached import base instead of blocking every command).
+    pub grid_ceiling_armed: bool,
 }
 
 impl Default for Measured {
@@ -38,6 +41,7 @@ impl Default for Measured {
             pv_kw: None,
             available: true,
             stale: false,
+            grid_ceiling_armed: false,
         }
     }
 }

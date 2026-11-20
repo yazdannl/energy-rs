@@ -276,6 +276,7 @@ fn safety_limits(config: &EngineConfig) -> SafetyLimits {
         tick_seconds: config.tick_seconds as f64,
         ramp_limit_w: RAMP_LIMIT_W,
         max_grid_import_w: config.max_grid_import_w,
+        grid_import_margin_w: config.grid_import_margin_w,
         max_grid_export_w: config.max_grid_export_w,
         fleet_max_charge_w: config.fleet_max_charge_w,
         fleet_max_discharge_w: config.fleet_max_discharge_w,

@@ -15,7 +15,7 @@ const PV_MODES: [&str; 3] = ["auto", "model", "provider"];
 const NET_METERING: [&str; 2] = ["on", "off"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 31] = [
+static SPECS: [SettingSpec; 32] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -23,6 +23,14 @@ static SPECS: [SettingSpec; 31] = [
             max: 20_000.0,
         },
         default: "0",
+    },
+    SettingSpec {
+        key: "grid_import_margin_w",
+        kind: SettingKind::Number {
+            min: 0.0,
+            max: 2_000.0,
+        },
+        default: "200",
     },
     SettingSpec {
         key: "grid_export_limit_w",

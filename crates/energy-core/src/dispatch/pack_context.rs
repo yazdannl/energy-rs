@@ -22,6 +22,8 @@ pub(crate) struct PackContext<'a> {
     pub(crate) overrides: &'a Overrides,
     /// The fleet-level grid check could not be evaluated; every pack holds, fail-closed.
     pub(crate) grid_hold: bool,
+    /// The reactive import ceiling is armed this tick.
+    pub(crate) import_ceiling: bool,
 }
 
 /// The measurements one command is judged against.
@@ -41,6 +43,7 @@ pub(crate) fn measured(context: &PackContext<'_>, reading: &PackReading) -> Meas
         pv_kw: context.meter.pv_kw,
         available: reading.available,
         stale: reading.stale,
+        grid_ceiling_armed: context.import_ceiling,
     }
 }
 
@@ -58,11 +61,16 @@ pub(crate) fn requested_watts(
     context: &PackContext<'_>,
     overridden: Option<&ManualOverride>,
     allocated_w: f64,
+    guard_active: bool,
 ) -> f64 {
     if let Some(entry) = overridden {
         return entry.action.watts();
     }
-    if context.stale { 0.0 } else { allocated_w }
+    if context.stale && !guard_active {
+        0.0
+    } else {
+        allocated_w
+    }
 }
 
 /// A cell-latch command that must bypass write backoff, and its log reason.
@@ -94,6 +102,7 @@ pub(crate) fn reason_for(
     decision: &SafetyDecision,
     overridden: Option<&ManualOverride>,
     backoff: bool,
+    guarded: bool,
 ) -> Reason {
     let primary = decision.primary();
     // A safety bound is the binding reason even while the pack is in backoff: a cell-voltage
@@ -113,10 +122,47 @@ pub(crate) fn reason_for(
     if overridden.is_some() {
         return Reason::ManualOverride;
     }
+    // The ceiling guard explains a discharge the plan did not ask for, including a stale or absent
+    // plan. It outranks generic clamp reasons, but never a real safety refusal: a latched cell, an
+    // empty pack or a missing meter must still say what it is.
+    if guarded && !hard_safety(primary) {
+        return Reason::GridImportCeiling;
+    }
     if context.stale {
         return Reason::StaleInput;
     }
     Reason::Ok
+}
+
+/// Reasons that describe a real safety refusal and must stay visible in the dispatch row.
+fn hard_safety(reason: Reason) -> bool {
+    matches!(
+        reason,
+        Reason::ModeNotAuto
+            | Reason::ExitHoldSuppressed
+            | Reason::BatteryUnavailable
+            | Reason::StaleState
+            | Reason::StateMissing
+            | Reason::SocCeiling
+            | Reason::SocFloor
+            | Reason::GridImportLimit
+            | Reason::GridExportLimit
+            | Reason::GridTelemetryMissing
+            | Reason::SellFloor
+            | Reason::CellVoltageGuard
+            | Reason::CellVoltageEmergencyCharge
+            | Reason::StaleInput
+            | Reason::DriverError
+            | Reason::FaultBackoff
+            | Reason::WatchdogHold
+            | Reason::ManualOverride
+            | Reason::MaintenanceHold
+            | Reason::BootHold
+            | Reason::Shutdown
+            | Reason::TickFailed
+            | Reason::OrphanHold
+            | Reason::GridImportCeiling
+    )
 }
 
 /// The human note that belongs in the dispatch log for this pack's override.

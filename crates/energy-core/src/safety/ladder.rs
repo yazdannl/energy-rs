@@ -184,9 +184,16 @@ impl<'a> Ladder<'a> {
         self.grid_export = self.limits.max_grid_export_w > 0.0;
         if self.grid_import {
             if let Some(base) = import_base {
-                self.grid_hi = self
-                    .p_max
-                    .min(self.limits.max_grid_import_w - base * 1000.0);
+                let charge_room = self.limits.max_grid_import_w - base * 1000.0;
+                // Usually a base over the ceiling is an infeasible plan and blocks (survey trap).
+                // When the reactive import guard is armed, discharging is the remedy, not a
+                // violation: a negative charge bound must not stop the very command that helps.
+                let charge_room = if charge_room < 0.0 && self.request.measured.grid_ceiling_armed {
+                    0.0
+                } else {
+                    charge_room
+                };
+                self.grid_hi = self.p_max.min(charge_room);
             } else {
                 self.grid_missing = true;
             }

@@ -31,6 +31,12 @@ pub fn engine_config(options: &Options, ledger: &Ledger) -> EngineConfig {
         pack_hold_seconds: seconds(ledger, "pack_hold_seconds", defaults.pack_hold_seconds),
         grid_follow_deadband_w: number(ledger, "grid_follow_deadband_w", 10.0),
         max_grid_import_w: number(ledger, "grid_import_limit_w", defaults.max_grid_import_w),
+        grid_import_margin_w: number(
+            ledger,
+            "grid_import_margin_w",
+            defaults.grid_import_margin_w,
+        )
+        .clamp(0.0, 2_000.0),
         max_grid_export_w: number(ledger, "grid_export_limit_w", defaults.max_grid_export_w),
         fleet_max_charge_w: max_charge_w,
         fleet_max_discharge_w: max_charge_w,

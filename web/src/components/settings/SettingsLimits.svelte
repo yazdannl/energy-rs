@@ -9,6 +9,12 @@
 
   const FIELDS = [
     { key: 'grid_import_limit_w', label: 'Grid import limit', unit: 'W', hint: '0 = no limit' },
+    {
+      key: 'grid_import_margin_w',
+      label: 'Grid import margin',
+      unit: 'W',
+      hint: 'hold the measured grid import this far below the import limit (0 = at the limit; limit 0 = off)',
+    },
     { key: 'grid_export_limit_w', label: 'Grid export limit', unit: 'W', hint: '0 = no limit' },
     { key: 'reserve_soc_pct', label: 'Reserve SoC', unit: '%', hint: 'never planned below this' },
     { key: 'max_soc_pct', label: 'Maximum SoC', unit: '%', hint: 'never planned above this' },
