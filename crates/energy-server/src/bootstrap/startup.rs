@@ -142,7 +142,7 @@ async fn wire_engine(
         Arc::clone(&prices.repository),
         prices.settlement(),
     )
-    .with_load_profiles(Arc::clone(&profiles))
+    .with_load_profiles(Arc::clone(profiles))
     .with_pv(Arc::clone(&pv));
     let grid_budget = if config.max_grid_import_w > 0.0 {
         (config.max_grid_import_w - config.grid_import_margin_w.max(0.0)).max(0.0)
