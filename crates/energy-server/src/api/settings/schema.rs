@@ -15,7 +15,7 @@ const PV_MODES: [&str; 3] = ["auto", "model", "provider"];
 const NET_METERING: [&str; 2] = ["on", "off"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 32] = [
+static SPECS: [SettingSpec; 34] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -99,6 +99,22 @@ static SPECS: [SettingSpec; 32] = [
         key: "full_charge_time",
         kind: SettingKind::Text,
         default: "03:00",
+    },
+    SettingSpec {
+        key: "full_charge_interval_days",
+        kind: SettingKind::Number {
+            min: 1.0,
+            max: 60.0,
+        },
+        default: "7",
+    },
+    SettingSpec {
+        key: "full_charge_dwell_minutes",
+        kind: SettingKind::Number {
+            min: 15.0,
+            max: 240.0,
+        },
+        default: "60",
     },
     SettingSpec {
         key: "solar_reserve_pct",

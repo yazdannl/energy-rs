@@ -66,6 +66,17 @@ struct LatchDto {
     last_fresh_at: Option<Timestamp>,
 }
 
+/// Per-pack balancing history and the interval derived from it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MaintenanceDto {
+    last_full_charge: Option<Timestamp>,
+    next_due: Option<Timestamp>,
+    dwell_state: &'static str,
+    dwell_started_at: Option<Timestamp>,
+    target_soc_pct: Option<f64>,
+}
+
 /// A manual override that is still in force.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +103,7 @@ struct PackDto {
     latch: Option<LatchDto>,
     #[serde(rename = "override")]
     override_state: Option<OverrideDto>,
+    maintenance: MaintenanceDto,
 }
 
 /// Effective limits after config and device clamping.
@@ -177,7 +189,37 @@ fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> StateDto {
     }
 }
 
-fn pack_dto(stored: &PackState, live: Option<&PackSnapshot>) -> Result<PackDto, ApiError> {
+fn maintenance_dto(
+    stored: &PackState,
+    live: Option<&PackSnapshot>,
+    interval_days: i64,
+) -> MaintenanceDto {
+    let pack = &stored.pack;
+    let last = pack.last_full_charge_at;
+    let live_state = live.and_then(|snapshot| snapshot.maintenance.as_ref());
+    let dwell_state = if let Some(live) = live_state {
+        live.state
+    } else if pack.dwell_started_at.is_some() {
+        "dwell"
+    } else if last.is_none() {
+        "due"
+    } else {
+        "idle"
+    };
+    MaintenanceDto {
+        last_full_charge: Timestamp::lenient(last),
+        next_due: Timestamp::lenient(last.map(|at| at.saturating_add(interval_days * 86_400))),
+        dwell_state,
+        dwell_started_at: Timestamp::lenient(pack.dwell_started_at),
+        target_soc_pct: live_state.map(|entry| entry.target_soc_pct),
+    }
+}
+
+fn pack_dto(
+    stored: &PackState,
+    live: Option<&PackSnapshot>,
+    interval_days: i64,
+) -> Result<PackDto, ApiError> {
     let pack = &stored.pack;
     Ok(PackDto {
         sn: pack.sn.clone(),
@@ -206,17 +248,26 @@ fn pack_dto(stored: &PackState, live: Option<&PackSnapshot>) -> Result<PackDto, 
             .and_then(|snapshot| snapshot.override_state.as_ref())
             .map(override_dto)
             .transpose()?,
+        maintenance: maintenance_dto(stored, live, interval_days),
     })
 }
 
 /// `GET /api/v1/packs`
 pub(crate) async fn packs(State(service): State<Arc<Service>>) -> Result<Json<Packs>, ApiError> {
-    let stored = with_ledger(&service, |ledger| {
-        ledger
+    let (stored, interval_days) = with_ledger(&service, |ledger| {
+        let states = ledger
             .packs()
             .map_err(|err| ApiError::internal("list pack states", err))?
             .states()
-            .map_err(|err| ApiError::internal("list pack states", err))
+            .map_err(|err| ApiError::internal("list pack states", err))?;
+        let interval = ledger
+            .settings()
+            .ok()
+            .and_then(|settings| settings.get("full_charge_interval_days").ok().flatten())
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(7)
+            .clamp(1, 60);
+        Ok((states, interval))
     })
     .await?;
     let snapshot = service.snapshot();
@@ -227,7 +278,7 @@ pub(crate) async fn packs(State(service): State<Arc<Service>>) -> Result<Json<Pa
                 .packs
                 .iter()
                 .find(|candidate| candidate.sn == state.pack.sn);
-            pack_dto(state, live)
+            pack_dto(state, live, interval_days)
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     Ok(Json(Packs { packs }))

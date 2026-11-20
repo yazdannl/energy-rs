@@ -123,6 +123,16 @@ Done in `feat/assembly`. This is the phase that turns the crates into a running 
   selects on the API command queue between ticks and applies `SetMode`, `Override`, `FullCharge` and
   `Relearn` (`apply_command`), publishing the mode/override change immediately. 503 is now only the
   closed/overflowed queue, i.e. a genuinely absent or dead engine.
+- **Balancing maintenance.** The live plan source folds each due pack's 100 % charge into the
+  plan's cheapest quarter-hours (the lower half of the published horizon's prices, also at or
+  below its mean, then the cheapest slots covering its missing energy), inside the grid-import
+  budget after margin and the
+  fleet/per-pack charge ceilings. `maintenance` journals the chosen slots and expected cost; the
+  tick starts a dwell only once the pack reports ≥99 % and writes `packs.last_full_charge_at` only
+  when the dwell actually completes. `full_charge_interval_days` (7, 1–60) and
+  `full_charge_dwell_minutes` (60, 15–240) drive the rule. The old `full_charge_weekday`/
+  `full_charge_time` fields remain accepted but are deprecated and no longer start a run; the
+  legacy `FullChargeScheduler` stays unit-tested as the documented compatibility path.
 - **Load profile.** `plan_source::learn_load_profile` reads 56 days of hourly `energy/dashboard`
   statistics (balance: import − export + PV + discharge − charge; a gap hour is skipped, never
   zero-filled), builds the 48-bucket profile with `energy-forecast` and persists the
