@@ -12,7 +12,11 @@
 //! * `margin = max(0, grid_import_margin_w)`, so `margin = 0` holds exactly at the limit.
 //! * `target_import = max(0, limit - margin)`: a margin wider than the limit targets zero import.
 //! * The guard needs a finite meter reading and a fresh, available fleet. A missing/stale *meter*
-//!   reading changes nothing -- the plan stands, and no discharge is guessed. Plan availability is
+//!   reading changes nothing -- the plan stands, and no discharge is guessed.
+//! * The release prediction compares readings from one instant. The meter stamp and every pack
+//!   `observed_at` must be within [`MAX_TELEMETRY_SKEW_S`] of the tick and of each other. When they
+//!   are not, an armed guard holds the measured fleet output instead of releasing on skew.
+//!   Plan availability is
 //!   not telemetry freshness: with no executable plan the replacement target is neutral
 //!   ([`NO_PLAN_TARGET_W`]), so the guard can still discharge protectively but never charge.
 //! * `excess = measured_grid_w - target_import`. With `deadband = grid_follow_deadband_w`:
@@ -38,6 +42,12 @@ use crate::safety::{EPS_W, SafetyLimits};
 
 /// Neutral replacement target when no plan can be executed: the guard may only lower it.
 pub(crate) const NO_PLAN_TARGET_W: f64 = 0.0;
+
+/// Largest accepted difference between the meter stamp, a pack stamp and the tick, seconds.
+///
+/// The tick is 5 s and the actuator ramp is 8-10 s: comparing a lagging battery report with a
+/// fresh meter would predict a safe release that does not exist. Five seconds is one tick.
+const MAX_TELEMETRY_SKEW_S: u64 = 5;
 
 /// The guard's answer for one tick.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -74,6 +84,7 @@ impl Guard {
     /// is executable, otherwise [`NO_PLAN_TARGET_W`]. The guard never raises it.
     pub(crate) fn apply(
         &self,
+        now: i64,
         replacement_w: f64,
         meter: &MeterReading,
         fleet: &FleetView,
@@ -106,14 +117,16 @@ impl Guard {
             self.disarm();
             return off;
         }
+        if !aligned(now, meter, fleet) {
+            return self.on_skew(replacement_w, battery_w, capability_w);
+        }
         let deadband_w = finite_nonnegative(limits.grid_follow_deadband_w);
         let excess = grid_w - target_import;
         let breached = excess > deadband_w;
         if breached {
             self.armed.store(true, Ordering::SeqCst);
         } else {
-            // Releasing means the pack goes back to `replacement_w`. Predict the grid it would
-            // settle at before giving up the correction, including actuator lag in the measurement.
+            // Predict the settled grid if the pack returns to `replacement_w`.
             let settled_grid_w = grid_w + replacement_w - battery_w;
             if settled_grid_w <= target_import - deadband_w {
                 self.disarm();
@@ -137,9 +150,36 @@ impl Guard {
         }
     }
 
+    /// Skewed telemetry cannot prove a release. Hold the measured output while armed; an
+    /// unarmed guard makes no guess at all.
+    fn on_skew(&self, replacement_w: f64, battery_w: f64, capability_w: f64) -> Ceiling {
+        if !self.armed.load(Ordering::SeqCst) {
+            return Ceiling::off(replacement_w);
+        }
+        let target_w = replacement_w.min(battery_w.max(-capability_w));
+        Ceiling {
+            target_w,
+            active: target_w < replacement_w - EPS_W,
+        }
+    }
+
     fn disarm(&self) {
         self.armed.store(false, Ordering::SeqCst);
     }
+}
+
+/// Whether the meter and every pack describe the same tick, within one tick of skew.
+fn aligned(now: i64, meter: &MeterReading, fleet: &FleetView) -> bool {
+    let Some(meter_at) = meter.observed_at else {
+        return false;
+    };
+    if now.abs_diff(meter_at) > MAX_TELEMETRY_SKEW_S {
+        return false;
+    }
+    fleet.packs.iter().all(|pack| {
+        now.abs_diff(pack.observed_at) <= MAX_TELEMETRY_SKEW_S
+            && meter_at.abs_diff(pack.observed_at) <= MAX_TELEMETRY_SKEW_S
+    })
 }
 
 /// Discharge capability the guard may count on, W (0 when no pack can serve).

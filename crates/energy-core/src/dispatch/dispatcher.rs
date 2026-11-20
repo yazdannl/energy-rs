@@ -102,9 +102,9 @@ impl Dispatcher {
         // Safety over the plan: a measured breach of the import ceiling lowers the setpoint only.
         // The pre-guard split is kept so the reason can be attributed to the packs it changed.
         let (baseline, _) = allocate(input, limits, replacement_w, slot.as_ref());
-        let ceiling = self
-            .ceiling
-            .apply(replacement_w, input.meter, input.fleet, limits);
+        let ceiling =
+            self.ceiling
+                .apply(input.now, replacement_w, input.meter, input.fleet, limits);
         let (allocation, grid_limit) = allocate(input, limits, ceiling.target_w, slot.as_ref());
         let grid_hold = grid_limit == Some(Reason::GridTelemetryMissing);
         let grid_base = grid_telemetry::base(input, slot.as_ref(), limits);

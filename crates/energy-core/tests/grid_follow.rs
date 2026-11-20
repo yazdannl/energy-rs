@@ -105,6 +105,7 @@ async fn a_surplus_is_absorbed_rather_than_exported() {
         grid_w: Some(-1_000.0),
         load_kw: Some(0.5),
         pv_kw: Some(1.5),
+        observed_at: None,
     });
     let tick = h.engine.tick_once(NOW + 1).await.expect("surplus tick");
     assert_eq!(

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use energy_core::dispatch::{BoxFuture, MeterReading, MeterSource};
 use energy_ha::{EntityState, HaClient, PowerReading, SiteModel};
 
@@ -70,6 +71,9 @@ impl HaMeter {
             grid_w: live.grid_w,
             load_kw: live.load_w.map(|watts| watts / 1000.0),
             pv_kw: live.pv_w.map(|watts| watts / 1000.0),
+            // Stamped when the REST states were fetched; a cached read keeps this instant, so a
+            // reading reused after the tick boundary is visibly older than the fleet snapshot.
+            observed_at: Some(Utc::now().timestamp()),
         }
     }
 }

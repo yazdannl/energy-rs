@@ -121,12 +121,17 @@ impl Scenario {
         let fleet = FleetView::new(self.packs.clone());
         let overrides = Overrides::none();
         let sink = FakeSink::new();
+        // Production stamps the meter at fetch time; these ticks read meter and packs together.
+        let meter = MeterReading {
+            observed_at: Some(NOW),
+            ..self.meter
+        };
         let input = TickInput {
             now: NOW,
             mode: self.mode,
             plan: (!self.no_plan).then_some(&self.plan),
             fleet: &fleet,
-            meter: &self.meter,
+            meter: &meter,
             latches: &self.latches,
             overrides: &overrides,
             stale: self.stale,
@@ -259,8 +264,7 @@ async fn hysteresis_holds_the_discharge_until_the_meter_is_clearly_below_target(
     );
     assert_eq!(second_sink.writes(), vec![-100.0]);
 
-    // A genuine 120 W load drop makes the replacement plan safe: 7480 + 0 - (-100) = 7480,
-    // inside the 7490 W release bound. The old plan comes back.
+    // A genuine load drop makes the replacement safe: the old plan comes back.
     scenario.meter = MeterReading::grid(7_380.0);
     let (third, third_sink) = scenario.run().await;
     assert_eq!(third.target_w, 0.0);
@@ -287,9 +291,7 @@ async fn a_grid_charge_slot_is_stopped_when_it_would_breach_the_ceiling() {
 
 #[tokio::test]
 async fn the_guard_never_asks_for_more_than_the_fleet_can_deliver() {
-    // The house imports far more than the packs could ever cover. The guard asks for the whole
-    // 12.5 kW error, the capability cap brings it back to the two 800 W packs, and the ladder lets
-    // that maximum discharge through instead of blocking on an already-breached import base.
+    // The guard asks for the whole error; the capability cap leaves the two packs' maximum.
     let mut scenario = Scenario::hold(20_000.0);
     let (outcome, sink) = scenario.run().await;
     assert_eq!(outcome.target_w, -1_600.0);
@@ -317,7 +319,6 @@ async fn missing_or_stale_telemetry_never_guesses_a_discharge() {
 
 #[tokio::test]
 async fn negative_meter_noise_around_the_release_threshold_does_not_cycle() {
-    // 5000 W limit, 6000 W import: a meter 11 W below the 4800 W target is still our correction.
     let mut scenario = Scenario::hold(6_000.0);
     scenario.limits.max_grid_import_w = 5_000.0;
     let (first, first_sink) = scenario.run().await;
@@ -346,7 +347,6 @@ async fn a_genuine_load_drop_releases_and_restores_normal_charge() {
     scenario.set_battery_power("SN-A", -800.0);
     scenario.set_battery_power("SN-B", -400.0);
 
-    // A real 1200 W load drop releases: 3580 + 1200 = 4780 W is inside the release bound.
     scenario.meter = MeterReading::grid(3_580.0);
     let (released, sink) = scenario.run().await;
     assert_eq!(released.target_w, 0.0);

@@ -12,6 +12,11 @@ pub struct MeterReading {
     pub load_kw: Option<f64>,
     /// Measured PV production, kW.
     pub pv_kw: Option<f64>,
+    /// When these values were fetched, UTC epoch seconds; `None` means unknown.
+    ///
+    /// The reactive import ceiling compares this with every pack's `observed_at`: a prediction of
+    /// the settled grid is only meaningful when the meter and the fleet describe the same instant.
+    pub observed_at: Option<i64>,
 }
 
 impl MeterReading {
@@ -21,6 +26,13 @@ impl MeterReading {
             grid_w: Some(grid_w),
             ..Self::default()
         }
+    }
+
+    /// Stamp the instant the values were fetched.
+    #[must_use]
+    pub fn observed(mut self, epoch_s: i64) -> Self {
+        self.observed_at = Some(epoch_s);
+        self
     }
 
     /// The battery-idle grid base, in kW: measured load minus PV when both are known.
@@ -62,6 +74,7 @@ mod tests {
             grid_w: grid,
             load_kw: load,
             pv_kw: pv,
+            observed_at: None,
         }
     }
 
