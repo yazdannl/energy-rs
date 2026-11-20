@@ -1,5 +1,7 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
+mod fault_handling;
+
 use crate::dispatch::grid_telemetry;
 use crate::dispatch::pack_context::{measured, reason_for, requested_watts};
 use crate::dispatch::{
@@ -165,8 +167,8 @@ impl Dispatcher {
         );
         let decision = decide(&context, &request, reading, latch, false);
         let intended = decide(&context, &request, reading, latch, true);
-        let backoff = self.faults.blocking(pack_id, context.now);
-        let vector = reading.available && !backoff;
+        let backoff_cause = self.faults.blocker(pack_id, context.now);
+        let vector = reading.available && backoff_cause.is_none();
         Planned {
             pack_id: pack_id.to_owned(),
             ledger_id: reading.ledger_id,
@@ -177,9 +179,10 @@ impl Dispatcher {
             } else {
                 intended.allowed_w
             },
-            reason: reason_for(&context, &decision, overridden, backoff),
+            reason: reason_for(&context, &decision, overridden, backoff_cause.is_some()),
             intended_reason: intended.primary(),
             note: crate::dispatch::pack_context::note_for(overridden),
+            backoff_cause,
             vector,
             send: vector && context.mode.may_write(),
         }
@@ -192,7 +195,7 @@ impl Dispatcher {
         plan: Planned,
         sink: &dyn CommandSink,
     ) -> PackReport {
-        let sent = if plan.send {
+        let mut sent = if plan.send {
             self.send(
                 frame.progress,
                 frame.now,
@@ -204,6 +207,9 @@ impl Dispatcher {
         } else {
             Sent::none()
         };
+        if let Some(cause) = &plan.backoff_cause {
+            sent.error = Some(format!("not sent; backing off after {cause}"));
+        }
         PackReport {
             pack_id: plan.pack_id,
             ledger_id: plan.ledger_id,
@@ -241,6 +247,9 @@ impl Dispatcher {
                 // Progress means work happened: a failed write is the watchdog's business, not a
                 // heartbeat.
                 advance(progress, now);
+                if receipt.verified {
+                    self.faults.clear(pack_id);
+                }
                 Sent {
                     written: true,
                     verified: receipt.verified,
@@ -253,6 +262,13 @@ impl Dispatcher {
             // Nothing reached the device, so there is no fault to back off from either.
             Err(error @ SinkError::Fenced { .. }) => Sent {
                 error: Some(error.to_string()),
+                ..Sent::none()
+            },
+            // The write was accepted; only the readback missed. Keep ownership, hold nothing and
+            // leave the backoff alone: this is not a device fault.
+            Err(SinkError::ReadUnverified { reason, .. }) => Sent {
+                written: true,
+                error: Some(reason),
                 ..Sent::none()
             },
             Err(error) => self.fail_safe(progress, now, pack_id, &error, sink).await,
@@ -268,29 +284,6 @@ impl Dispatcher {
         error: &SinkError,
         sink: &dyn CommandSink,
     ) -> Sent {
-        self.faults.arm(pack_id, now);
-        let cause = error.to_string();
-        if !self.failsafe_on_error {
-            return Sent {
-                error: Some(cause),
-                ..Sent::none()
-            };
-        }
-        match sink.hold_with_progress(pack_id, progress).await {
-            Ok(receipt) => {
-                advance(progress, now);
-                Sent {
-                    written: true,
-                    verified: receipt.verified,
-                    applied_w: receipt.applied_w,
-                    fail_safe: true,
-                    error: Some(format!("{cause}; fail-safe hold")),
-                }
-            }
-            Err(hold_error) => Sent {
-                error: Some(format!("{cause}; fail-safe hold failed: {hold_error}")),
-                ..Sent::none()
-            },
-        }
+        fault_handling::fail_safe(self, progress, now, pack_id, error, sink).await
     }
 }

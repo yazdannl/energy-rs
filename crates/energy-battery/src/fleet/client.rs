@@ -18,6 +18,9 @@ use crate::transport::device_io::DeviceIo;
 /// Default poll interval per device. Control needs ~10 s freshness, telemetry 60 s.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
+/// One immediate retry for a device that missed a poll: a single timeout must not cost a tick.
+const READ_RETRY_DELAY: Duration = Duration::from_millis(100);
+
 /// N devices behind one client.
 ///
 /// Each device keeps its own controller (so its own pacing, echo and fault state). Polling is
@@ -135,17 +138,20 @@ impl<T: DeviceIo> FleetClient<T> {
     async fn poll_indices(&self, indices: Vec<usize>) -> FleetSnapshot {
         let mut results = Vec::with_capacity(indices.len());
         for index in indices {
-            let observation = self.devices[index].poll().await;
+            let mut observation = self.devices[index].poll().await;
+            if observation.is_err() {
+                tokio::time::sleep(READ_RETRY_DELAY).await;
+                observation = self.devices[index].poll().await;
+            }
             results.push((index, observation));
         }
         let mut states = self.states.lock().await;
         for (index, observation) in results {
-            let at = Instant::now();
             match observation {
                 Ok(observation) => {
-                    states[index] = DeviceSnapshot::from_observation(observation, at);
+                    states[index] = DeviceSnapshot::from_observation(observation, Instant::now());
                 }
-                Err(error) => states[index].record_failure(&error.to_string(), at),
+                Err(error) => states[index].record_failure(&error.to_string()),
             }
         }
         FleetSnapshot::from_devices(states.clone())

@@ -5,12 +5,11 @@ use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 use tokio::sync::Mutex as Transaction;
-use tokio::time::Instant;
 
 use crate::control::applied::Applied;
 use crate::control::clamp::clamp_command;
 use crate::control::command::Command;
-use crate::control::echo::ECHO_POLL_INTERVAL;
+mod confirm;
 use crate::control::emergency;
 use crate::control::fault::ControlFault;
 use crate::control::limits::ControlLimits;
@@ -130,6 +129,7 @@ impl<T: DeviceIo> DeviceController<T> {
             report,
             confirmed,
             fault,
+            read_error: None,
         })
     }
 
@@ -149,21 +149,7 @@ impl<T: DeviceIo> DeviceController<T> {
         window: Duration,
         on_progress: impl Fn(),
     ) -> Result<Observation, BatteryError> {
-        let deadline = Instant::now() + window;
-        let mut observation = self.poll().await?;
-        while observation.confirmed.is_none()
-            && observation.fault.is_none()
-            && self.is_inconclusive()
-        {
-            let now = Instant::now();
-            if now >= deadline {
-                return Ok(self.expire_inconclusive(observation));
-            }
-            on_progress();
-            tokio::time::sleep((deadline - now).min(ECHO_POLL_INTERVAL)).await;
-            observation = self.poll().await?;
-        }
-        Ok(observation)
+        confirm::confirm(self, window, on_progress).await
     }
 
     /// Pace, revalidate, clamp, send and remember one command.
@@ -278,9 +264,17 @@ impl<T: DeviceIo> DeviceController<T> {
                     report: observation.report,
                     confirmed: None,
                     fault: Some(fault),
+                    read_error: None,
                 }
             }
             None => observation,
+        }
+    }
+
+    /// Give up on a command the device could not echo because it could not be read.
+    fn release_unconfirmed(&self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.release_unconfirmed();
         }
     }
 

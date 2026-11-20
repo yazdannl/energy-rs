@@ -26,6 +26,7 @@ pub struct FakeSink {
     reject_writes: AtomicBool,
     unverified_writes: AtomicBool,
     unverified_holds: AtomicBool,
+    read_miss: AtomicBool,
     observer: Mutex<Option<Observer>>,
 }
 
@@ -36,6 +37,7 @@ impl Default for FakeSink {
             reject_writes: AtomicBool::new(false),
             unverified_writes: AtomicBool::new(false),
             unverified_holds: AtomicBool::new(false),
+            read_miss: AtomicBool::new(false),
             observer: Mutex::new(None),
         }
     }
@@ -56,6 +58,11 @@ impl FakeSink {
 
     pub fn unverified_holds(&self, unverified: bool) {
         self.unverified_holds.store(unverified, Ordering::Relaxed);
+    }
+
+    /// Script a read miss during echo confirmation: the write lands, but no echo is read.
+    pub fn read_miss(&self, miss: bool) {
+        self.read_miss.store(miss, Ordering::Relaxed);
     }
 
     /// Run `hook` at the instant of the transport write, i.e. after the intent was journalled.
@@ -122,6 +129,12 @@ impl CommandSink for FakeSink {
                 return Err(SinkError::Device {
                     pack_id,
                     reason: "scripted rejection".to_owned(),
+                });
+            }
+            if self.read_miss.load(Ordering::Relaxed) {
+                return Err(SinkError::ReadUnverified {
+                    pack_id,
+                    reason: "scripted read miss during echo".to_owned(),
                 });
             }
             Ok(WriteReceipt {

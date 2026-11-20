@@ -26,6 +26,7 @@ pub mod gated;
 pub mod latch_store;
 pub mod learning;
 pub mod learning_store;
+pub mod read_flake;
 
 /// Device serial used by the fixtures.
 pub const SN: &str = "EOC1NLN9N4XXXXXX";

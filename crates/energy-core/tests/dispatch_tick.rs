@@ -13,6 +13,8 @@
 
 mod support;
 
+use chrono::{TimeZone, Utc};
+use energy_battery::protection::{CellLatch, LatchReason};
 use energy_core::dispatch::{
     Dispatcher, FleetView, ManualOverride, MeterReading, OverrideAction, Overrides, TickInput,
     TickOutcome,
@@ -65,6 +67,28 @@ impl Fixture {
         };
         dispatcher.tick(&input, sink).await
     }
+
+    async fn tick_with_latches(
+        &self,
+        dispatcher: &Dispatcher,
+        sink: &FakeSink,
+        now: i64,
+        latches: &[CellLatch],
+    ) -> TickOutcome {
+        let input = TickInput {
+            now,
+            mode: Authority::Auto,
+            plan: Some(&self.plan),
+            fleet: &self.fleet,
+            meter: &self.meter,
+            latches,
+            overrides: &self.overrides,
+            stale: false,
+            progress: None,
+            selection: None,
+        };
+        dispatcher.tick(&input, sink).await
+    }
 }
 
 fn overrides_none() -> Overrides {
@@ -73,6 +97,21 @@ fn overrides_none() -> Overrides {
 
 fn dispatcher(limits: SafetyLimits) -> Dispatcher {
     Dispatcher::new(limits, true, 10)
+}
+
+fn blocking_latch(pack_id: &str) -> CellLatch {
+    let at = Utc.timestamp_opt(0, 0).single().expect("epoch");
+    CellLatch {
+        pack_id: pack_id.to_owned(),
+        blocked: true,
+        force_charge: false,
+        force_charge_w: None,
+        since: at,
+        reason: LatchReason::BelowResume,
+        reason_at: at,
+        voltage_v: Some(3.15),
+        last_fresh_at: Some(at),
+    }
 }
 
 /// The slot boundary is a 120 s ramp, not a step from the previous slot's power.
@@ -323,4 +362,130 @@ async fn a_maintenance_hold_carries_the_balance_current_note() {
     assert_eq!(sink.holds(), 1, "a neutral hold, not an acMode write");
     let note = report.note.as_deref().expect("note");
     assert!(note.contains("balance current"), "note {note}");
+}
+
+/// A skipped row must name the fault that armed the backoff, not a generic "(ok)" intent.
+#[tokio::test]
+async fn a_backoff_row_names_the_fault_that_armed_it() {
+    let fixture = Fixture::one(-0.8);
+    let sink = FakeSink::new();
+    sink.reject_writes(true);
+    let dispatcher = dispatcher(SafetyLimits::default());
+
+    fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    let outcome = fixture
+        .tick(&dispatcher, &sink, NOW + 10, Authority::Auto, false)
+        .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.reason, Reason::FaultBackoff);
+    assert!(!report.written);
+    assert!(
+        report
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("scripted rejection")),
+        "the journal cannot attribute the backoff: {:?}",
+        report.error
+    );
+}
+
+/// A cell-voltage refusal stays visible as a safety action even while the pack is backing off.
+#[tokio::test]
+async fn a_cell_guard_refusal_is_not_relabelled_as_transport_backoff() {
+    // A negative manual setpoint keeps the request alive: the allocator itself excludes a cell-
+    // blocked pack, which would otherwise hide the guard behind a 0 W request.
+    let overrides = Overrides::new(vec![ManualOverride::manual(
+        "SN-A",
+        OverrideAction::Charge { watts: -800.0 },
+        NOW + 60,
+    )]);
+    let fixture = Fixture::with_plan(plan(NOW, -0.8, 0.96), overrides);
+    let sink = FakeSink::new();
+    sink.reject_writes(true);
+    let dispatcher = dispatcher(SafetyLimits::default());
+
+    fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    let outcome = fixture
+        .tick_with_latches(&dispatcher, &sink, NOW + 10, &[blocking_latch("SN-A")])
+        .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(
+        report.reason,
+        Reason::CellVoltageGuard,
+        "the guard hid behind the backoff: {}",
+        report.reason
+    );
+    assert!(
+        report
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("scripted rejection")),
+        "the fault cause must still be journalled: {:?}",
+        report.error
+    );
+}
+
+/// A verified write proves recovery, so the next tick must be allowed to command the pack.
+#[tokio::test]
+async fn a_recovered_pack_can_write_again_after_the_backoff() {
+    let fixture = Fixture::one(-0.8);
+    let sink = FakeSink::new();
+    sink.reject_writes(true);
+    let dispatcher = dispatcher(SafetyLimits::default());
+
+    fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    assert!(dispatcher.faults().blocking("SN-A", NOW + 10));
+
+    sink.reject_writes(false);
+    fixture
+        .tick(&dispatcher, &sink, NOW + 16, Authority::Auto, false)
+        .await;
+    assert!(
+        !dispatcher.faults().blocking("SN-A", NOW + 16),
+        "a verified write leaves no stale guard behind"
+    );
+    assert_eq!(
+        sink.writes(),
+        vec![-800.0, -800.0],
+        "the recovered pack must be writable again"
+    );
+}
+
+/// A read miss during confirmation keeps ownership but is neither a fault nor a fail-safe trigger.
+#[tokio::test]
+async fn a_read_miss_keeps_ownership_without_backoff_or_a_hold() {
+    let fixture = Fixture::one(-0.8);
+    let sink = FakeSink::new();
+    sink.read_miss(true);
+    let dispatcher = dispatcher(SafetyLimits::default());
+
+    let outcome = fixture
+        .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
+        .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert!(report.written, "the write reached the device");
+    assert!(!report.verified);
+    assert_eq!(report.reason, Reason::Ok);
+    assert!(
+        report
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("scripted read miss")),
+        "the journal must name the read miss: {:?}",
+        report.error
+    );
+    assert_eq!(sink.holds(), 0, "a read miss is not a write fault");
+    assert!(!dispatcher.faults().blocking("SN-A", NOW + 5));
+
+    sink.read_miss(false);
+    fixture
+        .tick(&dispatcher, &sink, NOW + 10, Authority::Auto, false)
+        .await;
+    assert_eq!(sink.writes().len(), 2, "the next tick writes again");
 }

@@ -103,6 +103,11 @@ impl Inner {
             .is_some_and(|pending| pending.inconclusive.is_some())
     }
 
+    /// Drop a command that can no longer be echoed, without reporting a device fault.
+    pub(super) fn release_unconfirmed(&mut self) {
+        self.pending = None;
+    }
+
     /// Turn a timed-out doubt into one fault and release the command.
     ///
     /// Nothing is emitted on later polls: the fail-safe caller sees this fault once.

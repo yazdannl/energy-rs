@@ -19,6 +19,8 @@ pub(crate) struct Planned {
     pub(crate) reason: Reason,
     pub(crate) intended_reason: Reason,
     pub(crate) note: Option<String>,
+    /// The fault that put this pack in backoff, when it is being skipped this tick.
+    pub(crate) backoff_cause: Option<String>,
     pub(crate) vector: bool,
     pub(crate) send: bool,
 }

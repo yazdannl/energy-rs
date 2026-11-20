@@ -78,6 +78,9 @@ impl<T: DeviceIo> BatterySink<T> {
                 reason: error.to_string(),
             })?;
         advance(progress, Utc::now().timestamp());
+        if let Some(reason) = observation.read_error {
+            return Err(SinkError::ReadUnverified { pack_id, reason });
+        }
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
                 pack_id,
