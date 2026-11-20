@@ -4,7 +4,8 @@ use energy_battery::protection::CellLatch;
 use energy_ledger::plan::PlanSlot;
 
 use crate::dispatch::{
-    ManualOverride, MeterReading, OverrideAction, OverrideSource, Overrides, PackReading,
+    HOLD_DEADBAND_W, ManualOverride, MeterReading, OverrideAction, OverrideSource, Overrides,
+    PackReading,
 };
 use crate::safety::{Authority, Measured, Reason, SafetyDecision, SafetyLimits};
 
@@ -64,13 +65,25 @@ pub(crate) fn requested_watts(
     if context.stale { 0.0 } else { allocated_w }
 }
 
+/// Whether this pack needs the safety hold rather than a normal command.
+///
+/// A cell latch that forbids discharge and a neutral ladder answer means the pack must be held
+/// now, even while a write fault has it backed off: the guard cannot rely on the path it guards.
+pub(crate) fn cell_hold(latch: Option<&CellLatch>, allowed_w: f64) -> bool {
+    latch.is_some_and(CellLatch::blocks_discharge) && allowed_w.abs() <= HOLD_DEADBAND_W
+}
+
 /// The binding reason for what this pack's row reports.
 pub(crate) fn reason_for(
     context: &PackContext<'_>,
     decision: &SafetyDecision,
     overridden: Option<&ManualOverride>,
     backoff: bool,
+    cell_hold: bool,
 ) -> Reason {
+    if cell_hold {
+        return Reason::CellVoltageGuard;
+    }
     if backoff {
         return Reason::FaultBackoff;
     }

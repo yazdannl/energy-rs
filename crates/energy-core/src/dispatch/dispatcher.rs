@@ -1,7 +1,7 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
 use crate::dispatch::grid_telemetry;
-use crate::dispatch::pack_context::{measured, reason_for, requested_watts};
+use crate::dispatch::pack_context::{cell_hold, measured, reason_for, requested_watts};
 use crate::dispatch::{
     CommandSink, FaultGuard, HOLD_DEADBAND_W, PackReading, PackReport, Planned, Progress,
     SinkError, TickFrame, TickInput, TickOutcome, advance, allocate, decide, fleet_clamp,
@@ -166,7 +166,9 @@ impl Dispatcher {
         let decision = decide(&context, &request, reading, latch, false);
         let intended = decide(&context, &request, reading, latch, true);
         let backoff = self.faults.blocking(pack_id, context.now);
-        let vector = reading.available && !backoff;
+        // The cell hold is safety traffic: it still goes out while a write fault backs the pack off.
+        let holding = cell_hold(latch, decision.allowed_w);
+        let vector = reading.available && (holding || !backoff);
         Planned {
             pack_id: pack_id.to_owned(),
             ledger_id: reading.ledger_id,
@@ -177,7 +179,7 @@ impl Dispatcher {
             } else {
                 intended.allowed_w
             },
-            reason: reason_for(&context, &decision, overridden, backoff),
+            reason: reason_for(&context, &decision, overridden, backoff, holding),
             intended_reason: intended.primary(),
             note: crate::dispatch::pack_context::note_for(overridden),
             vector,
