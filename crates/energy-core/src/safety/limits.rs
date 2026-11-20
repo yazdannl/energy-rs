@@ -1,6 +1,8 @@
 //! The operator-configured bounds the ladder applies.
 
-use crate::safety::{Authority, GRID_FOLLOW_DEADBAND_W, GRID_FOLLOW_MIN_BUDGET_W, RAMP_LIMIT_W};
+use crate::safety::{
+    Authority, GRID_FOLLOW_DEADBAND_W, GRID_FOLLOW_MIN_BUDGET_W, GRID_IMPORT_MARGIN_W, RAMP_LIMIT_W,
+};
 
 /// Every bound outside the pack's own physics.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,8 +25,10 @@ pub struct SafetyLimits {
     pub tick_seconds: f64,
     /// Per-pack ramp, W/tick.
     pub ramp_limit_w: f64,
-    /// Grid import ceiling, W (0 = unlimited).
+    /// Grid import ceiling, W (0 = unlimited, which also disables the reactive guard).
     pub max_grid_import_w: f64,
+    /// Safety margin held below the import ceiling by the reactive guard, W (0 = at the limit).
+    pub grid_import_margin_w: f64,
     /// Grid export ceiling, W (0 = unlimited).
     pub max_grid_export_w: f64,
     /// Fleet charge cap before the per-pack split, W (0 = pack limits only).
@@ -54,6 +58,7 @@ impl Default for SafetyLimits {
             tick_seconds: 30.0,
             ramp_limit_w: RAMP_LIMIT_W,
             max_grid_import_w: 0.0,
+            grid_import_margin_w: GRID_IMPORT_MARGIN_W,
             max_grid_export_w: 0.0,
             fleet_max_charge_w: 0.0,
             fleet_max_discharge_w: 0.0,

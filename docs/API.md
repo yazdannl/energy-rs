@@ -277,7 +277,9 @@ credentials and other private options never appear.
 { "values": { "grid_import_limit_w": 2000 }, "at": "2026-01-01T12:00:00Z" }
 ```
 
-* Writable keys: `grid_import_limit_w`, `grid_export_limit_w`, `reserve_soc_pct`, `max_soc_pct`,
+* Writable keys: `grid_import_limit_w`, `grid_import_margin_w` (200 W safety margin below the
+  import limit; 0 holds exactly at the limit and the guard is off when the limit is 0),
+  `grid_export_limit_w`, `reserve_soc_pct`, `max_soc_pct`,
   `battery_power_limit_w`, `price_provider`, `price_entity`, `replan_seconds`,
   `stale_input_seconds`, `full_charge_weekday`, `full_charge_time`, and the PV array
   (`pv_planes`, `pv_mode`, `pv_ac_kwp`, `pv_scale`, and the legacy `pv_dc_kwp`, `pv_tilt_deg`,

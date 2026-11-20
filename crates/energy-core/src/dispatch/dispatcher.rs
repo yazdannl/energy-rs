@@ -1,14 +1,16 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
 use crate::dispatch::grid_telemetry;
+use crate::dispatch::import_ceiling::Guard;
 use crate::dispatch::pack_context::{measured, reason_for, requested_watts};
+use crate::dispatch::sent::Sent;
 use crate::dispatch::{
     CommandSink, FaultGuard, HOLD_DEADBAND_W, PackReading, PackReport, Planned, Progress,
     SinkError, TickFrame, TickInput, TickOutcome, advance, allocate, decide, fleet_clamp,
     slot_power,
 };
 use crate::safety::Reason;
-use crate::safety::{CommandRequest, SafetyLimits};
+use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
 
 /// Turns a plan and a fleet read into per-pack commands.
 ///
@@ -17,34 +19,15 @@ use crate::safety::{CommandRequest, SafetyLimits};
 /// *send*. Nothing reaches a device before the whole vector has been validated, so a later pack can
 /// never invalidate the bound an earlier one was checked against.
 ///
-/// The dispatcher owns exactly one piece of mutable state: the per-pack fault backoff. Everything
-/// else (authority, the plan, the latches, the overrides) is handed in per tick, so the engine can
-/// change its mind between ticks without the dispatcher remembering an old decision.
+/// The dispatcher owns two small pieces of mutable state: the per-pack fault backoff and the
+/// armed bit of the import-ceiling hysteresis. Everything else (authority, the plan, the latches,
+/// the overrides) is handed in per tick, so the engine can change its mind between ticks without
+/// remembering an old decision.
 pub struct Dispatcher {
     limits: SafetyLimits,
     failsafe_on_error: bool,
     faults: FaultGuard,
-}
-
-/// What one send attempt produced.
-struct Sent {
-    written: bool,
-    verified: bool,
-    applied_w: f64,
-    fail_safe: bool,
-    error: Option<String>,
-}
-
-impl Sent {
-    const fn none() -> Self {
-        Self {
-            written: false,
-            verified: false,
-            applied_w: 0.0,
-            fail_safe: false,
-            error: None,
-        }
-    }
+    ceiling: Guard,
 }
 
 impl Dispatcher {
@@ -54,6 +37,7 @@ impl Dispatcher {
             limits,
             failsafe_on_error,
             faults: FaultGuard::new(backoff_seconds),
+            ceiling: Guard::default(),
         }
     }
 
@@ -71,7 +55,7 @@ impl Dispatcher {
     pub async fn tick(&self, input: &TickInput<'_>, sink: &dyn CommandSink) -> TickOutcome {
         self.faults.prune(input.now);
         let limits = self.limits_for(input);
-        let frame = Self::frame(input, &limits);
+        let frame = self.frame(input, &limits);
         let mut plans: Vec<Planned> = input
             .fleet
             .packs
@@ -92,7 +76,7 @@ impl Dispatcher {
     }
 
     /// The per-tick values every pack shares: slot, split, grid base and ceilings.
-    fn frame<'a>(input: &'a TickInput<'a>, limits: &'a SafetyLimits) -> TickFrame<'a> {
+    fn frame<'a>(&self, input: &'a TickInput<'a>, limits: &'a SafetyLimits) -> TickFrame<'a> {
         let slot = input.plan.and_then(|plan| plan.slot_at(input.now)).cloned();
         let stale = input.stale || slot.is_none();
         let plan_power_w = if stale {
@@ -101,7 +85,7 @@ impl Dispatcher {
             input.plan.and_then(|plan| slot_power(plan, input.now))
         };
         // The plan's setpoint, corrected from the meter: the grid is what we actually hold.
-        let target_w = crate::dispatch::follow_target::target(
+        let plan_target_w = crate::dispatch::follow_target::target(
             plan_power_w.unwrap_or(0.0),
             slot.as_ref(),
             input.meter,
@@ -109,7 +93,13 @@ impl Dispatcher {
             limits,
             stale,
         );
-        let (allocation, grid_limit) = allocate(input, limits, target_w, slot.as_ref());
+        // Safety over the plan: a measured breach of the import ceiling lowers the setpoint only.
+        // The pre-guard split is kept so the reason can be attributed to the packs it changed.
+        let (baseline, _) = allocate(input, limits, plan_target_w, slot.as_ref());
+        let ceiling = self
+            .ceiling
+            .apply(plan_target_w, input.meter, input.fleet, limits, stale);
+        let (allocation, grid_limit) = allocate(input, limits, ceiling.target_w, slot.as_ref());
         let grid_hold = grid_limit == Some(Reason::GridTelemetryMissing);
         let grid_base = grid_telemetry::base(input, slot.as_ref(), limits);
         TickFrame {
@@ -124,10 +114,12 @@ impl Dispatcher {
             slot,
             stale,
             allocation,
+            baseline,
             grid_base,
             grid_limit,
             plan_power_w,
-            target_w,
+            target_w: ceiling.target_w,
+            import_ceiling: ceiling.active,
             grid_hold,
         }
     }
@@ -155,6 +147,8 @@ impl Dispatcher {
         } else {
             frame.allocation.watts_for(pack_id).unwrap_or(0.0)
         };
+        let before = frame.baseline.watts_for(pack_id).unwrap_or(0.0);
+        let guarded = frame.import_ceiling && allocated < before - EPS_W;
         let requested = requested_watts(&context, overridden, allocated);
         let request = CommandRequest::new(
             pack_id,
@@ -177,7 +171,7 @@ impl Dispatcher {
             } else {
                 intended.allowed_w
             },
-            reason: reason_for(&context, &decision, overridden, backoff),
+            reason: reason_for(&context, &decision, overridden, backoff, guarded),
             intended_reason: intended.primary(),
             note: crate::dispatch::pack_context::note_for(overridden),
             vector,

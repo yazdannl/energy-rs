@@ -30,6 +30,8 @@ pub enum Reason {
     PowerClamp,
     /// The grid import cap bound the setpoint.
     GridImportLimit,
+    /// The measured import breached the ceiling; the fleet discharged below the ceiling margin.
+    GridImportCeiling,
     /// The grid export cap bound the setpoint.
     GridExportLimit,
     /// Neither a meter nor a forecast base exists to evaluate the grid cap; hold.
@@ -81,6 +83,7 @@ impl Reason {
             Self::PlanTarget => "plan_soc_target",
             Self::PowerClamp => "power_clamp",
             Self::GridImportLimit => "grid_import_limit",
+            Self::GridImportCeiling => "grid_import_ceiling",
             Self::GridExportLimit => "grid_export_limit",
             Self::GridTelemetryMissing => "grid_telemetry_missing",
             Self::RampLimit => "ramp_limit",

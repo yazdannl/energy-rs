@@ -26,10 +26,14 @@ pub(crate) struct TickFrame<'a> {
     pub(crate) slot: Option<PlanSlot>,
     pub(crate) stale: bool,
     pub(crate) allocation: Allocation,
+    /// The split before the reactive import guard, to attribute a per-pack change to it.
+    pub(crate) baseline: Allocation,
     pub(crate) grid_base: Option<GridBase>,
     pub(crate) grid_limit: Option<Reason>,
     pub(crate) plan_power_w: Option<f64>,
     pub(crate) target_w: f64,
+    /// Whether the measured import breached the ceiling and lowered the target.
+    pub(crate) import_ceiling: bool,
     pub(crate) grid_hold: bool,
 }
 
@@ -47,6 +51,7 @@ impl TickFrame<'_> {
             latches: self.latches,
             overrides: self.overrides,
             grid_hold: self.grid_hold,
+            import_ceiling: self.import_ceiling,
         }
     }
 }

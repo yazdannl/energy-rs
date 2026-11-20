@@ -460,6 +460,7 @@ export function makeSettings(now: Date): SettingsResponse {
     asOf: iso(now),
     values: {
       grid_import_limit_w: 0,
+      grid_import_margin_w: 200,
       net_metering: 'on',
       zero_export: 'off',
       solar_reserve_pct: 20,
@@ -482,6 +483,7 @@ export function makeSettings(now: Date): SettingsResponse {
     },
     schema: [
       { key: 'grid_import_limit_w', kind: 'number', default: 0, min: 0, max: 20000 },
+      { key: 'grid_import_margin_w', kind: 'number', default: 200, min: 0, max: 2000 },
       {
         key: 'net_metering',
         kind: 'choice',

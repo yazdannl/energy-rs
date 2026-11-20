@@ -27,10 +27,15 @@ async fn settings_render_typed_values_and_the_schema() {
     assert_eq!(status, 200);
     assert_eq!(body["values"]["reserve_soc_pct"], 20.0);
     assert_eq!(body["values"]["grid_import_limit_w"], 0.0);
+    assert_eq!(body["values"]["grid_import_margin_w"], 200.0);
     assert_eq!(body["values"]["full_charge_weekday"], "sun");
     let schema = body["schema"].as_array().unwrap();
-    assert_eq!(schema.len(), 31);
+    assert_eq!(schema.len(), 32);
     assert_eq!(schema[0]["key"], "grid_import_limit_w");
+    assert_eq!(schema[1]["key"], "grid_import_margin_w");
+    assert_eq!(schema[1]["default"], 200.0);
+    assert_eq!(schema[1]["min"], 0.0);
+    assert_eq!(schema[1]["max"], 2_000.0);
     assert_eq!(schema[0]["kind"], "number");
     assert_eq!(schema[0]["min"], 0.0);
     assert_eq!(schema[0]["max"], 20_000.0);
@@ -59,7 +64,7 @@ async fn patching_a_setting_writes_the_ledger_and_returns_the_typed_value() {
     assert_eq!(status, 200);
     assert_eq!(body["values"]["grid_import_limit_w"], 2_000.0);
     // The response carries the whole state so the form can replace its draft with it.
-    assert_eq!(body["values"].as_object().unwrap().len(), 31);
+    assert_eq!(body["values"].as_object().unwrap().len(), 32);
     assert_eq!(body["values"]["reserve_soc_pct"], 20.0);
     assert_eq!(
         fixture
@@ -71,6 +76,29 @@ async fn patching_a_setting_writes_the_ledger_and_returns_the_typed_value() {
             .as_deref(),
         Some("2000")
     );
+}
+
+#[tokio::test]
+async fn the_import_margin_is_bounded() {
+    let fixture = Fixture::new();
+    let router = fixture.router();
+
+    let (status, _) = patch(
+        &router,
+        "/api/v1/settings",
+        json!({ "values": { "grid_import_margin_w": 2_001 } }),
+    )
+    .await;
+    assert_eq!(status, 422, "the API's 0..2000 range applies");
+
+    let (status, body) = patch(
+        &router,
+        "/api/v1/settings",
+        json!({ "values": { "grid_import_margin_w": 300 } }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["values"]["grid_import_margin_w"], 300.0);
 }
 
 #[tokio::test]

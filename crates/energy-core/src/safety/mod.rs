@@ -29,6 +29,8 @@ pub use request::CommandRequest;
 pub const RAMP_LIMIT_W: f64 = 1000.0;
 /// Default deadband for the grid-follow correction, W.
 pub const GRID_FOLLOW_DEADBAND_W: f64 = 10.0;
+/// Default safety margin below the grid import limit, W.
+pub const GRID_IMPORT_MARGIN_W: f64 = 200.0;
 /// Minimum grid-follow budget, W (survey §7 trap 11).
 pub const GRID_FOLLOW_MIN_BUDGET_W: f64 = 500.0;
 /// Values below this many watts are treated as zero.

@@ -21,6 +21,8 @@ pub(crate) struct PackContext<'a> {
     pub(crate) overrides: &'a Overrides,
     /// The fleet-level grid check could not be evaluated; every pack holds, fail-closed.
     pub(crate) grid_hold: bool,
+    /// The reactive import ceiling is armed this tick.
+    pub(crate) import_ceiling: bool,
 }
 
 /// The measurements one command is judged against.
@@ -40,6 +42,7 @@ pub(crate) fn measured(context: &PackContext<'_>, reading: &PackReading) -> Meas
         pv_kw: context.meter.pv_kw,
         available: reading.available,
         stale: reading.stale,
+        grid_ceiling_armed: context.import_ceiling,
     }
 }
 
@@ -70,6 +73,7 @@ pub(crate) fn reason_for(
     decision: &SafetyDecision,
     overridden: Option<&ManualOverride>,
     backoff: bool,
+    guarded: bool,
 ) -> Reason {
     if backoff {
         return Reason::FaultBackoff;
@@ -77,12 +81,51 @@ pub(crate) fn reason_for(
     let maintenance_hold = overridden.is_some_and(|entry| {
         entry.source == OverrideSource::Maintenance && entry.action == OverrideAction::Hold
     });
-    match decision.primary() {
+    let primary = match decision.primary() {
         Reason::Ok if maintenance_hold => Reason::MaintenanceHold,
         Reason::Ok if overridden.is_some() => Reason::ManualOverride,
         Reason::Ok if context.stale => Reason::StaleInput,
         other => other,
+    };
+    // The ceiling guard explains a discharge that the plan did not ask for. It outranks generic
+    // clamp reasons, but never a bound that actually stopped the pack: a latched cell, an empty
+    // pack or a missing meter must still say what it is.
+    if guarded && !hard_safety(primary) {
+        Reason::GridImportCeiling
+    } else {
+        primary
     }
+}
+
+/// Reasons that describe a real safety refusal and must stay visible in the dispatch row.
+fn hard_safety(reason: Reason) -> bool {
+    matches!(
+        reason,
+        Reason::ModeNotAuto
+            | Reason::ExitHoldSuppressed
+            | Reason::BatteryUnavailable
+            | Reason::StaleState
+            | Reason::StateMissing
+            | Reason::SocCeiling
+            | Reason::SocFloor
+            | Reason::GridImportLimit
+            | Reason::GridExportLimit
+            | Reason::GridTelemetryMissing
+            | Reason::SellFloor
+            | Reason::CellVoltageGuard
+            | Reason::CellVoltageEmergencyCharge
+            | Reason::StaleInput
+            | Reason::DriverError
+            | Reason::FaultBackoff
+            | Reason::WatchdogHold
+            | Reason::ManualOverride
+            | Reason::MaintenanceHold
+            | Reason::BootHold
+            | Reason::Shutdown
+            | Reason::TickFailed
+            | Reason::OrphanHold
+            | Reason::GridImportCeiling
+    )
 }
 
 /// The human note that belongs in the dispatch log for this pack's override.

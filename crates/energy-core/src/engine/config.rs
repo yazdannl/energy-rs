@@ -38,8 +38,10 @@ pub struct EngineConfig {
     pub pack_hold_seconds: i64,
     /// Grid-follow deadband, W: a smaller import error is left alone.
     pub grid_follow_deadband_w: f64,
-    /// Grid import ceiling, W (0 = unlimited).
+    /// Grid import ceiling, W (0 = unlimited, which also disables the reactive guard).
     pub max_grid_import_w: f64,
+    /// Safety margin below the import ceiling, W (0 = hold exactly at the limit).
+    pub grid_import_margin_w: f64,
     /// Grid export ceiling, W (0 = unlimited).
     pub max_grid_export_w: f64,
     /// Fleet charge ceiling before the per-pack split, W (0 = pack limits only).
@@ -76,6 +78,7 @@ impl Default for EngineConfig {
             pack_hold_seconds: 1800,
             grid_follow_deadband_w: 10.0,
             max_grid_import_w: 0.0,
+            grid_import_margin_w: 200.0,
             max_grid_export_w: 0.0,
             fleet_max_charge_w: 0.0,
             fleet_max_discharge_w: 0.0,
