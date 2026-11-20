@@ -2,11 +2,12 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-use energy_battery::control::{Command, DeviceController, Direction};
+use energy_battery::control::{Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW};
 use energy_battery::transport::DeviceIo;
 
-use crate::dispatch::{BoxFuture, CommandSink, SinkError, WriteReceipt};
+use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt};
 
 /// A [`CommandSink`] over the device controllers.
 ///
@@ -17,6 +18,7 @@ use crate::dispatch::{BoxFuture, CommandSink, SinkError, WriteReceipt};
 /// dispatcher turns into exactly one fail-safe hold and a backoff.
 pub struct BatterySink<T: DeviceIo> {
     devices: BTreeMap<String, Arc<DeviceController<T>>>,
+    confirm_window: Duration,
 }
 
 impl<T: DeviceIo> BatterySink<T> {
@@ -27,7 +29,15 @@ impl<T: DeviceIo> BatterySink<T> {
                 .into_iter()
                 .map(|device| (device.sn().to_owned(), device))
                 .collect(),
+            confirm_window: ECHO_CONFIRM_WINDOW,
         }
+    }
+
+    /// Shorten the bounded echo wait (tests; production keeps the measured window).
+    #[must_use]
+    pub fn with_confirm_window(mut self, window: Duration) -> Self {
+        self.confirm_window = window;
+        self
     }
 
     /// The serials this sink may command.
@@ -35,8 +45,14 @@ impl<T: DeviceIo> BatterySink<T> {
         self.devices.keys().map(String::as_str).collect()
     }
 
-    /// Apply one command and poll for its echo.
-    async fn send(&self, pack_id: String, command: Command) -> Result<WriteReceipt, SinkError> {
+    /// Apply one command and poll for its echo inside a hard, heartbeated deadline.
+    async fn send<'a>(
+        &'a self,
+        pack_id: String,
+        command: Command,
+        progress: Option<&'a dyn Progress>,
+        now: i64,
+    ) -> Result<WriteReceipt, SinkError> {
         let controller = self
             .devices
             .get(&pack_id)
@@ -50,10 +66,17 @@ impl<T: DeviceIo> BatterySink<T> {
                 pack_id: pack_id.clone(),
                 reason: error.to_string(),
             })?;
-        let observation = controller.poll().await.map_err(|error| SinkError::Device {
-            pack_id: pack_id.clone(),
-            reason: error.to_string(),
-        })?;
+        let observation = controller
+            .poll_confirming(self.confirm_window, || {
+                if let Some(progress) = progress {
+                    progress.mark(now);
+                }
+            })
+            .await
+            .map_err(|error| SinkError::Device {
+                pack_id: pack_id.clone(),
+                reason: error.to_string(),
+            })?;
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
                 pack_id,
@@ -70,11 +93,30 @@ impl<T: DeviceIo> BatterySink<T> {
 impl<T: DeviceIo> CommandSink for BatterySink<T> {
     fn write(&self, pack_id: &str, watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
         let command = command_for(watts);
-        Box::pin(self.send(pack_id.to_owned(), command))
+        Box::pin(self.send(pack_id.to_owned(), command, None, 0))
     }
 
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        Box::pin(self.send(pack_id.to_owned(), Command::Hold))
+        Box::pin(self.send(pack_id.to_owned(), Command::Hold, None, 0))
+    }
+
+    fn write_with_progress<'a>(
+        &'a self,
+        pack_id: &str,
+        watts: f64,
+        progress: Option<&'a dyn Progress>,
+        now: i64,
+    ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
+        Box::pin(self.send(pack_id.to_owned(), command_for(watts), progress, now))
+    }
+
+    fn hold_with_progress<'a>(
+        &'a self,
+        pack_id: &str,
+        progress: Option<&'a dyn Progress>,
+        now: i64,
+    ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
+        Box::pin(self.send(pack_id.to_owned(), Command::Hold, progress, now))
     }
 }
 

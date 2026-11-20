@@ -132,20 +132,28 @@ fn router(state: Arc<Mutex<FakeState>>) -> Router {
 }
 
 async fn report_handler(State(state): State<Arc<Mutex<FakeState>>>) -> Response {
-    let Ok(mut guard) = state.lock() else {
-        return poisoned();
+    let (delay, response) = {
+        let Ok(mut guard) = state.lock() else {
+            return poisoned();
+        };
+        let delay = guard.behaviour.report_delay;
+        let response = if let Some(status) = guard.behaviour.http_status {
+            status_response(
+                status,
+                json!({"code": status, "success": false, "sn": guard.sn, "error": "injected http status"}),
+            )
+        } else {
+            guard.advance_report();
+            let report = guard.report_json();
+            guard.settle_deferred_write();
+            (StatusCode::OK, Json(report)).into_response()
+        };
+        (delay, response)
     };
-    if let Some(status) = guard.behaviour.http_status {
-        status_response(
-            status,
-            json!({"code": status, "success": false, "sn": guard.sn, "error": "injected http status"}),
-        )
-    } else {
-        guard.advance_report();
-        let report = guard.report_json();
-        guard.settle_deferred_write();
-        (StatusCode::OK, Json(report)).into_response()
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
     }
+    response
 }
 
 async fn write_handler(State(state): State<Arc<Mutex<FakeState>>>, body: String) -> Response {

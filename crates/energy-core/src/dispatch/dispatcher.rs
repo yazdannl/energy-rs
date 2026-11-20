@@ -230,9 +230,10 @@ impl Dispatcher {
         sink: &dyn CommandSink,
     ) -> Sent {
         let result = if watts.abs() <= HOLD_DEADBAND_W {
-            sink.hold(pack_id).await
+            sink.hold_with_progress(pack_id, progress, now).await
         } else {
-            sink.write(pack_id, watts).await
+            sink.write_with_progress(pack_id, watts, progress, now)
+                .await
         };
         match result {
             Ok(receipt) => {
@@ -274,7 +275,7 @@ impl Dispatcher {
                 ..Sent::none()
             };
         }
-        match sink.hold(pack_id).await {
+        match sink.hold_with_progress(pack_id, progress, now).await {
             Ok(receipt) => {
                 advance(progress, now);
                 Sent {

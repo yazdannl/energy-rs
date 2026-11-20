@@ -34,6 +34,13 @@ pub enum ControlFault {
         "report for {got} arrived on the {expected} controller: it cannot confirm or fault a write"
     )]
     ForeignReport { expected: String, got: String },
+    #[error("write to {sn} (request {request_id}) not confirmed within {window_ms} ms: {detail}")]
+    ConfirmationTimeout {
+        sn: String,
+        request_id: u32,
+        window_ms: u64,
+        detail: String,
+    },
     #[error(
         "hold on {sn} not confirmed: report echoes inputLimit {input_w} W / outputLimit {output_w} W"
     )]

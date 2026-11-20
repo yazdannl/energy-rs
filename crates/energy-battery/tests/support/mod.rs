@@ -22,6 +22,7 @@ use energy_battery::{BatteryError, BoxFuture, DeviceIo, Report, WriteAck, WriteR
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
+pub mod broken_reads;
 pub mod gated;
 pub mod latch_store;
 pub mod learning;
@@ -126,6 +127,7 @@ pub struct ScriptedDevice {
     sn: String,
     reports: Mutex<VecDeque<Report>>,
     writes: Mutex<Vec<(Instant, WriteRequest)>>,
+    ack_id: Mutex<Option<u32>>,
 }
 
 impl ScriptedDevice {
@@ -134,7 +136,13 @@ impl ScriptedDevice {
             sn: sn.to_owned(),
             reports: Mutex::new(reports.into()),
             writes: Mutex::new(Vec::new()),
+            ack_id: Mutex::new(None),
         }
+    }
+
+    /// Give write acks a `messageId`, so ack wraparound can be exercised.
+    pub fn set_ack_id(&self, id: u32) {
+        *self.ack_id.lock().unwrap() = Some(id);
     }
 
     pub fn push_report(&self, report: Report) {
@@ -184,7 +192,7 @@ impl DeviceIo for ScriptedDevice {
         self.writes.lock().unwrap().push((Instant::now(), request));
         let ack = WriteAck {
             timestamp: None,
-            message_id: None,
+            message_id: *self.ack_id.lock().unwrap(),
             code: 200,
             sn: Some(sn),
         };
