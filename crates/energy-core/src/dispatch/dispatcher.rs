@@ -1,15 +1,14 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
-mod fault_handling;
+mod write;
 
 use crate::dispatch::grid_telemetry;
 use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
 use crate::dispatch::pack_context::{cell_safety, measured, reason_for, requested_watts};
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    CommandSink, FaultGuard, HOLD_DEADBAND_W, PackReading, PackReport, Planned, Progress,
-    SinkError, TickFrame, TickInput, TickOutcome, advance, allocate, decide, fleet_clamp,
-    slot_power,
+    CommandSink, FaultGuard, PackReading, PackReport, Planned, TickFrame, TickInput, TickOutcome,
+    allocate, decide, fleet_clamp, slot_power,
 };
 use crate::safety::Reason;
 use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
@@ -30,6 +29,13 @@ pub struct Dispatcher {
     failsafe_on_error: bool,
     faults: FaultGuard,
     ceiling: Guard,
+}
+
+/// Per-send context: the tick clock and whether this command bypasses fault backoff.
+#[derive(Clone, Copy)]
+struct SendContext {
+    now: i64,
+    safety_traffic: bool,
 }
 
 impl Dispatcher {
@@ -180,9 +186,8 @@ impl Dispatcher {
             } else {
                 intended.allowed_w
             },
-            reason: safety.unwrap_or_else(|| {
-                reason_for(&context, &decision, overridden, backoff, guarded)
-            }),
+            reason: safety
+                .unwrap_or_else(|| reason_for(&context, &decision, overridden, backoff, guarded)),
             intended_reason: intended.primary(),
             note: crate::dispatch::pack_context::note_for(overridden),
             backoff_cause,
@@ -199,12 +204,21 @@ impl Dispatcher {
         sink: &dyn CommandSink,
     ) -> PackReport {
         let mut sent = if plan.send {
+            // A verified cell-safety write is not proof the transport recovered: it bypasses the
+            // backoff, so it must not clear the fault that is still suppressing ordinary writes.
+            let safety_traffic = matches!(
+                plan.reason,
+                Reason::CellVoltageGuard | Reason::CellVoltageEmergencyCharge
+            );
             self.send(
                 frame.progress,
-                frame.now,
                 &plan.pack_id,
                 plan.command_w,
                 sink,
+                SendContext {
+                    now: frame.now,
+                    safety_traffic,
+                },
             )
             .await
         } else {
@@ -228,71 +242,5 @@ impl Dispatcher {
             error: sent.error,
             note: plan.note,
         }
-    }
-
-    /// Write one pack, with the one-shot fail-safe hold when it fails.
-    async fn send(
-        &self,
-        progress: Option<&dyn Progress>,
-        now: i64,
-        pack_id: &str,
-        watts: f64,
-        sink: &dyn CommandSink,
-    ) -> Sent {
-        // The heartbeat goes into the sink so the write/confirmation wait can mark every
-        // successful transport step, not just the tick boundaries around it.
-        let result = if watts.abs() <= HOLD_DEADBAND_W {
-            sink.hold_with_progress(pack_id, progress, now).await
-        } else {
-            sink.write_with_progress(pack_id, watts, progress, now)
-                .await
-        };
-        match result {
-            // A safety hold replaced this write; that hold is the episode's one fail-safe action.
-            Ok(receipt) if receipt.superseded => Sent {
-                superseded: Some("safety hold".to_owned()),
-                ..Sent::none()
-            },
-            Ok(receipt) => {
-                // Progress means work happened: a failed write is the watchdog's business, not a
-                // heartbeat.
-                advance(progress, now);
-                if receipt.verified {
-                    self.faults.clear(pack_id);
-                }
-                Sent {
-                    written: true,
-                    verified: receipt.verified,
-                    applied_w: receipt.applied_w,
-                    ..Sent::none()
-                }
-            }
-            // The gate withdrew the command (mode change, emergency hold) before it was written.
-            // Nothing reached the device, so there is no fault to back off from either.
-            Err(error @ SinkError::Fenced { .. }) => Sent {
-                error: Some(error.to_string()),
-                ..Sent::none()
-            },
-            // The write was accepted; only the readback missed. Keep ownership, hold nothing and
-            // leave the backoff alone: this is not a device fault.
-            Err(SinkError::ReadUnverified { reason, .. }) => Sent {
-                written: true,
-                error: Some(reason),
-                ..Sent::none()
-            },
-            Err(error) => self.fail_safe(progress, now, pack_id, &error, sink).await,
-        }
-    }
-
-    /// One real hold after a fault, then back off (survey §7 trap 10).
-    async fn fail_safe(
-        &self,
-        progress: Option<&dyn Progress>,
-        now: i64,
-        pack_id: &str,
-        error: &SinkError,
-        sink: &dyn CommandSink,
-    ) -> Sent {
-        fault_handling::fail_safe(self, progress, now, pack_id, error, sink).await
     }
 }

@@ -143,6 +143,7 @@ impl CommandSink for ProbeSink {
             Ok(WriteReceipt {
                 applied_w: watts,
                 verified: true,
+                superseded: false,
             })
         })
     }
@@ -166,6 +167,7 @@ impl CommandSink for ProbeSink {
             Ok(WriteReceipt {
                 applied_w: 0.0,
                 verified: true,
+                superseded: false,
             })
         })
     }
@@ -410,13 +412,13 @@ async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
     assert!(write.verified, "the fresh report must echo the command");
     assert_eq!(
         spy.0.load(Ordering::Relaxed),
-        2,
-        "write ack and echo poll must both mark"
+        3,
+        "the write ack and both echo-wait marks must advance the watchdog"
     );
     let hold = sink
         .hold_with_progress("SN-A", Some(&spy), NOW)
         .await
         .expect("hold");
     assert!(hold.verified, "the fresh report must echo the hold");
-    assert_eq!(spy.0.load(Ordering::Relaxed), 4);
+    assert_eq!(spy.0.load(Ordering::Relaxed), 6);
 }

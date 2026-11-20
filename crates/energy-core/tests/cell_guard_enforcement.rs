@@ -197,7 +197,7 @@ async fn a_latch_hold_reaches_the_fake_device_and_is_echoed() {
         selection: None,
     };
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
-    dispatcher.faults().arm("SN-A", NOW);
+    dispatcher.faults().arm("SN-A", NOW, "scripted fault");
     let outcome = dispatcher
         .tick(&input, &BatterySink::new(vec![Arc::clone(&controller)]))
         .await;
@@ -265,9 +265,12 @@ async fn an_emergency_charge_bypasses_the_write_backoff_after_a_neutral_hold() {
     assert!(report.written && report.verified);
 }
 
-/// A discharge still awaiting its echo owns the device; the safety hold waits, not replaces it.
+/// A discharge still awaiting its echo is preempted by the cell-safety hold at the bounded window.
+///
+/// The echo path owns confirmation: a neutralising hold first waits out the safety window, then
+/// cancels the unresolved command and lands as the single hold for this episode.
 #[tokio::test]
-async fn a_pending_discharge_keeps_ownership_until_a_safety_hold_can_land() {
+async fn a_pending_discharge_is_preempted_by_a_bounded_safety_hold() {
     let (fake, controller) =
         production_device(FakeBehaviour::default().with_stale_echo_reports(1)).await;
     // The pre-write report must differ by more than the 5 W echo tolerance.
@@ -289,43 +292,22 @@ async fn a_pending_discharge_keeps_ownership_until_a_safety_hold_can_land() {
     let (view, plan, meter, overrides, latches) = latched_fixture(3.15);
     let input = tick_input(NOW + 1, &plan, &view, &latches, &meter, &overrides);
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
-    dispatcher.faults().arm("SN-A", NOW);
-    let blocked = dispatcher
+    dispatcher.faults().arm("SN-A", NOW, "scripted fault");
+    let held = dispatcher
         .tick(&input, &BatterySink::new(vec![Arc::clone(&controller)]))
         .await;
-    assert!(!blocked.report("SN-A").expect("report").written);
-    assert_eq!(
-        fake.state().expect("device").write_count(),
-        1,
-        "an unresolved command must not be overwritten by a safety write"
-    );
-    assert_eq!(
-        controller.pending().map(|pending| pending.command),
-        Some(Command::Discharge { watts: 800 }),
-        "the pending discharge must survive the safety-hold attempt"
-    );
-    let echo = controller.poll().await.expect("discharge echo");
-    assert_eq!(echo.confirmed, Some(Command::Discharge { watts: 800 }));
-    assert!(controller.pending().is_none());
-
-    let retry = TickInput {
-        now: NOW + 2,
-        ..input
-    };
-    let held = dispatcher
-        .tick(&retry, &BatterySink::new(vec![Arc::clone(&controller)]))
-        .await;
     let report = held.report("SN-A").expect("report");
+    assert_eq!(report.reason, Reason::CellVoltageGuard);
     assert!(
         report.written && report.verified,
-        "hold not confirmed: {report:?}"
+        "the preempting hold must be confirmed: {report:?}"
+    );
+    assert_eq!(fake.state().expect("device").write_count(), 2);
+    assert!(
+        controller.pending().is_none(),
+        "the hold resolved both waiters; no second hold is needed"
     );
     assert_eq!(fake.state().expect("device").output_limit_w, 0);
-    assert_eq!(
-        fake.state().expect("device").write_count(),
-        2,
-        "one discharge and one hold, no storm"
-    );
 }
 
 /// A failed hold is bounded by the echo window and the fail-safe, then retried and finally cleared.

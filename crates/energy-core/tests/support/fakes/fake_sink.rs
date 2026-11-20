@@ -207,13 +207,14 @@ impl CommandSink for FakeSink {
     }
 
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        self.hold_with_progress(pack_id, None)
+        self.hold_with_progress(pack_id, None, 0)
     }
 
     fn hold_with_progress<'a>(
         &'a self,
         pack_id: &str,
         _progress: Option<&'a dyn Progress>,
+        _now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         self.record(pack_id, Sent::Hold);
         self.notify_hold(pack_id);

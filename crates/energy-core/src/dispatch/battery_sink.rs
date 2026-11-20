@@ -76,13 +76,12 @@ impl<T: DeviceIo> BatterySink<T> {
             })?;
         mark();
         let observation = controller
-            .poll_confirming(self.confirm_window, || mark())
+            .poll_confirming(self.confirm_window, &mark)
             .await
             .map_err(|error| SinkError::Device {
                 pack_id: pack_id.clone(),
                 reason: error.to_string(),
             })?;
-        mark();
         if observation.superseded {
             // A safety hold has already taken over this episode. A second hold here would be a storm.
             return Ok(WriteReceipt::superseded());
