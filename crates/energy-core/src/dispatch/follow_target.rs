@@ -11,6 +11,12 @@ use crate::dispatch::{FleetView, MeterReading};
 use crate::safety::{FollowRequest, GridFollow, SafetyLimits};
 use energy_ledger::plan::PlanSlot;
 
+const NEGLIGIBLE_KW: f64 = 1e-9;
+/// 0.01 cent/kWh. Prices are published at 1e-6 resolution, so a netted pair can differ by a
+/// micro-euro after rounding; a real spread this small cannot pay for a cycle (wear alone is
+/// 0.02 EUR/kWh), so treating it as netting cannot hide a profitable hold.
+const PRICE_EPSILON: f64 = 1e-4;
+
 /// The target the fleet is actually asked for: the plan's setpoint, plus the grid-follow move.
 ///
 /// The loop is a pure correction, not a plan change: the plan says whether this hour charges or
@@ -53,7 +59,12 @@ pub(crate) fn target(
 /// Its number is a *battery rate*, not a grid target, so the follow leaves it alone. Every other
 /// slot's grid is an artefact of the load and PV the plan assumed, and the site holds the meter at
 /// zero instead — absorb what the sun delivers, cover what the house draws, rather than importing
-/// to match a forecast that turned out wrong.
+/// to match a forecast that turned out wrong. A zero-rate hold whose *published* buy and feed-in
+/// prices match is the exception: buying and selling have the same price there, so following only
+/// loses wear and round-trip energy. The per-slot prices are the signal, not the operator's
+/// `net_metering` flag: a provider can publish equal prices with the flag off, and a netted regime
+/// can still publish a lower feed-in in a slot (e.g. after the saldering budget runs out). What
+/// settles this slot's energy is the price pair, so that is what dispatch must judge.
 ///
 /// The planner's convention is `battery_kw > 0` charges and `battery_kw < 0` discharges, with
 /// `planned_grid = load_kw - pv_kw + battery_kw` (positive imports). A discharging slot with
@@ -65,6 +76,15 @@ fn desired_grid_w(slot: &PlanSlot) -> Option<f64> {
     {
         // A slot that cannot say what it expected is not a target: hold the plan and let the
         // ladder's missing-telemetry rule do its job.
+        return None;
+    }
+    // A zero-setpoint slot whose prices net 1:1 is a hold, not a self-consumption slot: buying the
+    // house's energy now and selling the same kWh from the pack later have the same price, so
+    // following the meter to zero only pays wear and round-trip loss. The plan left that energy in
+    // the pack on purpose (reserve_hold); keep its setpoint instead of draining it. A zero-price
+    // slot is not netting: both prices are then just missing, so it must keep the old behaviour.
+    let netted = slot.buy_all_in > 0.0 && (slot.buy_all_in - slot.feed_in).abs() <= PRICE_EPSILON;
+    if netted && slot.battery_kw.abs() <= NEGLIGIBLE_KW {
         return None;
     }
     let planned_grid = slot.load_kw - slot.pv_kw + slot.battery_kw;
@@ -86,47 +106,119 @@ fn capability_w(fleet: &FleetView) -> f64 {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::{desired_grid_w, target};
-    use crate::dispatch::{FleetView, MeterReading};
+    use crate::dispatch::{FleetView, MeterReading, PackReading};
+    use crate::plan::PackSpec;
     use crate::safety::SafetyLimits;
     use energy_ledger::plan::PlanSlot;
 
     fn slot(load_kw: f64, pv_kw: f64, battery_kw: f64) -> PlanSlot {
+        priced_slot(load_kw, pv_kw, battery_kw, 0.0, 0.0)
+    }
+
+    fn priced_slot(load_kw: f64, pv_kw: f64, battery_kw: f64, buy: f64, feed: f64) -> PlanSlot {
         let mut slot = PlanSlot::at(0, 0);
         slot.load_kw = load_kw;
         slot.pv_kw = pv_kw;
         slot.battery_kw = battery_kw;
+        slot.buy_all_in = buy;
+        slot.feed_in = feed;
         slot
+    }
+
+    fn follow(slot: &PlanSlot, plan_w: f64, grid_w: f64, fleet: &FleetView) -> f64 {
+        target(
+            plan_w,
+            Some(slot),
+            &MeterReading::grid(grid_w),
+            fleet,
+            &SafetyLimits::default(),
+            false,
+        )
     }
 
     #[test]
     fn peak_discharge_keeps_its_export_setpoint() {
         let slot = slot(0.4646, 0.0, -3.2);
-        let fleet = FleetView::default();
-        let target_w = target(
-            -3_200.0,
-            Some(&slot),
-            &MeterReading::grid(0.0),
-            &fleet,
-            &SafetyLimits::default(),
-            false,
-        );
         assert_eq!(desired_grid_w(&slot), None, "a deliberate export");
-        assert_eq!(target_w, -3_200.0, "the plan's discharge rate stands");
+        assert_eq!(
+            follow(&slot, -3_200.0, 0.0, &FleetView::default()),
+            -3_200.0
+        );
     }
 
     #[test]
     fn self_consumption_follows_the_grid_to_zero() {
         let slot = slot(0.5, 0.0, -0.2);
-        let fleet = FleetView::default();
-        let target_w = target(
-            -200.0,
-            Some(&slot),
-            &MeterReading::grid(500.0),
-            &fleet,
-            &SafetyLimits::default(),
-            false,
-        );
         assert_eq!(desired_grid_w(&slot), Some(0.0), "grid is an artefact");
-        assert_eq!(target_w, -500.0, "discharge the measured import away");
+        assert_eq!(follow(&slot, -200.0, 500.0, &FleetView::default()), -500.0);
+    }
+
+    #[test]
+    fn net_metered_reserve_hold_keeps_the_plan_setpoint() {
+        let slot = priced_slot(0.8, 0.0, 0.0, 0.415_838, 0.415_838);
+        assert_eq!(desired_grid_w(&slot), None, "self-consumption pays nothing");
+        assert_eq!(follow(&slot, 0.0, 800.0, &FleetView::default()), 0.0);
+    }
+
+    #[test]
+    fn a_zero_price_hold_is_not_treated_as_netting() {
+        let slot = priced_slot(0.5, 0.0, 0.0, 0.0, 0.0);
+        assert_eq!(desired_grid_w(&slot), Some(0.0), "prices are missing");
+        assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
+    }
+
+    #[test]
+    fn net_metered_hold_stops_a_discharging_pack_before_the_cell_guard() {
+        let slot = priced_slot(0.8, 0.0, 0.0, 0.415_838, 0.415_838);
+        // An almost-empty pack still discharging at 3.15 V must not be pushed into the guard.
+        let fleet = FleetView::new(vec![PackReading {
+            ledger_id: None,
+            spec: PackSpec {
+                pack_id: "SN-LOW".to_owned(),
+                capacity_kwh: 1.92,
+                min_soc_pct: 0.0,
+                max_soc_pct: 100.0,
+                max_charge_w: 1000.0,
+                max_discharge_w: 800.0,
+                eta_charge: 0.9,
+                eta_discharge: 0.9,
+            },
+            soc_pct: Some(11.0),
+            energy_kwh: Some(0.2112),
+            power_w: -799.0,
+            min_cell_v: Some(3.15),
+            observed_at: 0,
+            available: true,
+            stale: false,
+        }]);
+        assert_eq!(follow(&slot, 0.0, 800.0, &fleet), 0.0);
+    }
+
+    #[test]
+    fn a_small_nonzero_setpoint_is_not_a_hold_under_netting() {
+        let slot = priced_slot(0.8, 0.0, -0.05, 0.32, 0.32);
+        assert_eq!(desired_grid_w(&slot), Some(0.0), "0.05 kW is real");
+        assert_eq!(follow(&slot, -50.0, 500.0, &FleetView::default()), -500.0);
+    }
+
+    #[test]
+    fn net_metered_hold_does_not_store_pv_surplus() {
+        let slot = priced_slot(0.2, 0.7, 0.0, 0.32, 0.32);
+        assert_eq!(desired_grid_w(&slot), None, "export pays the same");
+        assert_eq!(follow(&slot, 0.0, -500.0, &FleetView::default()), 0.0);
+    }
+
+    #[test]
+    fn metered_hold_still_follows_when_buy_and_feed_differ() {
+        let slot = priced_slot(0.5, 0.0, 0.0, 0.45, 0.08);
+        assert_eq!(desired_grid_w(&slot), Some(0.0), "import is dearer");
+        assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
+    }
+
+    #[test]
+    fn deliberate_charge_still_ignores_grid_follow_under_netting() {
+        let slot = priced_slot(0.8, 0.0, 0.5, 0.32, 0.32);
+        assert_eq!(desired_grid_w(&slot), None, "a deliberate grid charge");
+        assert_eq!(follow(&slot, 500.0, 1300.0, &FleetView::default()), 500.0);
     }
 }
