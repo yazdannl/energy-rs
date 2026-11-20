@@ -44,10 +44,15 @@ impl Engine {
             return EngineSnapshot::default();
         };
         let plan = state.plan.clone();
-        let maintenance = plan
-            .as_ref()
-            .map(|plan| plan.maintenance.clone())
-            .unwrap_or_default();
+        let (maintenance, unassigned) = plan.as_ref().map_or_else(
+            || (Vec::new(), Vec::new()),
+            |plan| {
+                (
+                    plan.maintenance.clone(),
+                    plan.maintenance_unassigned.clone(),
+                )
+            },
+        );
         let plan_id = state.plan_id;
         let overrides: Vec<ManualOverride> = state
             .overrides
@@ -60,7 +65,7 @@ impl Engine {
         drop(state);
 
         let mode = self.gate.mode();
-        let packs = self.pack_snapshots(view, now, &overrides, &maintenance);
+        let packs = self.pack_snapshots(view, now, &overrides, &maintenance, &unassigned);
         let plan_snapshot = plan.as_ref().map(|plan| plan_snapshot(plan, plan_id));
         let faults = faults::derive(
             now,
@@ -147,6 +152,7 @@ impl Engine {
         now: i64,
         overrides: &[ManualOverride],
         maintenance: &[energy_battery::protection::full_charge::FullChargeAssignment],
+        unassigned: &[energy_battery::protection::full_charge::UnassignedPack],
     ) -> Vec<PackSnapshot> {
         view.packs
             .iter()
@@ -166,18 +172,16 @@ impl Engine {
                         .iter()
                         .find(|entry| entry.pack_id == sn && entry.active(now))
                         .cloned(),
-                    maintenance: maintenance.iter().find(|entry| entry.pack_id == sn).map(
-                        |entry| MaintenanceSnapshot {
-                            state: if now < entry.charge_end {
-                                "charging"
-                            } else {
-                                "dwell"
-                            },
-                            target_soc_pct: entry.target_soc_pct,
-                            charge_end: entry.charge_end,
-                            dwell_until: entry.dwell_until,
-                        },
-                    ),
+                    maintenance: maintenance
+                        .iter()
+                        .find(|entry| entry.pack_id == sn)
+                        .map(|entry| MaintenanceSnapshot::assigned(entry, now))
+                        .or_else(|| {
+                            unassigned
+                                .iter()
+                                .find(|entry| entry.pack_id == sn)
+                                .map(MaintenanceSnapshot::unassigned)
+                        }),
                 }
             })
             .collect()

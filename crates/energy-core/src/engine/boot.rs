@@ -63,7 +63,20 @@ impl Engine {
         }
         self.retry_boot_latches(now).await?;
         self.restore_selection(now)?;
+        self.reset_unobserved_dwells(now)?;
         self.publish_boot(now);
+        Ok(())
+    }
+
+    /// A dwell started by a previous run is abandoned: the time the add-on was down was never
+    /// observed, so counting it would stamp a "completed" balance the pack never proved.
+    fn reset_unobserved_dwells(&self, now: i64) -> Result<(), EngineError> {
+        let Some(port) = self.source.maintenance() else {
+            return Ok(());
+        };
+        for outcome in crate::maintenance::abort_pending(port, "restart_unobserved") {
+            self.journal_dwell(now, &outcome)?;
+        }
         Ok(())
     }
 

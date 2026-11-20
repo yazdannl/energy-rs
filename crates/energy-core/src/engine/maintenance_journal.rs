@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use energy_battery::protection::full_charge::FullChargeAssignment;
+use energy_battery::protection::full_charge::{FullChargeAssignment, UnassignedPack};
 use energy_ledger::EventLevel;
 
 use crate::engine::control::Engine;
@@ -29,6 +29,7 @@ impl Engine {
         &self,
         at: i64,
         assignments: &[FullChargeAssignment],
+        unassigned: &[UnassignedPack],
     ) -> Result<(), EngineError> {
         for assignment in assignments {
             let slots: Vec<serde_json::Value> = assignment
@@ -60,6 +61,25 @@ impl Engine {
                     "slots": slots,
                     "expectedCostEur": assignment.expected_cost_eur,
                     "dwellUntil": assignment.dwell_until,
+                }),
+            )?;
+        }
+        for pack in unassigned {
+            self.event_data(
+                at,
+                EventLevel::Warn,
+                "maintenance.unassigned",
+                format!(
+                    "{}: no cheap window before {}: {:.3} kWh missing ({})",
+                    pack.pack_id, pack.deadline, pack.missing_kwh, pack.reason
+                ),
+                &json!({
+                    "pack": pack.pack_id,
+                    "reason": pack.reason,
+                    "requiredKwh": pack.required_kwh,
+                    "availableKwh": pack.available_kwh,
+                    "missingKwh": pack.missing_kwh,
+                    "deadline": pack.deadline,
                 }),
             )?;
         }

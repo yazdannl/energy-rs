@@ -14,4 +14,4 @@ pub use history::FullChargeHistory;
 pub use ledger_history::LedgerFullChargeHistory;
 pub use overrides::overrides;
 pub use port::MaintenancePort;
-pub use progress::{DwellOutcome, progress};
+pub use progress::{DwellOutcome, abort_pending, progress};

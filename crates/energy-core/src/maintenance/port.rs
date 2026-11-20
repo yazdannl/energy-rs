@@ -2,7 +2,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use energy_battery::protection::full_charge::{ChargeCandidate, DuePack, FullChargeSettings};
+use energy_battery::protection::full_charge::{
+    ChargeCandidate, DuePack, FullChargeSettings, IntervalPlan,
+};
 
 use crate::maintenance::FullChargeHistory;
 use crate::plan::PackState;
@@ -56,7 +58,7 @@ impl MaintenancePort {
         packs: &[PackState],
         slots: &[ChargeCandidate],
         budget_w: f64,
-    ) -> Vec<energy_battery::protection::full_charge::FullChargeAssignment> {
+    ) -> IntervalPlan {
         let forced = self.forced.lock().ok().and_then(|guard| guard.clone());
         let due: Vec<DuePack> = packs
             .iter()
@@ -65,6 +67,7 @@ impl MaintenancePort {
                 pack_id: pack.spec.pack_id.clone(),
                 capacity_kwh: pack.spec.capacity_kwh,
                 soc_pct: pack.soc_pct,
+                max_soc_pct: pack.spec.max_soc_pct,
                 eta_charge: pack.spec.eta_charge,
                 max_charge_w: pack.spec.max_charge_w,
                 last_full_at: self.history.last_full_at(&pack.spec.pack_id),
@@ -80,7 +83,7 @@ impl MaintenancePort {
             &due,
             budget_w,
         );
-        if !assignments.is_empty()
+        if !assignments.assignments.is_empty()
             && let Ok(mut pending) = self.forced.lock()
         {
             *pending = None;

@@ -134,7 +134,8 @@ impl Engine {
                         None
                     }
                 };
-                self.journal_maintenance(now, &plan.maintenance).ok()?;
+                self.journal_maintenance(now, &plan.maintenance, &plan.maintenance_unassigned)
+                    .ok()?;
                 if let Ok(mut state) = self.lock() {
                     state.plan = Some(plan.clone());
                     state.plan_id = plan_id;

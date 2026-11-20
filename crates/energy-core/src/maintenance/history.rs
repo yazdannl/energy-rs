@@ -21,4 +21,9 @@ pub trait FullChargeHistory: Send + Sync {
 
     /// Drop a dwell that did not complete.
     fn abort_dwell(&self, pack_id: &str) -> Result<(), LedgerError>;
+
+    /// Packs with an unconfirmed dwell in storage; used to clear state after a restart or replan.
+    fn pending_dwells(&self) -> Vec<String> {
+        Vec::new()
+    }
 }

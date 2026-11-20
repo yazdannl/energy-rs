@@ -127,5 +127,6 @@ pub fn plan(generated_at: i64, slot_soc_kwh: f64) -> Plan {
         degraded: None,
         slots: vec![slot],
         maintenance: Vec::new(),
+        maintenance_unassigned: Vec::new(),
     }
 }

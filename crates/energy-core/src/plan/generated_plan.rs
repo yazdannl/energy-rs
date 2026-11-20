@@ -1,6 +1,6 @@
 //! One plan: the solver's timeline plus the header the ledger and the UI read.
 
-use energy_battery::protection::full_charge::FullChargeAssignment;
+use energy_battery::protection::full_charge::{FullChargeAssignment, UnassignedPack};
 use energy_ledger::plan::PlanSlot;
 
 use crate::plan::{PlanSummary, SLOT_SECONDS};
@@ -45,6 +45,8 @@ pub struct Plan {
     pub slots: Vec<PlanSlot>,
     /// Price-aware maintenance charges folded into this plan, one per due pack.
     pub maintenance: Vec<FullChargeAssignment>,
+    /// Due packs this plan could not schedule, with reasons and missing energy.
+    pub maintenance_unassigned: Vec<UnassignedPack>,
 }
 
 impl Plan {

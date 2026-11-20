@@ -49,4 +49,17 @@ impl FullChargeHistory for LedgerFullChargeHistory {
     fn abort_dwell(&self, pack_id: &str) -> Result<(), LedgerError> {
         self.ledger.packs()?.abort_dwell(pack_id)
     }
+
+    fn pending_dwells(&self) -> Vec<String> {
+        self.ledger
+            .packs()
+            .ok()
+            .and_then(|repo| repo.all().ok())
+            .map_or_else(Vec::new, |rows| {
+                rows.into_iter()
+                    .filter(|row| row.dwell_started_at.is_some())
+                    .map(|row| row.sn)
+                    .collect()
+            })
+    }
 }

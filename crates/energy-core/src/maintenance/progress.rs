@@ -6,6 +6,8 @@ use crate::dispatch::{FleetView, PackReading};
 use crate::maintenance::MaintenancePort;
 use crate::plan::Plan;
 
+use std::collections::HashSet;
+
 /// Grace after the planned dwell for a device that answered late but stayed at the target.
 const DWELL_GRACE_S: i64 = 2 * 3600;
 
@@ -27,11 +29,50 @@ pub fn progress(
     view: &FleetView,
     now: i64,
 ) -> Vec<DwellOutcome> {
-    plan.maintenance
+    let mut outcomes: Vec<DwellOutcome> = plan
+        .maintenance
         .iter()
         .filter(|assignment| now >= assignment.charge_end)
         .filter_map(|assignment| observe(port, assignment, view, now))
+        .collect();
+    let assigned: HashSet<&str> = plan
+        .maintenance
+        .iter()
+        .map(|assignment| assignment.pack_id.as_str())
+        .collect();
+    for pack in port.history().pending_dwells() {
+        if assigned.contains(pack.as_str())
+            || outcomes.iter().any(|outcome| outcome.pack_id == pack)
+        {
+            continue;
+        }
+        // The plan that started this dwell is gone. Never let a stale row block a later attempt.
+        outcomes.push(abandon_named(port, &pack, "assignment_lost"));
+    }
+    outcomes
+}
+
+/// Clear every unconfirmed dwell after a restart and return one outcome per pack.
+///
+/// The stored start is deleted in the same operation that is journalled, so no later plan can
+/// finish a dwell whose beginning it never observed.
+pub fn abort_pending(port: &MaintenancePort, reason: &'static str) -> Vec<DwellOutcome> {
+    port.history()
+        .pending_dwells()
+        .into_iter()
+        .map(|pack_id| abandon_named(port, &pack_id, reason))
         .collect()
+}
+
+fn abandon_named(port: &MaintenancePort, pack_id: &str, reason: &'static str) -> DwellOutcome {
+    if let Err(error) = port.history().abort_dwell(pack_id) {
+        tracing::warn!(%error, pack = pack_id, "stale dwell could not be cleared");
+    }
+    DwellOutcome {
+        pack_id: pack_id.to_owned(),
+        completed: false,
+        reason,
+    }
 }
 
 /// One assignment's observation, or `None` while it is still balancing normally.

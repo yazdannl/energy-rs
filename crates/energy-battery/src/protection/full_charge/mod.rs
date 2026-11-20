@@ -9,16 +9,20 @@ pub mod candidate;
 pub mod charge_slot;
 pub mod due_pack;
 pub mod interval;
+pub mod interval_plan;
 pub mod scheduler;
 pub mod settings;
+pub mod unassigned_pack;
 
 pub use action::FullChargeAction;
 pub use assignment::FullChargeAssignment;
 pub use candidate::ChargeCandidate;
 pub use charge_slot::ChargeSlot;
 pub use due_pack::DuePack;
+pub use interval_plan::IntervalPlan;
 pub use scheduler::{FullChargeScheduler, MAX_RUN_HOURS, TOLERANCE_PCT, ZONE};
 pub use settings::{
     DEFAULT_DWELL_MINUTES, DEFAULT_INTERVAL_DAYS, FullChargeSettings, MAX_DWELL_MINUTES,
     MAX_INTERVAL_DAYS, MIN_DWELL_MINUTES, MIN_INTERVAL_DAYS,
 };
+pub use unassigned_pack::UnassignedPack;

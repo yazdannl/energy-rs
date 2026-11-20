@@ -19,11 +19,11 @@ mod support;
 use std::sync::Arc;
 
 use energy_battery::protection::full_charge::{
-    ChargeCandidate, DuePack, FullChargeAssignment, FullChargeSettings,
+    ChargeCandidate, ChargeSlot, DuePack, FullChargeAssignment, FullChargeSettings,
 };
 use energy_core::dispatch::FleetView;
 use energy_core::maintenance::{
-    FullChargeHistory, LedgerFullChargeHistory, MaintenancePort, candidates, progress,
+    FullChargeHistory, LedgerFullChargeHistory, MaintenancePort, apply, candidates, progress,
 };
 use energy_core::plan::{PackState, SLOT_SECONDS};
 use energy_core::safety::Authority;
@@ -46,6 +46,7 @@ fn due_pack(pack_id: &str, soc: f64, last_full_at: Option<i64>, forced: bool) ->
         pack_id: pack_id.into(),
         capacity_kwh: 1.92,
         soc_pct: soc,
+        max_soc_pct: 100.0,
         eta_charge: 0.95,
         max_charge_w: 800.0,
         last_full_at,
@@ -58,6 +59,7 @@ fn slots(prices: &[f64], available_w: f64) -> Vec<ChargeCandidate> {
         .iter()
         .enumerate()
         .map(|(index, price)| ChargeCandidate {
+            slot_start: NOW + index as i64 * SLOT_SECONDS,
             t_start: NOW + index as i64 * SLOT_SECONDS,
             t_end: NOW + (index as i64 + 1) * SLOT_SECONDS,
             price_eur_per_kwh: *price,
@@ -85,8 +87,9 @@ fn a_due_pack_gets_the_cheapest_slots_that_cover_its_missing_energy() {
         &[due_pack("ONE", 5.0, Some(NOW - 8 * 86_400), false)],
         7_300.0,
     );
-    assert_eq!(assignments.len(), 1);
-    let assignment = &assignments[0];
+    assert_eq!(assignments.assignments.len(), 1);
+    assert!(assignments.unassigned.is_empty());
+    let assignment = &assignments.assignments[0];
     assert_eq!(assignment.reason, "interval_due");
     assert_eq!(assignment.target_soc_pct, 100.0);
     assert!(
@@ -110,7 +113,7 @@ fn a_pack_inside_the_interval_is_not_planned() {
         &[due_pack("ONE", 40.0, Some(NOW - 2 * 86_400), false)],
         7_300.0,
     );
-    assert!(assignments.is_empty());
+    assert!(assignments.assignments.is_empty());
 }
 
 #[test]
@@ -125,7 +128,7 @@ fn a_short_cheap_window_waits_for_the_next_replan() {
         &[due_pack("ONE", 5.0, None, false)],
         7_300.0,
     );
-    assert!(assignments.is_empty());
+    assert!(assignments.assignments.is_empty());
 }
 
 #[test]
@@ -147,9 +150,9 @@ fn four_packs_fit_under_the_import_ceiling_by_sharing_slots() {
         &packs,
         7_300.0,
     );
-    assert_eq!(assignments.len(), 4);
+    assert_eq!(assignments.assignments.len(), 4);
     let mut used = std::collections::BTreeMap::new();
-    for assignment in &assignments {
+    for assignment in &assignments.assignments {
         for slot in &assignment.slots {
             let entry = used.entry(slot.t_start).or_insert(0.0);
             *entry += slot.charge_w;
@@ -168,13 +171,15 @@ fn a_manual_request_forces_the_rule_early_without_changing_history() {
     let history = Arc::new(LedgerFullChargeHistory::new(Arc::clone(&ledger)));
     let port = Arc::new(MaintenancePort::new(history, settings()));
     port.force(Some("ONE"));
+    let mut spec = pack("ONE", 90.0).spec;
+    spec.max_soc_pct = 100.0;
     let pack = PackState {
-        spec: pack("ONE", 90.0).spec,
+        spec,
         soc_pct: 90.0,
     };
     let assignments = port.assignments(NOW, &[pack], &slots(&prices(12, 12), 800.0), 7_300.0);
-    assert_eq!(assignments.len(), 1);
-    assert_eq!(assignments[0].reason, "manual_request");
+    assert_eq!(assignments.assignments.len(), 1);
+    assert_eq!(assignments.assignments[0].reason, "manual_request");
 }
 
 #[test]
@@ -236,21 +241,21 @@ fn a_due_pack_gets_its_charge_from_the_solved_plan() {
         settings(),
     ));
     let mut plan = plan(NOW, 0.0, 0.1);
+    for slot in &mut plan.slots {
+        slot.battery_kw = 0.0;
+    }
     for (index, slot) in plan.slots.iter_mut().enumerate() {
         slot.buy_all_in = if index < 20 { 0.08 } else { 0.30 };
         slot.load_kw = 0.5;
         slot.pv_kw = 0.0;
     }
     let candidates = candidates(&plan, NOW, 7_300.0);
-    let assignments = port.assignments(
-        NOW,
-        &[pack("ONE", 5.0).state().unwrap()],
-        &candidates,
-        7_300.0,
-    );
-    assert_eq!(assignments.len(), 1);
+    let mut state = pack("ONE", 5.0).state().unwrap();
+    state.spec.max_soc_pct = 100.0;
+    let assignments = port.assignments(NOW, &[state], &candidates, 7_300.0);
+    assert_eq!(assignments.assignments.len(), 1);
     assert!(
-        assignments[0]
+        assignments.assignments[0]
             .slots
             .iter()
             .all(|slot| slot.price_eur_per_kwh == 0.08)
@@ -293,6 +298,124 @@ async fn a_dry_run_journals_the_intent_without_writing() {
             .any(|event| event.kind == "maintenance.planned" && event.level == EventLevel::Info)
     );
     assert_eq!(port.history().last_full_at("ONE"), None);
+}
+
+#[test]
+fn a_short_window_reports_the_missing_kwh_instead_of_silently_skipping() {
+    let result = energy_battery::protection::full_charge::interval::plan(
+        NOW,
+        &settings(),
+        &slots(&prices(5, 40), 800.0),
+        &[due_pack("ONE", 5.0, None, false)],
+        7_300.0,
+    );
+    assert!(result.assignments.is_empty());
+    assert_eq!(result.unassigned.len(), 1);
+    let pack = &result.unassigned[0];
+    assert_eq!(pack.reason, "not_enough_eligible_slots");
+    assert!(pack.missing_kwh > 0.9);
+    assert!(pack.required_kwh > pack.available_kwh);
+}
+
+#[test]
+fn the_earliest_eligible_window_wins_over_a_cheaper_later_one() {
+    // Both cheap windows are inside the band; a long expensive tail keeps the mean high.
+    let prices: Vec<f64> = [0.08; 12]
+        .into_iter()
+        .chain([0.05; 12])
+        .chain([0.30; 60])
+        .collect();
+    let candidates = slots(&prices, 800.0);
+    let start = candidates[12].t_start;
+    let result = energy_battery::protection::full_charge::interval::plan(
+        NOW,
+        &settings(),
+        &candidates,
+        &[due_pack("ONE", 5.0, None, false)],
+        7_300.0,
+    );
+    assert_eq!(result.assignments.len(), 1);
+    assert!(
+        result.assignments[0]
+            .slots
+            .iter()
+            .all(|slot| slot.t_start < start)
+    );
+}
+
+#[test]
+fn a_replan_two_minutes_before_a_boundary_uses_only_the_remaining_seconds() {
+    let start = NOW - NOW.rem_euclid(SLOT_SECONDS);
+    let mut plan = plan(start, 0.0, 0.1);
+    // The first hour must be in the band, or the clipped two minutes are the only eligible
+    // slot and no pack can be completed from them.
+    for slot in plan.slots.iter_mut().take(16) {
+        slot.buy_all_in = 0.08;
+    }
+    plan.slots[0].load_kw = 0.0;
+    plan.slots[0].pv_kw = 0.0;
+    let late = start + SLOT_SECONDS - 120;
+    let candidates = candidates(&plan, late, 7_300.0);
+    assert_eq!(candidates[0].t_start, late);
+    assert_eq!(candidates[0].t_end - late, 120);
+    let result = energy_battery::protection::full_charge::interval::plan(
+        late,
+        &settings(),
+        &candidates,
+        &[due_pack("ONE", 5.0, None, false)],
+        7_300.0,
+    );
+    assert_eq!(result.assignments.len(), 1);
+    let first = result.assignments[0]
+        .slots
+        .iter()
+        .find(|slot| slot.slot_start == start)
+        .unwrap();
+    assert_eq!(first.duration_s, 120);
+    assert!(first.charge_w <= 800.0);
+}
+
+#[test]
+fn the_fold_replaces_a_conflicting_discharge_and_scales_a_clipped_slot() {
+    let mut plan = plan(NOW, 0.0, 1.92);
+    plan.slots[0].battery_kw = -0.8;
+    let charge = ChargeSlot {
+        slot_start: plan.slots[0].t_start,
+        t_start: plan.slots[0].t_start + 780,
+        t_end: plan.slots[0].t_start + SLOT_SECONDS,
+        duration_s: 120,
+        price_eur_per_kwh: 0.08,
+        charge_w: 800.0,
+    };
+    apply(
+        &mut plan,
+        &[FullChargeAssignment {
+            pack_id: "ONE".into(),
+            reason: "interval_due",
+            target_soc_pct: 100.0,
+            slots: vec![charge],
+            charge_end: NOW + 120,
+            dwell_until: NOW + 3_720,
+            expected_cost_eur: 0.003,
+        }],
+        1.92,
+        0.95,
+    );
+    assert!((plan.slots[0].battery_kw - 800.0 * 120.0 / SLOT_SECONDS as f64 / 1000.0).abs() < 1e-9);
+}
+
+#[test]
+fn a_stale_dwell_is_aborted_when_its_assignment_disappears() {
+    let ledger = fakes::ledger_with(&["ONE"]);
+    ledger.packs().unwrap().begin_dwell("ONE", NOW).unwrap();
+    let history = Arc::new(LedgerFullChargeHistory::new(Arc::clone(&ledger)));
+    let port = Arc::new(MaintenancePort::new(history.clone(), settings()));
+    let plan = plan(NOW, 0.0, 1.92);
+    let outcomes = progress(&port, &plan, &FleetView::new(vec![pack("ONE", 100.0)]), NOW);
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].reason, "assignment_lost");
+    assert_eq!(history.dwell_started_at("ONE"), None);
+    assert_eq!(history.last_full_at("ONE"), None);
 }
 
 fn assignment(pack_id: &str, charge_end: i64, dwell_until: i64) -> FullChargeAssignment {

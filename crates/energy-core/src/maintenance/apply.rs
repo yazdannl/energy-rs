@@ -2,7 +2,7 @@
 
 use energy_battery::protection::full_charge::FullChargeAssignment;
 
-use crate::plan::{Plan, SLOT_MINUTES, summary, timeline};
+use crate::plan::{Plan, SLOT_MINUTES, SLOT_SECONDS, summary, timeline};
 
 /// Add the maintenance power to its slots and rebuild the SoC path and money totals.
 ///
@@ -23,11 +23,20 @@ pub fn apply(
             let Some(slot) = plan
                 .slots
                 .iter_mut()
-                .find(|row| row.t_start == charge.t_start)
+                .find(|row| row.t_start == charge.slot_start)
             else {
                 continue;
             };
-            slot.battery_kw += charge.charge_w / 1000.0;
+            // Convert actual charging seconds into the slot's average power; a clipped first or
+            // last slot then contributes only the energy that can really be delivered.
+            let average_w = charge.charge_w * charge.duration_s as f64 / SLOT_SECONDS as f64;
+            if slot.battery_kw < 0.0 {
+                // A maintenance charge replaces a conflicting discharge; adding would cancel it
+                // twice and understate both the grid import and the energy put into the pack.
+                slot.battery_kw = average_w / 1000.0;
+            } else {
+                slot.battery_kw += average_w / 1000.0;
+            }
             if !slot.reason.is_empty() {
                 slot.reason.push_str("; ");
             }

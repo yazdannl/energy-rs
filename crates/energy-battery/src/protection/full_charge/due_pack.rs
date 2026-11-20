@@ -9,6 +9,8 @@ pub struct DuePack {
     pub capacity_kwh: f64,
     /// Measured SoC, percent.
     pub soc_pct: f64,
+    /// Highest SoC the device is allowed to reach, percent.
+    pub max_soc_pct: f64,
     /// AC charge efficiency, `(0, 1]`.
     pub eta_charge: f64,
     /// Per-pack AC charge ceiling, W.

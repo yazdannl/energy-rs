@@ -120,11 +120,12 @@ impl<S: PlanSupply> LivePlanSource<S> {
         };
         let budget = self.maintenance_budget(packs);
         let candidates = crate::maintenance::candidates(plan, now, budget);
-        let assignments = port.assignments(now, packs, &candidates, budget);
+        let selection = port.assignments(now, packs, &candidates, budget);
         let capacity: f64 = packs.iter().map(|pack| pack.spec.capacity_kwh).sum();
         let eta = super::live_support::weighted_charge_efficiency(packs);
-        crate::maintenance::apply(plan, &assignments, capacity, eta);
-        plan.maintenance = assignments;
+        crate::maintenance::apply(plan, &selection.assignments, capacity, eta);
+        plan.maintenance = selection.assignments;
+        plan.maintenance_unassigned = selection.unassigned;
     }
 
     /// The smaller of the grid-import budget and the fleet charge ceiling.

@@ -3,21 +3,31 @@
 //! A pack is due when its last *completed* balancing dwell is older than
 //! [`FullChargeSettings::interval_days`] (or a pack with no history at all). "Cheap" is concrete:
 //! lower half of the published horizon's prices *and* at or below its mean, by all-in EUR/kWh.
-//! From that half we take the cheapest quarter-hours that cover the AC energy missing to reach
-//! 100 %, limited by the grid
-//! import budget and the pack's own charge ceiling. With 120 slots the eligible half is 60 slots,
-//! i.e. 15 h at one pack's 800 W: enough for four AB2000 packs from 5 % (4 × 1.92 kWh AC ≈ 7.7 kWh;
-//! the 60 cheapest slots hold roughly 12 kWh at 800 W). If the eligible slots cannot cover a pack,
-//! it gets no assignment: the rule is "the first cheap chance", not "charge at any price".
+//!
+//! The rule is "the first cheap charging chance tonight", not "the globally cheapest slots".
+//! The completion deadline is exact: the next **07:00 Europe/Amsterdam**, the end of the overnight
+//! cheap window before the morning peak. Only slots ending at or before that deadline are
+//! considered, so tomorrow's lower price can never displace tonight's balancing charge. The
+//! cheap band is computed from that same overnight window (the lower of its median and mean
+//! all-in price): with a full multi-day publication tomorrow's slots are outside the window, and
+//! when only today's prices are published the band simply uses the published part of tonight.
+//! Within the band, slots are tried by earliest start (price breaks ties), and the first window
+//! that can deliver the whole charge before the deadline wins. A pack that cannot be completed is
+//! always reported as unassigned with its missing kWh and a cause, never as a partial success.
 
-use crate::protection::full_charge::assignment::FullChargeAssignment;
-use crate::protection::full_charge::candidate::ChargeCandidate;
-use crate::protection::full_charge::charge_slot::ChargeSlot;
-use crate::protection::full_charge::due_pack::DuePack;
-use crate::protection::full_charge::settings::FullChargeSettings;
+use chrono::{DateTime, LocalResult, TimeZone, Timelike};
+use chrono_tz::Europe::Amsterdam;
+
+use crate::protection::full_charge::unassigned_pack::{ceiling_refusal, shortfall, unassigned_all};
+use crate::protection::full_charge::{
+    ChargeCandidate, ChargeSlot, DuePack, FullChargeAssignment, FullChargeSettings, IntervalPlan,
+    TOLERANCE_PCT,
+};
 
 /// Tolerance for treating a pack's missing energy as zero.
 const ENERGY_EPS_KWH: f64 = 1e-6;
+/// The overnight window ends at 07:00 local, before the morning peak.
+const DEADLINE_LOCAL_HOUR: u32 = 7;
 
 /// Plan maintenance charges for the packs that are due at `now`.
 ///
@@ -30,50 +40,100 @@ pub fn plan(
     candidates: &[ChargeCandidate],
     packs: &[DuePack],
     budget_w: f64,
-) -> Vec<FullChargeAssignment> {
-    if !settings.enabled || candidates.is_empty() || !budget_w.is_finite() || budget_w <= 0.0 {
-        return Vec::new();
+) -> IntervalPlan {
+    let deadline = deadline_after(now);
+    let due = due_packs(now, settings, packs);
+    if !settings.enabled {
+        return unassigned_all(due, deadline, 1, "disabled");
     }
-    let Some(threshold) = price_threshold(candidates) else {
-        return Vec::new();
+    if due.is_empty() {
+        return IntervalPlan::default();
+    }
+    if !budget_w.is_finite() || budget_w <= 0.0 {
+        return unassigned_all(due, deadline, 1, "no_headroom");
+    }
+    let Some((eligible, mut remaining, priced_without_headroom)) =
+        cheap_slots(now, deadline, candidates, budget_w)
+    else {
+        return unassigned_all(due, deadline, 0, "horizon_too_short");
     };
-    let mut eligible: Vec<ChargeCandidate> = candidates
-        .iter()
-        .copied()
-        .filter(|slot| slot.price_eur_per_kwh <= threshold && slot.available_w > 0.0)
-        .collect();
-    eligible.sort_by(|a, b| {
-        a.price_eur_per_kwh
-            .total_cmp(&b.price_eur_per_kwh)
-            .then(a.t_start.cmp(&b.t_start))
-    });
-    if eligible.is_empty() {
-        return Vec::new();
+    let mut answer = IntervalPlan::default();
+    for pack in due {
+        if pack.max_soc_pct < 100.0 - TOLERANCE_PCT {
+            answer.unassigned.push(ceiling_refusal(pack, deadline));
+            continue;
+        }
+        if let Some(assignment) = assign(pack, &eligible, &mut remaining, settings, now) {
+            answer.assignments.push(assignment);
+        } else {
+            answer.unassigned.push(shortfall(
+                pack,
+                &eligible,
+                &remaining,
+                priced_without_headroom,
+                deadline,
+            ));
+        }
     }
-    let mut remaining: Vec<f64> = eligible
-        .iter()
-        .map(|slot| slot.available_w.min(budget_w).max(0.0))
-        .collect();
-    let mut ordered: Vec<&DuePack> = packs
+    answer
+}
+
+/// Due packs, oldest first so the pack that waited longest gets the first cheap window.
+fn due_packs<'a>(
+    now: i64,
+    settings: &FullChargeSettings,
+    packs: &'a [DuePack],
+) -> Vec<&'a DuePack> {
+    let mut due: Vec<&DuePack> = packs
         .iter()
         .filter(|pack| pack.due(now, settings.interval_days()))
         .collect();
-    ordered.sort_by_key(|pack| (pack.last_full_at.unwrap_or(i64::MIN), pack.pack_id.clone()));
-
-    let mut assignments = Vec::new();
-    for pack in ordered {
-        if let Some(assignment) = assign(pack, &eligible, &mut remaining, settings, now) {
-            assignments.push(assignment);
-        }
-    }
-    assignments
+    due.sort_by_key(|pack| (pack.last_full_at.unwrap_or(i64::MIN), pack.pack_id.clone()));
+    due
 }
 
-/// A cheap slot is in the lower half of the horizon *and* below its mean price.
+/// The eligible overnight slots and the grid headroom still free in each one.
+fn cheap_slots(
+    now: i64,
+    deadline: i64,
+    candidates: &[ChargeCandidate],
+    budget_w: f64,
+) -> Option<(Vec<ChargeCandidate>, Vec<f64>, bool)> {
+    let in_window: Vec<ChargeCandidate> = candidates
+        .iter()
+        .copied()
+        .filter(|slot| slot.t_start < deadline && slot.t_start >= now.saturating_sub(900))
+        .map(|slot| ChargeCandidate {
+            t_end: slot.t_end.min(deadline),
+            ..slot
+        })
+        .filter(|slot| slot.t_end > slot.t_start)
+        .collect();
+    let threshold = price_threshold(&in_window)?;
+    let priced_without_headroom = in_window
+        .iter()
+        .any(|slot| slot.price_eur_per_kwh <= threshold && slot.available_w <= 0.0);
+    let mut eligible: Vec<ChargeCandidate> = in_window
+        .into_iter()
+        .filter(|slot| slot.price_eur_per_kwh <= threshold && slot.available_w > 0.0)
+        .collect();
+    eligible.sort_by(|a, b| {
+        a.t_start
+            .cmp(&b.t_start)
+            .then(a.price_eur_per_kwh.total_cmp(&b.price_eur_per_kwh))
+    });
+    let remaining = eligible
+        .iter()
+        .map(|slot| slot.available_w.min(budget_w).max(0.0))
+        .collect();
+    Some((eligible, remaining, priced_without_headroom))
+}
+
+/// A cheap slot is in the lower half of the overnight window *and* below its mean price.
 ///
 /// The mean bound matters when a short dip sits next to a long expensive stretch: a plain median
 /// would classify the expensive stretch as cheap simply because it occupies more than half the
-/// horizon, and the planner would charge at the very price it was meant to avoid.
+/// window, and the planner would charge at the very price it was meant to avoid.
 fn price_threshold(candidates: &[ChargeCandidate]) -> Option<f64> {
     let mut prices: Vec<f64> = candidates
         .iter()
@@ -89,7 +149,7 @@ fn price_threshold(candidates: &[ChargeCandidate]) -> Option<f64> {
     Some(median.min(mean))
 }
 
-/// Fill one pack from the cheapest slots that still have import headroom.
+/// Fill one pack in the earliest eligible window that can complete before the deadline.
 fn assign(
     pack: &DuePack,
     eligible: &[ChargeCandidate],
@@ -97,62 +157,121 @@ fn assign(
     settings: &FullChargeSettings,
     now: i64,
 ) -> Option<FullChargeAssignment> {
-    let reason = if pack.forced {
-        "manual_request"
-    } else {
-        "interval_due"
-    };
-    let mut reserved = remaining.to_vec();
-    let mut needed = pack.ac_energy_needed_kwh();
-    let mut slots = Vec::new();
-    let mut cost = 0.0;
-    let mut charge_end = now;
+    let needed = pack.ac_energy_needed_kwh();
     if needed <= ENERGY_EPS_KWH {
-        charge_end = now;
-    } else if !pack.max_charge_w.is_finite() || pack.max_charge_w <= 0.0 {
+        return Some(assignment(pack, settings, Vec::new(), 0.0, now));
+    }
+    if !pack.max_charge_w.is_finite() || pack.max_charge_w <= 0.0 {
         return None;
-    } else {
-        for (index, candidate) in eligible.iter().enumerate() {
-            if needed <= ENERGY_EPS_KWH {
-                break;
+    }
+    for start in 0..eligible.len() {
+        if let Some((reserved, cost, charge_end)) = window(pack, eligible, remaining, start, needed)
+        {
+            // Charge by slot index, not by vector offset: windows skip exhausted slots, and a
+            // shifted index would hand the same headroom to the next pack twice.
+            for (index, slot) in &reserved {
+                remaining[*index] -= slot.charge_w;
             }
-            let hours = (candidate.t_end - candidate.t_start) as f64 / 3600.0;
-            if hours <= 0.0 {
-                continue;
-            }
-            let watts = reserved[index]
-                .min(pack.max_charge_w)
-                .min(needed * 1000.0 / hours)
-                .max(0.0);
-            if watts <= 0.0 {
-                continue;
-            }
-            let energy = watts * hours / 1000.0;
-            needed -= energy;
-            cost += watts * hours / 1000.0 * candidate.price_eur_per_kwh;
-            charge_end = charge_end.max(candidate.t_end);
-            slots.push(ChargeSlot {
-                t_start: candidate.t_start,
-                t_end: candidate.t_end,
-                price_eur_per_kwh: candidate.price_eur_per_kwh,
-                charge_w: watts,
-            });
-            reserved[index] -= watts;
+            let slots = reserved.into_iter().map(|(_, slot)| slot).collect();
+            return Some(assignment(pack, settings, slots, cost, charge_end));
         }
     }
-    if needed > ENERGY_EPS_KWH {
-        // No partial maintenance charge: the caller's capacities were never touched.
-        return None;
+    None
+}
+
+/// A window that can deliver a pack's charge: the reserved slots (by eligible index), their
+/// cost, and the instant the charge finishes.
+type ReservedWindow = (Vec<(usize, ChargeSlot)>, f64, i64);
+
+/// Try one contiguous window of eligible slots; never mutate the caller's capacities on failure.
+fn window(
+    pack: &DuePack,
+    eligible: &[ChargeCandidate],
+    remaining: &[f64],
+    start: usize,
+    needed: f64,
+) -> Option<ReservedWindow> {
+    let mut reserved = remaining.to_vec();
+    let mut needed = needed;
+    let mut slots = Vec::new();
+    let mut cost = 0.0;
+    for index in start..eligible.len() {
+        let candidate = eligible[index];
+        let seconds = candidate.t_end - candidate.t_start;
+        if seconds <= 0 {
+            continue;
+        }
+        let watts = reserved[index]
+            .min(pack.max_charge_w)
+            .min(needed * 3_600_000.0 / seconds as f64)
+            .max(0.0);
+        if watts <= 0.0 {
+            continue;
+        }
+        let energy = watts * seconds as f64 / 3_600_000.0;
+        needed -= energy;
+        cost += energy * candidate.price_eur_per_kwh;
+        slots.push((
+            index,
+            ChargeSlot {
+                slot_start: candidate.slot_start,
+                t_start: candidate.t_start,
+                t_end: candidate.t_end,
+                duration_s: seconds,
+                price_eur_per_kwh: candidate.price_eur_per_kwh,
+                charge_w: watts,
+            },
+        ));
+        reserved[index] -= watts;
+        if needed <= ENERGY_EPS_KWH {
+            let end = slots.last().map_or(0, |(_, slot)| slot.t_end);
+            return Some((slots, cost, end));
+        }
     }
-    remaining.copy_from_slice(&reserved);
-    slots.sort_by_key(|slot| slot.t_start);
-    Some(FullChargeAssignment {
+    None
+}
+
+/// The assignment's bookkeeping fields, shared by the zero-charge and charged paths.
+fn assignment(
+    pack: &DuePack,
+    settings: &FullChargeSettings,
+    slots: Vec<ChargeSlot>,
+    cost: f64,
+    charge_end: i64,
+) -> FullChargeAssignment {
+    FullChargeAssignment {
         pack_id: pack.pack_id.clone(),
-        reason,
+        reason: if pack.forced {
+            "manual_request"
+        } else {
+            "interval_due"
+        },
         target_soc_pct: 100.0,
         slots,
         charge_end,
         dwell_until: charge_end + i64::from(settings.dwell_minutes()) * 60,
         expected_cost_eur: cost,
-    })
+    }
+}
+
+/// Next 07:00 in `Europe/Amsterdam`, strictly after `now`; the overnight balancing deadline.
+fn deadline_after(now: i64) -> i64 {
+    let Some(local) = DateTime::from_timestamp(now, 0).map(|at| at.with_timezone(&Amsterdam))
+    else {
+        return now.saturating_add(86_400);
+    };
+    let mut date = local.date_naive();
+    if local.hour() >= DEADLINE_LOCAL_HOUR {
+        date = date.succ_opt().unwrap_or(date);
+    }
+    for _ in 0..3 {
+        let Some(naive) = date.and_hms_opt(DEADLINE_LOCAL_HOUR, 0, 0) else {
+            break;
+        };
+        match Amsterdam.from_local_datetime(&naive) {
+            LocalResult::Single(at) | LocalResult::Ambiguous(at, _) => return at.timestamp(),
+            LocalResult::None => date = date.succ_opt().unwrap_or(date),
+        }
+    }
+    now.saturating_add(86_400)
 }

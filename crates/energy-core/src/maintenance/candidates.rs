@@ -15,14 +15,18 @@ pub fn candidates(plan: &Plan, now: i64, budget_w: f64) -> Vec<ChargeCandidate> 
     }
     plan.slots
         .iter()
-        .filter(|slot| slot.t_start >= now - now.rem_euclid(SLOT_SECONDS))
+        .filter(|slot| slot.t_end() > now)
         .filter(|slot| slot.t_end() <= plan.horizon_end)
         .filter(|slot| slot.buy_all_in.is_finite())
         .map(|slot| {
             let house_w = (slot.load_kw - slot.pv_kw).max(0.0) * 1000.0;
             let planned_w = slot.battery_kw.max(0.0) * 1000.0;
+            // A replan late in a slot may only use the seconds that remain: crediting the full
+            // quarter-hour would plan energy no device can deliver before the slot boundary.
+            let t_start = slot.t_start.max(now);
             ChargeCandidate {
-                t_start: slot.t_start,
+                slot_start: slot.t_start,
+                t_start,
                 t_end: slot.t_end(),
                 price_eur_per_kwh: slot.buy_all_in,
                 available_w: (budget_w - house_w - planned_w).max(0.0),

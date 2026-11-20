@@ -75,6 +75,8 @@ struct MaintenanceDto {
     dwell_state: &'static str,
     dwell_started_at: Option<Timestamp>,
     target_soc_pct: Option<f64>,
+    unassigned_reason: Option<&'static str>,
+    missing_kwh: Option<f64>,
 }
 
 /// A manual override that is still in force.
@@ -212,6 +214,8 @@ fn maintenance_dto(
         dwell_state,
         dwell_started_at: Timestamp::lenient(pack.dwell_started_at),
         target_soc_pct: live_state.map(|entry| entry.target_soc_pct),
+        unassigned_reason: live_state.and_then(|entry| entry.unassigned_reason),
+        missing_kwh: live_state.and_then(|entry| entry.missing_kwh),
     }
 }
 
