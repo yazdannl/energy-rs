@@ -30,67 +30,93 @@ pub(super) struct Inner {
 impl Inner {
     /// Fold one report into the state: identity, ordering, wedge, restart, then echo confirmation.
     ///
-    /// Ordering is decided first: an unorderable report is inconclusive and leaves the accepted
-    /// report and counter untouched. A foreign serial is not evidence about this device at all. A
-    /// wedge clears the pending command and keeps the emergency-hold budget until a usable report
-    /// ends the episode.
+    /// The third result is the request id this read resolved, so a waiter only accepts a terminal
+    /// observation belonging to its own command. A bounded resync moves the accepted baseline but
+    /// never verifies or faults the outstanding command.
     pub(super) fn record(
         &mut self,
         report: &Report,
         sn: &str,
-    ) -> (Option<Command>, Option<ControlFault>) {
+    ) -> (Option<Command>, Option<ControlFault>, Option<u32>) {
         if report.sn != sn {
             let fault = ControlFault::ForeignReport {
                 expected: sn.to_owned(),
                 got: report.sn.clone(),
             };
             self.last_fault = Some(fault.clone());
-            return (None, Some(fault));
+            return (None, Some(fault), None);
         }
         let previous = self.last_report.clone();
-        let order = watch::classify(previous.as_ref(), report);
-        let sequence = match order {
-            watch::ReportOrder::Initial | watch::ReportOrder::Restart => {
-                u64::from(report.message_id)
-            }
-            watch::ReportOrder::Fresh => {
-                let delta = previous
-                    .as_ref()
-                    .map(|previous| echo::forward(previous.message_id, report.message_id))
-                    .unwrap_or_default();
-                self.last_sequence.saturating_add(u64::from(delta))
-            }
-            watch::ReportOrder::Duplicate | watch::ReportOrder::Ambiguous => {
-                return (None, None);
-            }
+        let mut order = watch::classify(previous.as_ref(), report);
+        if order == watch::ReportOrder::Resync
+            && self.pending.as_ref().is_some_and(|p| p.resync_credits == 0)
+        {
+            order = watch::ReportOrder::Ambiguous;
+        }
+        let Some(sequence) = self.accepted_sequence(previous.as_ref(), report, order) else {
+            return (None, None, None);
         };
+        if order == watch::ReportOrder::Resync {
+            self.resynchronise(report, sequence);
+            return (None, None, None);
+        }
         self.last_report = Some(report.clone());
         self.last_sequence = sequence;
         if let Some(fault) = watch::wedge(report) {
+            let resolved = self.take_pending();
             self.wedged = Some(report.properties.ac_mode);
-            self.pending = None;
             self.last_fault = Some(fault.clone());
-            return (None, Some(fault));
+            return (None, Some(fault), resolved);
         }
-        // A usable direction ends the wedge episode and refills the emergency-hold budget.
         self.wedged = None;
         self.emergency_holds = 0;
         if order == watch::ReportOrder::Restart {
-            // A reboot with forward clock evidence reverted the device to its flash state.
+            let resolved = self.take_pending();
             let fault = ControlFault::Restarted {
                 sn: report.sn.clone(),
-                before: previous
-                    .map(|previous| previous.message_id)
-                    .unwrap_or_default(),
+                before: previous.map(|p| p.message_id).unwrap_or_default(),
                 after: report.message_id,
             };
-            self.pending = None;
             self.last_fault = Some(fault.clone());
-            return (None, Some(fault));
+            return (None, Some(fault), resolved);
         }
-        let (confirmed, fault) = self.confirm(report, sequence);
+        let (confirmed, fault, resolved) = self.confirm(report, sequence);
         self.last_fault.clone_from(&fault);
-        (confirmed, fault)
+        (confirmed, fault, resolved)
+    }
+
+    fn accepted_sequence(
+        &mut self,
+        previous: Option<&Report>,
+        report: &Report,
+        order: watch::ReportOrder,
+    ) -> Option<u64> {
+        match order {
+            watch::ReportOrder::Initial | watch::ReportOrder::Restart => {
+                Some(u64::from(report.message_id))
+            }
+            watch::ReportOrder::Fresh | watch::ReportOrder::Resync => {
+                let delta = previous
+                    .map(|previous| echo::forward(previous.message_id, report.message_id))
+                    .unwrap_or_default();
+                Some(self.last_sequence.saturating_add(u64::from(delta)))
+            }
+            watch::ReportOrder::Duplicate | watch::ReportOrder::Ambiguous => None,
+        }
+    }
+
+    /// New baseline for later reports only; the burst itself never verifies a command.
+    fn resynchronise(&mut self, report: &Report, sequence: u64) {
+        if let Some(pending) = self.pending.as_mut() {
+            pending.resync_credits -= 1;
+            pending.last_seen_sequence = sequence;
+        }
+        self.last_report = Some(report.clone());
+        self.last_sequence = sequence;
+    }
+
+    fn take_pending(&mut self) -> Option<u32> {
+        self.pending.take().map(|pending| pending.request_id)
     }
 
     /// Verify the pending command against a report that is actually newer than the command.
@@ -102,31 +128,32 @@ impl Inner {
         &mut self,
         report: &Report,
         sequence: u64,
-    ) -> (Option<Command>, Option<ControlFault>) {
+    ) -> (Option<Command>, Option<ControlFault>, Option<u32>) {
         let Some(mut pending) = self.pending.clone() else {
-            return (None, None);
+            return (None, None, None);
         };
         if !echo::is_fresh(&pending, report, sequence) {
-            return (None, None);
+            return (None, None, None);
         }
         // Consume this counter step even when the limits are still old: a replay of the same
         // report is not a second observation and must never confirm.
         pending.last_seen_sequence = sequence;
         self.pending = Some(pending.clone());
+        let request_id = pending.request_id;
         match echo::verify(&pending.command, report) {
             Ok(()) => {
                 self.pending = None;
-                (Some(pending.command), None)
+                (Some(pending.command), None, Some(request_id))
             }
             Err(fault) if echo::is_echo_doubt(&fault) => {
                 // The command stays owned; only the decision is deferred to the bounded wait.
                 pending.inconclusive = Some(fault);
                 self.pending = Some(pending);
-                (None, None)
+                (None, None, None)
             }
             Err(fault) => {
                 self.pending = None;
-                (None, Some(fault))
+                (None, Some(fault), Some(request_id))
             }
         }
     }

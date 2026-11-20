@@ -84,9 +84,9 @@ impl Engine {
     }
 }
 
-/// Whether this tick wrote the pack (or already fail-safed it), i.e. its latch row is current.
+/// Whether this tick wrote the pack, fail-safed it, or handed ownership to a safety hold.
 fn commanded(pack_id: &str, outcome: &TickOutcome) -> bool {
     outcome
         .report(pack_id)
-        .is_some_and(|report| report.written || report.fail_safe)
+        .is_some_and(|report| report.written || report.fail_safe || report.superseded.is_some())
 }

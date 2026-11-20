@@ -19,14 +19,17 @@ use energy_battery::{
 };
 use serde_json::json;
 use support::broken_reads::BrokenReads;
+use support::held_reads::HeldReads;
 use support::{SN, ScriptedDevice, report_at};
 use tokio::time::Instant;
+
+const T0: i64 = 1_791_959_470;
 
 fn baseline() -> Report {
     report_at(
         SN,
         4211,
-        1_791_959_470,
+        T0,
         json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0}),
     )
 }
@@ -66,6 +69,61 @@ async fn a_read_error_after_a_hold_supersedes_the_waiter() {
     assert!(observation.fault.is_none());
     assert!(observation.confirmed.is_none());
     assert_eq!(controller.pending().unwrap().command, Command::Hold);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_replaced_waiter_ignores_a_confirmation_of_the_hold() {
+    let superseded = replaced_waiter_reads(
+        T0 + 1,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0}),
+    )
+    .await;
+    assert!(superseded.superseded);
+    assert!(superseded.confirmed.is_none() && superseded.fault.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_replaced_waiter_ignores_a_fault_of_the_hold() {
+    let superseded = replaced_waiter_reads(
+        T0 + 1,
+        json!({"acMode": 127, "inputLimit": 0, "outputLimit": 0}),
+    )
+    .await;
+    assert!(superseded.superseded);
+    assert!(superseded.confirmed.is_none() && superseded.fault.is_none());
+}
+
+async fn replaced_waiter_reads(
+    timestamp: i64,
+    properties: serde_json::Value,
+) -> energy_battery::Observation {
+    let reads = Arc::new(HeldReads::new(SN));
+    let controller = Arc::new(
+        DeviceController::new(Arc::clone(&reads), ControlLimits::unlimited())
+            .with_spacing(Duration::ZERO),
+    );
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 300 })
+        .await
+        .unwrap();
+    reads.hold_next(report_at(SN, 4212, timestamp, properties));
+    let waiter = tokio::spawn({
+        let controller = Arc::clone(&controller);
+        async move {
+            controller
+                .poll_confirming(Duration::from_secs(5), || {})
+                .await
+        }
+    });
+    reads.read_started().await;
+    controller.apply(Command::Hold).await.unwrap();
+    reads.release();
+    tokio::time::timeout(Duration::from_secs(1), waiter)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
 }
 
 #[tokio::test(start_paused = true)]

@@ -24,6 +24,7 @@ use tokio::time::Instant;
 
 pub mod broken_reads;
 pub mod gated;
+pub mod held_reads;
 pub mod latch_store;
 pub mod learning;
 pub mod learning_store;

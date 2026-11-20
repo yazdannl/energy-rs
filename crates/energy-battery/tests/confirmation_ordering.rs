@@ -143,6 +143,101 @@ async fn a_replay_after_several_wraps_is_inconclusive() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_thirty_three_step_burst_resynchronises_without_confirming() {
+    let (device, controller) = scripted(vec![report_at(
+        SN,
+        100,
+        T0,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0}),
+    )]);
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 300 })
+        .await
+        .unwrap();
+    device.push_report(echo(133, T0 + 1, 300)); // 33 steps: resync, not evidence
+    let burst = controller.poll().await.unwrap();
+    assert_eq!(burst.confirmed, None);
+    assert!(burst.fault.is_none() && controller.pending().is_some());
+
+    device.push_report(echo(134, T0 + 2, 300));
+    assert_eq!(
+        controller.poll().await.unwrap().confirmed,
+        Some(Command::Charge { watts: 300 })
+    );
+}
+
+#[tokio::test]
+async fn a_delayed_read_spans_a_burst_and_still_recovers() {
+    let fake = FakeDevice::spawn(
+        FakeState::new(SN).with_behaviour(FakeBehaviour::default().without_spacing_rule()),
+    )
+    .await
+    .unwrap();
+    let transport = HttpTransport::with_timeout(fake.endpoint(SN), Duration::from_secs(8)).unwrap();
+    let controller = DeviceController::new(transport, ControlLimits::unlimited());
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 300 })
+        .await
+        .unwrap();
+    fake.with_state(|state| {
+        state.message_id = 4211 + 33;
+        state.timestamp += 33;
+        state.behaviour.report_delay = Duration::from_millis(1_500);
+    })
+    .unwrap();
+    let observation = controller
+        .poll_confirming(Duration::from_secs(6), || {})
+        .await
+        .unwrap();
+    assert_eq!(observation.confirmed, Some(Command::Charge { watts: 300 }));
+    assert!(controller.pending().is_none());
+    fake.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_thirty_two_step_wrap_confirms_but_thirty_three_resynchronises() {
+    let (device, controller) = scripted(vec![report_at(
+        SN,
+        250,
+        T0,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0}),
+    )]);
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 500 })
+        .await
+        .unwrap();
+    device.push_report(echo(26, T0 + 1, 500)); // 250 -> 26 is exactly 32 steps
+    assert_eq!(
+        controller.poll().await.unwrap().confirmed,
+        Some(Command::Charge { watts: 500 })
+    );
+
+    let (device, controller) = scripted(vec![report_at(
+        SN,
+        250,
+        T0,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0}),
+    )]);
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 500 })
+        .await
+        .unwrap();
+    device.push_report(echo(27, T0 + 1, 500)); // 33 steps: resync only
+    let burst = controller.poll().await.unwrap();
+    assert_eq!(burst.confirmed, None);
+    assert!(burst.fault.is_none() && controller.pending().is_some());
+    device.push_report(echo(28, T0 + 2, 500));
+    assert_eq!(
+        controller.poll().await.unwrap().confirmed,
+        Some(Command::Charge { watts: 500 })
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_reset_with_an_equal_or_older_clock_is_inconclusive() {
     let (device, controller) = scripted(vec![baseline()]);
     controller.poll().await.unwrap();

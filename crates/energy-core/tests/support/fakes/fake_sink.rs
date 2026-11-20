@@ -24,6 +24,7 @@ type Observer = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct FakeSink {
     commands: Mutex<Vec<(String, Sent)>>,
     reject_writes: AtomicBool,
+    supersede_writes: AtomicBool,
     unverified_writes: AtomicBool,
     unverified_holds: AtomicBool,
     observer: Mutex<Option<Observer>>,
@@ -34,6 +35,7 @@ impl Default for FakeSink {
         Self {
             commands: Mutex::new(Vec::new()),
             reject_writes: AtomicBool::new(false),
+            supersede_writes: AtomicBool::new(false),
             unverified_writes: AtomicBool::new(false),
             unverified_holds: AtomicBool::new(false),
             observer: Mutex::new(None),
@@ -48,6 +50,10 @@ impl FakeSink {
 
     pub fn reject_writes(&self, reject: bool) {
         self.reject_writes.store(reject, Ordering::Relaxed);
+    }
+
+    pub fn supersede_writes(&self, supersede: bool) {
+        self.supersede_writes.store(supersede, Ordering::Relaxed);
     }
 
     pub fn unverified_writes(&self, unverified: bool) {
@@ -123,6 +129,9 @@ impl CommandSink for FakeSink {
                     pack_id,
                     reason: "scripted rejection".to_owned(),
                 });
+            }
+            if self.supersede_writes.load(Ordering::Relaxed) {
+                return Ok(WriteReceipt::superseded());
             }
             let verified = !self.unverified_writes.load(Ordering::Relaxed);
             Ok(WriteReceipt {

@@ -15,7 +15,8 @@ use crate::transport::DeviceIo;
 /// **not** cancel the read. Only the hard deadline in [`poll_confirming`](DeviceController::poll_confirming)
 /// or a transport error ends an in-flight read. A transport error resolves the command at once so no
 /// broken read can hold up a safety hold; if a hold already replaced the command, the result is marked
-/// superseded instead of becoming a fault.
+/// superseded instead of becoming a fault. A terminal read is only returned to the waiter whose
+/// request id it resolved ([`Observation::resolved_request`]).
 pub(super) async fn confirm_loop<T: DeviceIo>(
     controller: &DeviceController<T>,
     target: u32,
@@ -41,7 +42,15 @@ pub(super) async fn confirm_loop<T: DeviceIo>(
             }
         };
         on_progress();
-        // A confirming or faulting read clears `pending` itself, so check those first.
+        // A terminal read belongs to the request it resolved, never automatically to this waiter:
+        // a hold that replaced the target may confirm or fault while our read is still pinned.
+        if let Some(resolved) = observation.resolved_request {
+            return if resolved == target {
+                Ok(observation)
+            } else {
+                Ok(Observation::superseded(observation.report))
+            };
+        }
         if observation.confirmed.is_some() || observation.fault.is_some() {
             return Ok(observation);
         }
@@ -85,6 +94,7 @@ pub(super) fn expire<T: DeviceIo>(
             report,
             confirmed: None,
             fault: Some(fault),
+            resolved_request: Some(request_id),
             superseded: false,
         });
     }

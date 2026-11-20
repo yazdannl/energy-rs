@@ -34,11 +34,8 @@ pub const FAULT_BACKOFF: Duration = Duration::from_secs(10);
 /// firmware that ignores holds from turning the failsafe into a write loop.
 pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 
-/// Maximum time a neutralising hold waits for an unresolved command before preempting it.
-///
-/// This is the safety-response bound, deliberately separate from the (longer) echo window: a
-/// cell-voltage, shutdown or emergency hold may never be blocked by a late write. The preempted
-/// command is cancelled; its waiter resolves as superseded, not as a fault, so the hold is not repeated.
+/// Safety-response bound for preempting an unresolved command, separate from the longer echo window.
+/// The preempted waiter resolves as superseded, not as a fault, so the hold is not repeated.
 pub const SAFETY_HOLD_WINDOW: Duration = Duration::from_secs(2);
 
 /// The control plane for one device.
@@ -52,8 +49,7 @@ pub const SAFETY_HOLD_WINDOW: Duration = Duration::from_secs(2);
 /// * the clamped command is installed as [`Pending`] before the request leaves, and no second writer
 ///   may replace it while unresolved — except a hold, which preempts it after [`SAFETY_HOLD_WINDOW`];
 /// * a poll (fetch + fold) and a write (validate + install + transmit) never interleave;
-/// * only a report newer than the pre-write report can confirm or fault a command, and a report from
-///   another serial is ignored as a fault. Unwrapped counters make the comparison wrap-safe;
+/// * only a report newer than the pre-write report can confirm a command, with wrap-safe counters;
 /// * every pending command has a bounded resolution path: [`poll_confirming`](Self::poll_confirming)
 ///   expires it at a hard deadline, and a hold preempts it at the safety bound.
 pub struct DeviceController<T: DeviceIo> {
@@ -117,27 +113,29 @@ impl<T: DeviceIo> DeviceController<T> {
     ///
     /// A wedge or a restart surfaces a fault and pushes the pacer out by [`FAULT_BACKOFF`].
     pub async fn poll(&self) -> Result<Observation, BatteryError> {
-        let (report, confirmed, fault) = {
+        let (report, (confirmed, fault, resolved_request)) = {
             let _transaction = self.transaction.lock().await;
             let report = self.transport.report().await?;
-            let (confirmed, fault) = self.record(&report);
-            (report, confirmed, fault)
+            let observed = self.record(&report);
+            (report, observed)
         };
         if fault.is_some() {
             self.pacer.defer(FAULT_BACKOFF).await;
         }
-        Ok(Observation::observed(report, confirmed, fault))
+        Ok(Observation::observed(
+            report,
+            confirmed,
+            fault,
+            resolved_request,
+        ))
     }
 
     /// Poll until the command this call was created for is resolved or `window` expires.
     ///
-    /// Every read is bounded by the same hard deadline, `on_progress` is called while a read is
-    /// still in flight, and a report arriving after the deadline is never accepted. One read stays
-    /// pinned across heartbeat beats; only the deadline cancels it. Duplicates, stalled reads and
-    /// foreign reports cannot leave the command pending past the deadline; a read error resolves it
-    /// immediately so a safety hold is never blocked by a broken transport. The waiter is bound to
-    /// its [`request_id`](Pending::request_id): a command cancelled or replaced by a safety hold is
-    /// reported as superseded, not as a fault.
+    /// Every read is bounded by the same hard deadline; `on_progress` marks progress while a read
+    /// is in flight, and a report after the deadline is never accepted. One read stays pinned across
+    /// heartbeat beats. A read error resolves the command immediately; a waiter is bound to its
+    /// [`request_id`](Pending::request_id) and reports replacement as superseded, not as a fault.
     pub async fn poll_confirming(
         &self,
         window: Duration,
@@ -245,6 +243,7 @@ impl<T: DeviceIo> DeviceController<T> {
             baseline: (report.message_id, report.timestamp),
             baseline_sequence: inner.last_sequence,
             last_seen_sequence: inner.last_sequence,
+            resync_credits: 1,
             acked_after: None,
             acked_sequence: None,
             sent_at: Instant::now(),
@@ -291,9 +290,9 @@ impl<T: DeviceIo> DeviceController<T> {
     }
 
     /// Fold one report into the device state.
-    fn record(&self, report: &Report) -> (Option<Command>, Option<ControlFault>) {
+    fn record(&self, report: &Report) -> (Option<Command>, Option<ControlFault>, Option<u32>) {
         let Ok(mut inner) = self.inner.lock() else {
-            return (None, None);
+            return (None, None, None);
         };
         inner.record(report, self.transport.sn())
     }

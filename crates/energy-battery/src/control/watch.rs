@@ -1,8 +1,9 @@
 //! Wedge and report-ordering detection on the report stream.
 //!
 //! Ordering is classified *before* any accepted counter state changes. A report that cannot be
-//! ordered (a replay, a large jump, a reset with an equal or older device clock) is inconclusive: it
-//! neither confirms nor faults a command, and it does not move the accepted sequence forward.
+//! ordered (a replay, a reset with an equal or older device clock) is inconclusive. A forward jump
+//! inside [`RESTART_WINDOW`] is a bounded resynchronisation: it moves the accepted baseline, but it
+//! neither confirms nor faults the outstanding command.
 
 use crate::control::fault::ControlFault;
 use crate::report::Report;
@@ -13,9 +14,10 @@ const DISCHARGING: i32 = 2;
 pub(super) const RESTART_WINDOW: u32 = 128;
 /// Largest forward counter step accepted between two consecutive *observed* reports.
 ///
-/// The device emits ~1-4 reports/s; a 500 ms read should see 0-2 steps. 32 steps at that cadence is
-/// 64 reports/s, over an order of magnitude above the measured peak, while still short of
-/// [`RESTART_WINDOW`]. A larger jump is ambiguous, not proof that a write landed.
+/// The device emits ~1-4 reports/s, so a full [`ECHO_CONFIRM_WINDOW`](crate::control::echo::ECHO_CONFIRM_WINDOW)
+/// spans at most ~32 ordinary counter steps at the measured peak. A jump of 32 or fewer can therefore
+/// be one wait's worth of normal reports; 33 or more is a burst/delay requiring resynchronisation,
+/// never proof that a write landed.
 pub(super) const MAX_FORWARD_STEPS_PER_READ: u32 = 32;
 
 /// What one report says about its place in the stream.
@@ -24,8 +26,10 @@ pub(super) enum ReportOrder {
     Initial,
     Fresh,
     Duplicate,
-    /// Out of order, implausibly far ahead, or a reset with an older/equal clock.
+    /// Out of order, a reset with an older/equal clock, or a resync allowance already spent.
     Ambiguous,
+    /// A bounded forward burst: establish a new baseline without verifying the old command.
+    Resync,
     /// A counter reset with a *newer* clock: the reboot can be told from a wrap.
     Restart,
 }
@@ -50,7 +54,16 @@ pub(super) fn classify(previous: Option<&Report>, current: &Report) -> ReportOrd
             ReportOrder::Ambiguous
         };
     }
-    if delta > MAX_FORWARD_STEPS_PER_READ || clock_older {
+    if delta > MAX_FORWARD_STEPS_PER_READ {
+        // A genuine report burst or transport delay can skip counters; 33..128 is still forward.
+        // It is usable as a new baseline, never as evidence about the command already on the wire.
+        return if clock_older {
+            ReportOrder::Ambiguous
+        } else {
+            ReportOrder::Resync
+        };
+    }
+    if clock_older {
         return ReportOrder::Ambiguous;
     }
     // Equal timestamps are normal: the device reports several times per second with 1 s clock

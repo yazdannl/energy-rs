@@ -29,6 +29,8 @@ pub struct Pending {
     pub baseline_sequence: u64,
     /// Newest unwrapped counter already consumed for this command (baseline or a doubt report).
     pub last_seen_sequence: u64,
+    /// One resynchronisation credit for an implausible-but-forward report burst during this wait.
+    pub resync_credits: u8,
     /// `messageId` from the write ack, when it carried one and it was not the baseline's.
     pub acked_after: Option<u32>,
     /// Unwrapped counter of the ack, derived from the baseline when the ring distance was safe.

@@ -102,10 +102,10 @@ fn verify_hold(report: &Report) -> Result<(), ControlFault> {
 /// `sequence` is the 8-bit counter unwrapped by [`Inner`](crate::control::state::Inner), but only
 /// for reports that `watch::classify` accepts as *ordered*. Several
 /// 255→0 wraps are fine: each accepted step is small, so the sequence keeps rising. A duplicate,
-/// a backward/replayed counter, a jump over `MAX_FORWARD_STEPS_PER_READ` or a
-/// device clock that went back is inconclusive: it neither advances the accepted sequence nor
-/// confirms/faults the command. An equal clock is normal (the device reports several times per
-/// second with one-second resolution); the counter orders those reports. The wait is bounded.
+/// a backward/replayed counter or a device clock that went back is inconclusive. A forward jump
+/// over `MAX_FORWARD_STEPS_PER_READ` resynchronises the baseline once, but is never passed to this
+/// function: ambiguity cannot confirm the command. An equal clock is normal (the device reports
+/// several times per second with one-second resolution); the counter orders those reports.
 pub fn is_fresh(pending: &Pending, report: &Report, sequence: u64) -> bool {
     let (_, baseline_ts) = pending.baseline;
     if sequence <= pending.last_seen_sequence {

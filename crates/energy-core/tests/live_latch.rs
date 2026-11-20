@@ -68,6 +68,37 @@ async fn the_latch_survives_a_restart_and_clears_only_on_a_verified_hold() {
     assert!(LiveLatch::load(&ledger).expect("reload").is_empty());
 }
 
+/// A superseded write leaves the pre-write claim for the replacement hold and sends no second hold.
+#[tokio::test]
+async fn a_superseded_write_leaves_no_latch_and_sends_no_second_hold() {
+    let h = harness::build(
+        Authority::Auto,
+        vec![pack("SN-A", 50.0)],
+        plan(NOW, -0.8, 0.96),
+    );
+    h.engine.boot(NOW).await.expect("boot");
+    h.engine.tick_once(NOW).await.expect("prime the plan");
+    h.sink.supersede_writes(true);
+    let holds_before = h.sink.holds();
+    let outcome = h.engine.tick_once(NOW + 5).await.expect("tick");
+    let report = outcome.report("SN-A").expect("pack report");
+    assert!(!report.written && !report.fail_safe && report.superseded.is_some());
+    assert!(report.error.is_none());
+    assert_eq!(h.sink.writes(), vec![-800.0]);
+    assert_eq!(
+        h.sink.holds(),
+        holds_before,
+        "commands={:?}",
+        h.sink.commands()
+    );
+    // The pre-write claim stays put for the replacement hold; no extra latch row or churn.
+    let latch = h.engine.latch().expect("latch");
+    assert_eq!(latch.len(), 1);
+    assert_eq!(latch.get("SN-A").expect("claimed").power_w, -800.0);
+    assert_eq!(latch.get("SN-A").expect("claimed").since, NOW + 5);
+    assert_eq!(LiveLatch::load(&h.ledger).expect("reload").len(), 1);
+}
+
 /// Boot writes nothing on hardware it never drove, and the latch stays empty.
 #[tokio::test]
 async fn boot_never_touches_a_device_it_did_not_drive() {
