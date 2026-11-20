@@ -123,6 +123,25 @@ Done in `feat/assembly`. This is the phase that turns the crates into a running 
   selects on the API command queue between ticks and applies `SetMode`, `Override`, `FullCharge` and
   `Relearn` (`apply_command`), publishing the mode/override change immediately. 503 is now only the
   closed/overflowed queue, i.e. a genuinely absent or dead engine.
+- **Balancing maintenance.** The live plan source folds each due pack's 100 % charge into the
+  plan's earliest eligible quarter-hours before the next 07:00 Europe/Amsterdam (the end of the
+  overnight cheap window). Eligible means at or below the lower of the median and mean all-in price
+  **of that overnight window only**; when the feed publishes only today, that published part of
+  tonight is the band, and later prices are never invented. Slots are tried by earliest start with
+  price breaking ties, and the first window that can deliver the whole charge before the deadline
+  wins, so cheaper prices tomorrow cannot displace tonight's balance. A pack that cannot be
+  completed is reported as `unassigned_*` in the API with its reason and missing kWh and as a
+  `maintenance.unassigned` event; a pack whose `max_soc_pct` is below the 100 % target is refused
+  rather than charged to a false target. The current partial slot is clipped to its remaining
+  seconds.
+  Every charge stays inside the grid-import budget after margin and the
+  fleet/per-pack charge ceilings. `maintenance` journals the chosen slots and expected cost; the
+  tick starts a dwell only once the pack reports ≥99 % and writes `packs.last_full_charge_at` only
+  when the dwell actually completes. A restart or a lost assignment aborts any open dwell instead
+  of counting unobserved time. `full_charge_interval_days` (7, 1–60) and
+  `full_charge_dwell_minutes` (60, 15–240) drive the rule. The old `full_charge_weekday`/
+  `full_charge_time` fields remain accepted but are deprecated and no longer start a run; the
+  legacy `FullChargeScheduler` stays unit-tested as the documented compatibility path.
 - **Load profile.** `plan_source::learn_load_profile` reads 56 days of hourly `energy/dashboard`
   statistics (balance: import − export + PV + discharge − charge; a gap hour is skipped, never
   zero-filled), builds the 48-bucket profile with `energy-forecast` and persists the

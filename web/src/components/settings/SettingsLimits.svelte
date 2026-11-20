@@ -38,6 +38,18 @@
     },
     { key: 'replan_seconds', label: 'Replan interval', unit: 's', hint: 'solve cadence' },
     {
+      key: 'full_charge_interval_days',
+      label: 'Balance interval',
+      unit: 'days',
+      hint: 'per pack, counted from the completed 100 % dwell; 1–60',
+    },
+    {
+      key: 'full_charge_dwell_minutes',
+      label: 'Balance dwell',
+      unit: 'min',
+      hint: 'hold at 100 % after the cheap charge so the BMS can equalise; 15–240',
+    },
+    {
       key: 'stale_input_seconds',
       label: 'Stale input',
       unit: 's',
@@ -79,7 +91,7 @@
 </div>
 
 <div class="mt-3 border-t border-line pt-3">
-  <p class="text-[10px] uppercase tracking-[0.07em] text-faint">Weekly full charge</p>
+  <p class="text-[10px] uppercase tracking-[0.07em] text-faint">Weekly window (deprecated)</p>
   <div class="mt-1.5 grid gap-2.5 sm:grid-cols-2">
     <label class="block">
       <span class="text-[11px] text-muted">Weekday</span>
@@ -106,6 +118,7 @@
     </label>
   </div>
   <p class="mt-1 text-[9.5px] text-faint">
-    The weekly top-up to 100 % is a protection habit, not a price decision.
+    Kept for older installations only. The interval above now chooses the first cheap charging
+    chance; these two fields no longer start a run.
   </p>
 </div>

@@ -18,6 +18,14 @@ pub trait PlanSource: Send + Sync {
 
     /// Which upstream inputs changed since the last tick.
     fn changes(&self) -> Changes;
+
+    /// The price-aware full-charge rule, when this source owns one.
+    ///
+    /// The engine uses the same port for the dwell writer and for manual requests, so a plan and
+    /// its balance history can never come from two different policies.
+    fn maintenance(&self) -> Option<&crate::maintenance::MaintenancePort> {
+        None
+    }
 }
 
 /// The pack states a plan is built from: every pack with a known SoC.

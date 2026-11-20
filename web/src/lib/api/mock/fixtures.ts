@@ -270,6 +270,13 @@ export function makePacks(now: Date): PacksResponse {
         lastFreshAt: iso(new Date(now.getTime() - 4_000)),
       },
       override: null,
+      maintenance: {
+        lastFullCharge: iso(new Date(now.getTime() - 2 * 86_400_000)),
+        nextDue: iso(new Date(now.getTime() + 5 * 86_400_000)),
+        dwellState: 'idle',
+        dwellStartedAt: null,
+        targetSocPct: null,
+      },
     },
     {
       sn: 'AB2000-B2',
@@ -315,6 +322,13 @@ export function makePacks(now: Date): PacksResponse {
         action: 'hold',
         powerW: null,
         expiresAt: iso(new Date(now.getTime() + 11 * 60_000)),
+      },
+      maintenance: {
+        lastFullCharge: null,
+        nextDue: null,
+        dwellState: 'due',
+        dwellStartedAt: null,
+        targetSocPct: null,
       },
     },
   ];
@@ -479,6 +493,8 @@ export function makeSettings(now: Date): SettingsResponse {
       stale_input_seconds: 180,
       full_charge_weekday: 'sunday',
       full_charge_time: '02:30',
+      full_charge_interval_days: 7,
+      full_charge_dwell_minutes: 60,
       control_mode: 'dry_run',
     },
     schema: [
@@ -511,6 +527,8 @@ export function makeSettings(now: Date): SettingsResponse {
         options: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
       },
       { key: 'full_charge_time', kind: 'text', default: '02:00' },
+      { key: 'full_charge_interval_days', kind: 'number', default: 7, min: 1, max: 60 },
+      { key: 'full_charge_dwell_minutes', kind: 'number', default: 60, min: 15, max: 240 },
     ],
   };
 }

@@ -21,6 +21,7 @@
 pub mod command;
 pub mod fault_snapshot;
 pub mod forecast_snapshot;
+pub mod maintenance_snapshot;
 pub mod meter_snapshot;
 pub mod override_command;
 pub mod pack_snapshot;
@@ -35,6 +36,7 @@ pub mod watch_publisher;
 pub use command::EngineCommand;
 pub use fault_snapshot::FaultSnapshot;
 pub use forecast_snapshot::ForecastSnapshot;
+pub use maintenance_snapshot::MaintenanceSnapshot;
 pub use meter_snapshot::MeterSnapshot;
 pub use override_command::OverrideCommand;
 pub use pack_snapshot::PackSnapshot;

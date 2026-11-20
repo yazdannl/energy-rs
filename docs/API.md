@@ -126,11 +126,22 @@ override.
   "latch": { "blocked": true, "forceCharge": false, "forceChargeW": 300, "since": "...",
              "reason": "cell_below_resume", "reasonAt": "...", "voltageV": 3.01,
              "lastFreshAt": "..." },
-  "override": { "action": "charge", "powerW": 800, "expiresAt": "..." }
+  "override": { "action": "charge", "powerW": 800, "expiresAt": "..." },
+  "maintenance": { "lastFullCharge": "...", "nextDue": "...", "dwellState": "idle",
+                    "dwellStartedAt": null, "targetSocPct": null,
+                    "unassignedReason": null, "missingKwh": null }
 }] }
 ```
 
 `learned`, `latch` and `override` are `null` when the engine has no value for them.
+`maintenance.lastFullCharge` stamps the end of a completed 100 % balancing dwell, never the moment
+a pack passed 99 %; a pack with no stamp is due now. `nextDue` adds `full_charge_interval_days`.
+`dwellState` is `due`, `charging`, `dwell`, `idle`, or `unassigned_*` (the pack is due but no
+eligible cheap window could cover it). The exact `unassignedReason` is `horizon_too_short`,
+`no_cheap_slots`, `not_enough_eligible_slots`, `no_headroom`, `insufficient_capacity` or
+`soc_ceiling_below_target`; `missingKwh` is the AC energy still needed. Every such pack is also
+journalled as `maintenance.unassigned` with the same reason, required/available/missing kWh and the
+07:00 Europe/Amsterdam deadline.
 `capacityDecision` is the learner's provenance slug (`capacity_learned*`); `latch.reason` is the
 protection slug (`cell_*`).
 
@@ -281,7 +292,8 @@ credentials and other private options never appear.
   import limit; 0 holds exactly at the limit and the guard is off when the limit is 0),
   `grid_export_limit_w`, `reserve_soc_pct`, `max_soc_pct`,
   `battery_power_limit_w`, `price_provider`, `price_entity`, `replan_seconds`,
-  `stale_input_seconds`, `full_charge_weekday`, `full_charge_time`, and the PV array
+  `stale_input_seconds`, `full_charge_interval_days` (7, range 1–60),
+  `full_charge_dwell_minutes` (60, range 15–240), and the PV array
   (`pv_planes`, `pv_mode`, `pv_ac_kwp`, `pv_scale`, and the legacy `pv_dc_kwp`, `pv_tilt_deg`,
   `pv_azimuth_deg` — see [SOLAR.md](SOLAR.md)).
 * `at` defaults to now and may not lie more than 60 s in the future (`422`).
@@ -347,7 +359,12 @@ Unknown pack `404`, bad action/power/TTL `422`, no engine `503`.
 ```
 
 `protection` accepts only `full_charge`, `learning` only `relearn`; `pack` is optional (fleet-wide
-when absent). `202` returns `{ "accepted": true, "action": ..., "pack": ... }`.
+when absent). `202` returns `{ "accepted": true, "action": ..., "pack": ... }`. A full charge
+forces the interval rule early for the requested packs: the next accepted plan places the 100 %
+charge in the earliest eligible quarter-hours before 07:00 Europe/Amsterdam and the dwell stamps the per-pack history.
+A refused or failed replan keeps the request pending and never writes balance history.
+The old `full_charge_weekday`/`full_charge_time` settings remain writable but are deprecated: they
+no longer start a run.
 Unknown pack `404`, other actions `422`, no engine `503`.
 
 ## SSE stream

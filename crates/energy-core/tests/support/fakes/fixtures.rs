@@ -78,6 +78,8 @@ pub fn plan(now: i64, power_kw: f64, soc_kwh: f64) -> Plan {
         summary: summary(),
         degraded: None,
         slots,
+        maintenance: Vec::new(),
+        maintenance_unassigned: Vec::new(),
     }
 }
 

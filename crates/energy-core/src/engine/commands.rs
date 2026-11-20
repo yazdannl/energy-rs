@@ -19,7 +19,7 @@ impl Engine {
             EngineCommand::Override(request) => {
                 self.override_pack(request.pack, request.action, i64::from(request.ttl_s), now)?;
             }
-            EngineCommand::FullCharge { pack } => self.request_full_charge(pack, now)?,
+            EngineCommand::FullCharge { pack } => self.request_full_charge(pack, now).await?,
             EngineCommand::Relearn { pack } => self.relearn(pack.as_deref(), now)?,
             EngineCommand::Replan => self.replan_now(now).await?,
         }
@@ -52,22 +52,22 @@ impl Engine {
         Ok(())
     }
 
-    /// Start the maintenance run now, for one pack or the whole fleet.
-    fn request_full_charge(&self, pack: Option<String>, now: i64) -> Result<(), EngineError> {
-        let mut state = self.lock()?;
-        state.maintenance_pack = pack;
-        state.maintenance.request_manual();
-        let target = state
-            .maintenance_pack
-            .clone()
-            .unwrap_or_else(|| "the whole fleet".to_owned());
-        drop(state);
+    /// Force the interval rule early for one pack or the whole fleet.
+    ///
+    /// The request only sets a pending flag and asks for a fresh plan. A refused solve leaves the
+    /// flag in place for the next accepted plan and never touches the pack's balance history.
+    async fn request_full_charge(&self, pack: Option<String>, now: i64) -> Result<(), EngineError> {
+        if let Some(port) = self.source.maintenance() {
+            port.force(pack.as_deref());
+        }
+        let target = pack.clone().unwrap_or_else(|| "the whole fleet".to_owned());
         self.event(
             now,
             EventLevel::Info,
             "maintenance.requested",
             format!("full charge requested for {target}"),
         )?;
+        let _ = self.replan_now(now).await;
         Ok(())
     }
 

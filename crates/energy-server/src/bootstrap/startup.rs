@@ -142,12 +142,22 @@ async fn wire_engine(
         Arc::clone(&prices.repository),
         prices.settlement(),
     )
-    .with_load_profiles(Arc::clone(profiles))
+    .with_load_profiles(Arc::clone(&profiles))
     .with_pv(Arc::clone(&pv));
-    let source = engine::plan_source(
-        supply,
-        engine::source_config(&config, policy.get()),
-        Arc::clone(&policy),
+    let grid_budget = if config.max_grid_import_w > 0.0 {
+        (config.max_grid_import_w - config.grid_import_margin_w.max(0.0)).max(0.0)
+    } else {
+        0.0
+    };
+    let port = engine::maintenance_port(ledger, &config);
+    let source: Arc<dyn energy_core::engine::PlanSource> = Arc::new(
+        engine::plan_source(
+            supply,
+            engine::source_config(&config, policy.get()),
+            Arc::clone(&policy),
+        )
+        .with_maintenance(port)
+        .with_maintenance_budget(grid_budget, config.fleet_max_charge_w),
     );
     Ok(engine::engine(
         Arc::clone(ledger),

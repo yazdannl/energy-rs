@@ -26,6 +26,7 @@ mod initial_state;
 mod latched_write;
 mod live_latch;
 mod live_write_journal;
+mod maintenance_journal;
 mod persist;
 mod plan_source;
 mod policy;

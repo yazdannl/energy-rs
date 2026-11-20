@@ -63,6 +63,8 @@ pub(crate) fn build(input: &PlanInput, check: Option<&Differential>) -> Result<P
         summary,
         degraded: input.forecast_note.clone(),
         slots: rows,
+        maintenance: Vec::new(),
+        maintenance_unassigned: Vec::new(),
     })
 }
 

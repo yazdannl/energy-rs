@@ -14,7 +14,8 @@ use crate::measurement::Measurement;
 use crate::pack::{Pack, PackState};
 
 const COLUMNS: &str = "id, sn, name, alias, label_capacity_kwh, reported_capacity_kwh, max_charge_w, max_discharge_w, \
-     first_seen, last_seen, learned_capacity_kwh, learned_round_trip, learned_confidence, learned_at";
+     first_seen, last_seen, learned_capacity_kwh, learned_round_trip, learned_confidence, learned_at, \
+     last_full_charge_at, dwell_started_at";
 
 /// Repository for the `packs` table, holding the ledger connection guard for the duration of a
 /// scope.
@@ -90,6 +91,34 @@ impl<'a> Packs<'a> {
             .query_row(&sql, params![sn, alias], Pack::from_row)
             .optional()?;
         Ok(pack)
+    }
+
+    /// Record that a pack entered its balancing dwell. A repeated start never moves the stamp.
+    pub fn begin_dwell(&self, sn: &str, at: i64) -> Result<(), LedgerError> {
+        self.conn.execute(
+            "UPDATE packs SET dwell_started_at = ?2
+             WHERE sn = ?1 AND dwell_started_at IS NULL",
+            params![sn, at],
+        )?;
+        Ok(())
+    }
+
+    /// Stamp a completed dwell: this is the only event that starts the seven-day clock.
+    pub fn finish_dwell(&self, sn: &str, at: i64) -> Result<(), LedgerError> {
+        self.conn.execute(
+            "UPDATE packs SET last_full_charge_at = ?2, dwell_started_at = NULL WHERE sn = ?1",
+            params![sn, at],
+        )?;
+        Ok(())
+    }
+
+    /// Abandon a dwell whose pack slipped off the target or whose run timed out.
+    pub fn abort_dwell(&self, sn: &str) -> Result<(), LedgerError> {
+        self.conn.execute(
+            "UPDATE packs SET dwell_started_at = NULL WHERE sn = ?1",
+            params![sn],
+        )?;
+        Ok(())
     }
 
     pub fn get(&self, id: i64) -> Result<Option<Pack>, LedgerError> {

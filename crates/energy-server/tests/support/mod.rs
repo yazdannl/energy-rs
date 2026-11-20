@@ -351,6 +351,7 @@ fn pack_snapshot(sn: &str, base: i64) -> PackSnapshot {
         profile: Some(learning_profile(sn)),
         latch: Some(cell_latch(sn)),
         override_state: None,
+        maintenance: None,
     }
 }
 

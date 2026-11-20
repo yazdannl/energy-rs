@@ -7,8 +7,8 @@ use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
 use crate::dispatch::pack_context::{cell_safety, measured, reason_for, requested_watts};
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    CommandSink, FaultGuard, PackReading, PackReport, Planned, TickFrame, TickInput, TickOutcome,
-    allocate, decide, fleet_clamp, slot_power,
+    CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading, PackReport, Planned,
+    TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp, slot_power,
 };
 use crate::safety::Reason;
 use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
@@ -162,6 +162,10 @@ impl Dispatcher {
         // A stale plan normally holds every pack, but a protective guard discharge still goes out:
         // safety must not depend on an economic plan being fresh.
         let requested = requested_watts(&context, overridden, allocated, guarded);
+        let maintenance_full = overridden.is_some_and(|entry| {
+            entry.source == OverrideSource::Maintenance
+                && matches!(entry.action, OverrideAction::Charge { .. })
+        });
         let request = CommandRequest::new(
             pack_id,
             requested,
@@ -169,6 +173,11 @@ impl Dispatcher {
             context.now,
             measured(&context, reading),
         );
+        let request = if maintenance_full {
+            request.as_maintenance_full_charge()
+        } else {
+            request
+        };
         let decision = decide(&context, &request, reading, latch, false);
         let intended = decide(&context, &request, reading, latch, true);
         let backoff_cause = self.faults.blocker(pack_id, context.now);

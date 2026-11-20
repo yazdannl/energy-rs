@@ -64,6 +64,9 @@ async fn packs_join_state_learning_latch_and_limits() {
     assert_eq!(first["latch"]["reason"], "cell_below_resume");
     assert_eq!(first["limits"]["maxDischargeW"], 800.0);
     assert!(first["override"].is_null());
+    assert!(first["maintenance"]["lastFullCharge"].is_null());
+    assert!(first["maintenance"]["nextDue"].is_null());
+    assert_eq!(first["maintenance"]["dwellState"], "due");
 
     let second = &packs[1];
     assert_eq!(second["sn"], "AB2000-TWO");

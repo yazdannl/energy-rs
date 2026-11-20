@@ -95,6 +95,14 @@ export interface PackLatch {
   lastFreshAt: Instant | null;
 }
 
+export interface PackMaintenance {
+  lastFullCharge: Instant | null;
+  nextDue: Instant | null;
+  dwellState: 'due' | 'charging' | 'dwell' | 'idle';
+  dwellStartedAt: Instant | null;
+  targetSocPct: number | null;
+}
+
 export interface PackOverride {
   action: OverrideAction;
   powerW: number | null;
@@ -114,6 +122,7 @@ export interface Pack {
   learned: PackLearned | null;
   latch: PackLatch | null;
   override: PackOverride | null;
+  maintenance: PackMaintenance;
 }
 
 export interface PacksResponse {

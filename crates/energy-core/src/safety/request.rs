@@ -21,6 +21,8 @@ pub struct CommandRequest {
     pub now: i64,
     /// Whether this is the exit/boot hold.
     pub exit_hold: bool,
+    /// Maintenance may use the last 5 % the normal SoC ceiling reserves for balancing.
+    pub maintenance_full_charge: bool,
     /// Measurements for this tick.
     pub measured: Measured,
 }
@@ -40,6 +42,7 @@ impl CommandRequest {
             plan_slot,
             now,
             exit_hold: false,
+            maintenance_full_charge: false,
             measured,
         }
     }
@@ -48,6 +51,13 @@ impl CommandRequest {
     #[must_use]
     pub fn as_exit_hold(mut self) -> Self {
         self.exit_hold = true;
+        self
+    }
+
+    /// Permit the 100 % balancing target; every other bound remains in force.
+    #[must_use]
+    pub fn as_maintenance_full_charge(mut self) -> Self {
+        self.maintenance_full_charge = true;
         self
     }
 }

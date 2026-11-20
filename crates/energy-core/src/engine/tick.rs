@@ -134,6 +134,8 @@ impl Engine {
                         None
                     }
                 };
+                self.journal_maintenance(now, &plan.maintenance, &plan.maintenance_unassigned)
+                    .ok()?;
                 if let Ok(mut state) = self.lock() {
                     state.plan = Some(plan.clone());
                     state.plan_id = plan_id;
@@ -153,12 +155,9 @@ impl Engine {
     fn prepare(&self, now: i64, fleet: &FleetView, hold: bool) -> Result<Prepared, EngineError> {
         let mut state = self.lock()?;
         state.overrides.retain(|entry| entry.active(now));
-        let mut entries = crate::wiring::maintenance::overrides(
-            state.maintenance_action,
-            fleet,
-            now,
-            state.maintenance_pack.as_deref(),
-        );
+        let mut entries = state.plan.as_ref().map_or_else(Vec::new, |plan| {
+            crate::maintenance::overrides(plan, fleet, now)
+        });
         entries.extend(state.overrides.iter().cloned());
         let stale = hold || state.plan.is_none();
         let mode = self.gate.mode();
@@ -214,19 +213,13 @@ impl Engine {
                 format!("{pack_id}: cell-voltage latch changed"),
             )?;
         }
-        let action = crate::wiring::maintenance::consult(&mut state.maintenance, view, now);
-        if action != state.maintenance_action && action.is_active() {
-            self.event(
-                now,
-                energy_ledger::EventLevel::Info,
-                "maintenance.action",
-                format!("full-charge maintenance: {action:?}"),
-            )?;
-        }
-        state.maintenance_action = action;
-        if !action.is_active() {
-            // A manual one-pack run is over; the next scheduled run covers the fleet again.
-            state.maintenance_pack = None;
+        let outcomes = match (&state.plan, self.source.maintenance()) {
+            (Some(plan), Some(port)) => crate::maintenance::progress(port, plan, view, now),
+            _ => Vec::new(),
+        };
+        drop(state);
+        for outcome in outcomes {
+            self.journal_dwell(now, &outcome)?;
         }
         Ok(())
     }

@@ -7,7 +7,9 @@
 
 use chrono::{NaiveTime, Weekday};
 use energy_battery::protection::CellConfig;
-use energy_battery::protection::full_charge::FullChargeSettings;
+use energy_battery::protection::full_charge::{
+    FullChargeSettings, MAX_DWELL_MINUTES, MAX_INTERVAL_DAYS, MIN_DWELL_MINUTES, MIN_INTERVAL_DAYS,
+};
 use energy_core::engine::EngineConfig;
 use energy_core::plan::{ExportPolicy, Policy};
 use energy_ledger::Ledger;
@@ -116,7 +118,11 @@ fn plane(value: &serde_json::Value) -> Option<energy_core::plan_source::PvPlane>
     plane.usable().then_some(plane)
 }
 
-/// The weekly maintenance window from `full_charge_weekday`/`full_charge_time`.
+/// The maintenance policy from the ledger.
+///
+/// `full_charge_weekday`/`full_charge_time` remain stored and accepted but no longer start a run:
+/// the interval rule takes the first cheap charging chance instead. The legacy scheduler module is
+/// kept for the documented compatibility contract and its own unit tests.
 #[allow(clippy::cast_sign_loss)] // clamped to a positive ceiling above the cast
 fn full_charge(ledger: &Ledger, limit_w: f64) -> FullChargeSettings {
     let ceiling = limit_w.clamp(800.0, 4_000.0);
@@ -127,7 +133,20 @@ fn full_charge(ledger: &Ledger, limit_w: f64) -> FullChargeSettings {
     if let Some(at) = text(ledger, "full_charge_time").and_then(|value| time(&value)) {
         settings.at = at;
     }
+    settings.interval_days = bounded(ledger, "full_charge_interval_days", settings.interval_days)
+        .clamp(f64::from(MIN_INTERVAL_DAYS), f64::from(MAX_INTERVAL_DAYS))
+        as u32;
+    settings.dwell_minutes = bounded(ledger, "full_charge_dwell_minutes", settings.dwell_minutes)
+        .clamp(f64::from(MIN_DWELL_MINUTES), f64::from(MAX_DWELL_MINUTES))
+        as u32;
     settings
+}
+
+/// A positive whole setting, with the shipped default when it is missing or unreadable.
+fn bounded(ledger: &Ledger, key: &str, fallback: u32) -> f64 {
+    number(ledger, key, f64::from(fallback))
+        .round()
+        .max(f64::from(u32::MIN))
 }
 
 fn weekday(value: &str) -> Option<Weekday> {

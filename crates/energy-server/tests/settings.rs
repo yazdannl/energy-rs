@@ -30,7 +30,7 @@ async fn settings_render_typed_values_and_the_schema() {
     assert_eq!(body["values"]["grid_import_margin_w"], 200.0);
     assert_eq!(body["values"]["full_charge_weekday"], "sun");
     let schema = body["schema"].as_array().unwrap();
-    assert_eq!(schema.len(), 32);
+    assert_eq!(schema.len(), 34);
     assert_eq!(schema[0]["key"], "grid_import_limit_w");
     assert_eq!(schema[1]["key"], "grid_import_margin_w");
     assert_eq!(schema[1]["default"], 200.0);
@@ -64,7 +64,7 @@ async fn patching_a_setting_writes_the_ledger_and_returns_the_typed_value() {
     assert_eq!(status, 200);
     assert_eq!(body["values"]["grid_import_limit_w"], 2_000.0);
     // The response carries the whole state so the form can replace its draft with it.
-    assert_eq!(body["values"].as_object().unwrap().len(), 32);
+    assert_eq!(body["values"].as_object().unwrap().len(), 34);
     assert_eq!(body["values"]["reserve_soc_pct"], 20.0);
     assert_eq!(
         fixture
@@ -99,6 +99,46 @@ async fn the_import_margin_is_bounded() {
     .await;
     assert_eq!(status, 200);
     assert_eq!(body["values"]["grid_import_margin_w"], 300.0);
+}
+
+#[tokio::test]
+async fn the_balancing_interval_and_dwell_are_writable_and_bounded() {
+    let fixture = Fixture::new();
+    let router = fixture.router();
+    let (status, body) = get(&router, "/api/v1/settings").await;
+    assert_eq!(status, 200);
+    assert_eq!(body["values"]["full_charge_interval_days"], 7.0);
+    assert_eq!(body["values"]["full_charge_dwell_minutes"], 60.0);
+    let schema = body["schema"].as_array().unwrap();
+    let interval = schema
+        .iter()
+        .find(|entry| entry["key"] == "full_charge_interval_days")
+        .unwrap();
+    assert_eq!(interval["min"], 1.0);
+    assert_eq!(interval["max"], 60.0);
+    let dwell = schema
+        .iter()
+        .find(|entry| entry["key"] == "full_charge_dwell_minutes")
+        .unwrap();
+    assert_eq!(dwell["min"], 15.0);
+    assert_eq!(dwell["max"], 240.0);
+
+    let (status, _) = patch(
+        &router,
+        "/api/v1/settings",
+        json!({ "values": { "full_charge_interval_days": 61 } }),
+    )
+    .await;
+    assert_eq!(status, 422);
+    let (status, body) = patch(
+        &router,
+        "/api/v1/settings",
+        json!({ "values": { "full_charge_interval_days": 10, "full_charge_dwell_minutes": 90 } }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["values"]["full_charge_interval_days"], 10.0);
+    assert_eq!(body["values"]["full_charge_dwell_minutes"], 90.0);
 }
 
 #[tokio::test]
