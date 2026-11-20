@@ -1,5 +1,9 @@
 //! The per-device state machine: identity, wedge, restart and echo confirmation.
 
+use std::time::Duration;
+
+use tokio::time::Instant;
+
 use crate::control::command::Command;
 use crate::control::echo;
 use crate::control::fault::ControlFault;
@@ -24,11 +28,12 @@ pub(super) struct Inner {
 }
 
 impl Inner {
-    /// Fold one report into the state: identity, wedge, restart, then echo confirmation.
+    /// Fold one report into the state: identity, ordering, wedge, restart, then echo confirmation.
     ///
-    /// A report from another serial is not evidence about this device at all: it becomes a fault and
-    /// changes nothing else. A wedge clears the pending command (nothing can be confirmed while the
-    /// AC path is out) and keeps the emergency-hold budget until a usable report ends the episode.
+    /// Ordering is decided first: an unorderable report is inconclusive and leaves the accepted
+    /// report and counter untouched. A foreign serial is not evidence about this device at all. A
+    /// wedge clears the pending command and keeps the emergency-hold budget until a usable report
+    /// ends the episode.
     pub(super) fn record(
         &mut self,
         report: &Report,
@@ -42,16 +47,24 @@ impl Inner {
             self.last_fault = Some(fault.clone());
             return (None, Some(fault));
         }
-        let previous = self.last_report.replace(report.clone());
-        // Unwrap the 8-bit counter once per observed report. Several complete wraps during a
-        // confirmation are then just a larger sequence, not a restart or an old-report replay.
-        let sequence = match previous.as_ref() {
-            Some(previous) => self.last_sequence.saturating_add(u64::from(echo::forward(
-                previous.message_id,
-                report.message_id,
-            ))),
-            None => u64::from(report.message_id),
+        let previous = self.last_report.clone();
+        let order = watch::classify(previous.as_ref(), report);
+        let sequence = match order {
+            watch::ReportOrder::Initial | watch::ReportOrder::Restart => {
+                u64::from(report.message_id)
+            }
+            watch::ReportOrder::Fresh => {
+                let delta = previous
+                    .as_ref()
+                    .map(|previous| echo::forward(previous.message_id, report.message_id))
+                    .unwrap_or_default();
+                self.last_sequence.saturating_add(u64::from(delta))
+            }
+            watch::ReportOrder::Duplicate | watch::ReportOrder::Ambiguous => {
+                return (None, None);
+            }
         };
+        self.last_report = Some(report.clone());
         self.last_sequence = sequence;
         if let Some(fault) = watch::wedge(report) {
             self.wedged = Some(report.properties.ac_mode);
@@ -62,11 +75,15 @@ impl Inner {
         // A usable direction ends the wedge episode and refills the emergency-hold budget.
         self.wedged = None;
         self.emergency_holds = 0;
-        if let Some(fault) = previous
-            .as_ref()
-            .and_then(|previous| watch::restart(previous, report))
-        {
-            // A reboot reverted the device to its flash state; our in-flight write is gone.
+        if order == watch::ReportOrder::Restart {
+            // A reboot with forward clock evidence reverted the device to its flash state.
+            let fault = ControlFault::Restarted {
+                sn: report.sn.clone(),
+                before: previous
+                    .map(|previous| previous.message_id)
+                    .unwrap_or_default(),
+                after: report.message_id,
+            };
             self.pending = None;
             self.last_fault = Some(fault.clone());
             return (None, Some(fault));
@@ -133,16 +150,21 @@ impl Inner {
         Some(fault)
     }
 
-    /// A neutralising hold preempts a younger pending command; it may not cancel someone else's.
-    pub(super) fn cancel(&mut self, request_id: u32) -> bool {
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.request_id == request_id)
-        {
+    /// Atomically cancel an expired pending command for a safety hold.
+    ///
+    /// `None` means there is nothing left to clear (the slot is genuinely empty). `Some(delay)` keeps
+    /// the hold waiting; both the read and the cancellation happen under one lock, so a racing
+    /// replacement cannot slip between them.
+    pub(super) fn clear_pending_for_hold(
+        &mut self,
+        now: Instant,
+        deadline: Instant,
+    ) -> Option<Duration> {
+        let pending = self.pending.as_ref()?;
+        if now >= deadline || pending.age(now) >= crate::control::controller::SAFETY_HOLD_WINDOW {
             self.pending = None;
-            return true;
+            return None;
         }
-        false
+        Some(deadline.saturating_duration_since(now))
     }
 }

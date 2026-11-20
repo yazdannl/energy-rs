@@ -99,14 +99,13 @@ fn verify_hold(report: &Report) -> Result<(), ControlFault> {
 /// Such a report is kept as a doubt by [`is_echo_doubt`], and a later fresh report with the new
 /// limit confirms.
 ///
-/// `sequence` is the 8-bit counter unwrapped by [`Inner`](crate::control::state::Inner) across every
-/// report observed since the baseline. Comparing sequences instead of the raw counter is safe
-/// across any number of 255→0 wraps: a replay has a sequence at or below the newest report already
-/// consumed for this command, and a later report always above it. The assumption is that consecutive *observed* reports never jump more
-/// than [`RESTART_WINDOW`](crate::control::watch::RESTART_WINDOW) counter steps — at the measured ~1-4 reports/s that is minutes, and a
-/// larger jump is already treated as a restart by [`watch`](crate::control::watch). The device clock
-/// must also not go backwards (its one-second resolution cannot order reports within a second).
-/// Nothing here accepts a duplicate or a foreign report, and the wait is bounded.
+/// `sequence` is the 8-bit counter unwrapped by [`Inner`](crate::control::state::Inner), but only
+/// for reports that `watch::classify` accepts as *ordered*. Several
+/// 255→0 wraps are fine: each accepted step is small, so the sequence keeps rising. A duplicate,
+/// a backward/replayed counter, a jump over `MAX_FORWARD_STEPS_PER_READ` or a
+/// device clock that went back is inconclusive: it neither advances the accepted sequence nor
+/// confirms/faults the command. An equal clock is normal (the device reports several times per
+/// second with one-second resolution); the counter orders those reports. The wait is bounded.
 pub fn is_fresh(pending: &Pending, report: &Report, sequence: u64) -> bool {
     let (_, baseline_ts) = pending.baseline;
     if sequence <= pending.last_seen_sequence {

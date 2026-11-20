@@ -10,8 +10,8 @@
 
 mod support;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use energy_battery::{
@@ -19,6 +19,7 @@ use energy_battery::{
 };
 use energy_core::dispatch::{
     BatterySink, CommandSink, Dispatcher, FleetView, MeterReading, Overrides, Progress, TickInput,
+    WriteReceipt,
 };
 use energy_core::safety::{Authority, SafetyLimits};
 use support::fakes::{NOW, pack, plan};
@@ -30,6 +31,37 @@ struct Marks(AtomicUsize);
 impl Progress for Marks {
     fn mark(&self, _now: i64) {
         self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// A sink that reports a safety hold took over before the original write could be resolved.
+#[derive(Default)]
+struct SupersedingSink(Mutex<Vec<&'static str>>);
+
+impl SupersedingSink {
+    fn calls(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl CommandSink for SupersedingSink {
+    fn write(
+        &self,
+        _pack_id: &str,
+        _watts: f64,
+    ) -> energy_core::dispatch::BoxFuture<'_, Result<WriteReceipt, energy_core::dispatch::SinkError>>
+    {
+        self.0.lock().unwrap().push("write");
+        Box::pin(async { Ok(WriteReceipt::superseded()) })
+    }
+
+    fn hold(
+        &self,
+        _pack_id: &str,
+    ) -> energy_core::dispatch::BoxFuture<'_, Result<WriteReceipt, energy_core::dispatch::SinkError>>
+    {
+        self.0.lock().unwrap().push("hold");
+        Box::pin(async { Ok(WriteReceipt::verified(0.0)) })
     }
 }
 
@@ -124,9 +156,10 @@ async fn a_hold_requested_during_confirmation_is_not_blocked() {
     .expect("the write became pending");
     let held = sink.hold(SN).await.expect("hold succeeds");
     assert!(held.verified);
+    let superseded = writing.await.unwrap().unwrap();
     assert!(
-        writing.await.unwrap().is_err(),
-        "the superseded write fails"
+        superseded.superseded && !superseded.verified,
+        "the superseded write resolves without a fault"
     );
     assert_eq!(
         fake.state().unwrap().write_count(),
@@ -134,4 +167,32 @@ async fn a_hold_requested_during_confirmation_is_not_blocked() {
         "the hold was sent once, not stormed"
     );
     fake.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_superseded_dispatch_does_not_add_a_second_hold() {
+    let sink = SupersedingSink::default();
+    let plan = plan(NOW, -0.8, 0.96);
+    let fleet = FleetView::new(vec![pack(SN, 50.0)]);
+    let meter = MeterReading::default();
+    let overrides = Overrides::none();
+    let input = TickInput {
+        now: NOW,
+        mode: Authority::Auto,
+        plan: Some(&plan),
+        fleet: &fleet,
+        meter: &meter,
+        latches: &[],
+        overrides: &overrides,
+        stale: false,
+        progress: None,
+        selection: None,
+    };
+    let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
+    let outcome = dispatcher.tick(&input, &sink).await;
+
+    let report = outcome.report(SN).expect("pack report");
+    assert!(!report.fail_safe && report.error.is_none());
+    assert!(!report.written && !report.verified);
+    assert_eq!(sink.calls(), vec!["write"], "no second hold was sent");
 }

@@ -37,8 +37,8 @@ pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 /// Maximum time a neutralising hold waits for an unresolved command before preempting it.
 ///
 /// This is the safety-response bound, deliberately separate from the (longer) echo window: a
-/// cell-voltage, shutdown or emergency hold may never be blocked indefinitely by a write whose
-/// echo is late. The preempted command is cancelled in place and reported as timed out.
+/// cell-voltage, shutdown or emergency hold may never be blocked by a late write. The preempted
+/// command is cancelled; its waiter resolves as superseded, not as a fault, so the hold is not repeated.
 pub const SAFETY_HOLD_WINDOW: Duration = Duration::from_secs(2);
 
 /// The control plane for one device.
@@ -126,21 +126,18 @@ impl<T: DeviceIo> DeviceController<T> {
         if fault.is_some() {
             self.pacer.defer(FAULT_BACKOFF).await;
         }
-        Ok(Observation {
-            report,
-            confirmed,
-            fault,
-        })
+        Ok(Observation::observed(report, confirmed, fault))
     }
 
     /// Poll until the command this call was created for is resolved or `window` expires.
     ///
     /// Every read is bounded by the same hard deadline, `on_progress` is called while a read is
-    /// still in flight, and a report arriving after the deadline is never accepted. Duplicates,
-    /// stalled reads and foreign reports cannot leave the command pending past the deadline; a read
-    /// error resolves it immediately so a safety hold is never blocked by a broken transport.
-    /// The waiter is bound to its [`request_id`](Pending::request_id): it never expires a command
-    /// that replaced the one it started with.
+    /// still in flight, and a report arriving after the deadline is never accepted. One read stays
+    /// pinned across heartbeat beats; only the deadline cancels it. Duplicates, stalled reads and
+    /// foreign reports cannot leave the command pending past the deadline; a read error resolves it
+    /// immediately so a safety hold is never blocked by a broken transport. The waiter is bound to
+    /// its [`request_id`](Pending::request_id): a command cancelled or replaced by a safety hold is
+    /// reported as superseded, not as a fault.
     pub async fn poll_confirming(
         &self,
         window: Duration,
@@ -194,19 +191,22 @@ impl<T: DeviceIo> DeviceController<T> {
         })
     }
 
-    pub(super) fn cancel(&self, request_id: u32) {
-        if let Some(mut inner) = self.lock() {
-            inner.cancel(request_id);
-        }
+    /// Atomically clear an expired command for a safety hold; see [`Inner::clear_pending_for_hold`].
+    pub(super) fn clear_pending_for_hold(&self, deadline: Instant) -> Option<Duration> {
+        self.lock()
+            .and_then(|mut inner| inner.clear_pending_for_hold(Instant::now(), deadline))
     }
 
-    pub(super) fn record_timeout(
+    /// Atomically expire one command and take a report for the returned observation.
+    pub(super) fn expire_pending(
         &self,
         request_id: u32,
         fallback: ControlFault,
-    ) -> Option<ControlFault> {
-        self.lock()
-            .and_then(|mut inner| inner.expire(request_id, fallback))
+    ) -> Option<(ControlFault, Report)> {
+        let mut inner = self.lock()?;
+        let fault = inner.expire(request_id, fallback)?;
+        let report = inner.last_report.clone()?;
+        Some((fault, report))
     }
 
     /// Revalidate and reserve the command, with the write slot already held.

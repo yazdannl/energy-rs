@@ -9,9 +9,10 @@
 //! * `smartMode: 1` (RAM, not flash) is re-asserted on every control write;
 //! * a hold is both limits at 0 and never writes `acMode`;
 //! * `acMode` outside {1, 2} means the AC path is wedged: stop writing and surface a fault;
-//! * a `messageId` that went backwards means the device rebooted: re-read before commanding;
+//! * a `messageId` that went backwards is only a proven reboot when the clock moved forward;
+//!   otherwise it is inconclusive, never a confirmation or a fault;
 //! * a fresh report can still show the old limits, so a write is confirmed inside a hard
-//!   [`ECHO_CONFIRM_WINDOW`] bound, and an unwrapped counter makes that comparison wrap-safe;
+//!   [`ECHO_CONFIRM_WINDOW`] bound, and an ordered, unwrapped counter makes that comparison wrap-safe;
 //! * a neutralising hold has safety priority: it preempts an unresolved write after
 //!   [`SAFETY_HOLD_WINDOW`], so cell-voltage, emergency and shutdown holds cannot be blocked.
 //!

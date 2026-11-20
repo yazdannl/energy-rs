@@ -12,9 +12,33 @@ pub struct Observation {
     pub report: Report,
     pub confirmed: Option<Command>,
     pub fault: Option<ControlFault>,
+    /// This waiter's command was cancelled or replaced by a safety hold: resolved, not faulted.
+    pub superseded: bool,
 }
 
 impl Observation {
+    pub(super) fn observed(
+        report: Report,
+        confirmed: Option<Command>,
+        fault: Option<ControlFault>,
+    ) -> Self {
+        Self {
+            report,
+            confirmed,
+            fault,
+            superseded: false,
+        }
+    }
+
+    pub(super) fn superseded(report: Report) -> Self {
+        Self {
+            report,
+            confirmed: None,
+            fault: None,
+            superseded: true,
+        }
+    }
+
     pub fn is_healthy(&self) -> bool {
         self.fault.is_none()
     }

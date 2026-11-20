@@ -12,6 +12,8 @@ pub struct WriteReceipt {
     pub applied_w: f64,
     /// Whether the device confirmed the command with its next report.
     pub verified: bool,
+    /// A safety hold replaced this command while it waited; not a device fault, no retry needed.
+    pub superseded: bool,
 }
 
 impl WriteReceipt {
@@ -20,6 +22,7 @@ impl WriteReceipt {
         Self {
             applied_w,
             verified: true,
+            superseded: false,
         }
     }
 
@@ -28,6 +31,16 @@ impl WriteReceipt {
         Self {
             applied_w: 0.0,
             verified: false,
+            superseded: false,
+        }
+    }
+
+    /// A command a safety hold deliberately superseded: resolved without a fault.
+    pub const fn superseded() -> Self {
+        Self {
+            applied_w: 0.0,
+            verified: false,
+            superseded: true,
         }
     }
 }

@@ -74,7 +74,9 @@ async fn delayed_application_confirms_after_four_old_limit_reports() {
     };
     assert_eq!(
         observation.confirmed,
-        Some(Command::Discharge { watts: 700 })
+        Some(Command::Discharge { watts: 700 }),
+        "observation={observation:?} pending={:?}",
+        controller.pending()
     );
     assert!(marks.load(Ordering::Relaxed) >= 4);
     assert_eq!(fake.state().unwrap().write_count(), 1);
@@ -395,9 +397,12 @@ async fn mismatch_then_a_safety_fault_reports_once_and_releases_the_command() {
         .poll_confirming(Duration::from_secs(2), || {})
         .await
         .unwrap();
-    assert!(matches!(
-        observation.fault,
-        Some(ControlFault::Wedged { ac_mode: 127, .. })
-    ));
+    assert!(
+        matches!(
+            observation.fault,
+            Some(ControlFault::Wedged { ac_mode: 127, .. })
+        ),
+        "observation={observation:?}"
+    );
     assert!(controller.pending().is_none());
 }

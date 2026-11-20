@@ -267,8 +267,8 @@ async fn a_report_counter_that_went_backwards_is_a_restart() {
     let first = controller.poll().await.unwrap();
     assert_eq!(first.report.message_id, 4211);
 
-    let mut second = report_with(SN, json!({"acMode": 2}));
-    second.message_id = 3;
+    // A newer clock distinguishes this reset from a replay of an old report.
+    let second = report_at(SN, 3, T0 + 1, json!({"acMode": 2}));
     device.push_report(second);
     let observation = controller.poll().await.unwrap();
     assert!(matches!(
@@ -286,8 +286,7 @@ async fn a_restart_backs_off_before_the_next_write() {
     let (device, controller) = fast_controller(vec![echo(0, json!({"acMode": 2}))]);
     controller.poll().await.unwrap();
 
-    let mut restarted = report_with(SN, json!({"acMode": 2}));
-    restarted.message_id = 3;
+    let restarted = report_at(SN, 3, T0 + 1, json!({"acMode": 2}));
     device.push_report(restarted);
     let restart_at = Instant::now();
     let observation = controller.poll().await.unwrap();

@@ -236,6 +236,11 @@ impl Dispatcher {
                 .await
         };
         match result {
+            // A safety hold replaced this write; that hold is the episode's one fail-safe action.
+            Ok(receipt) if receipt.superseded => Sent {
+                error: None,
+                ..Sent::none()
+            },
             Ok(receipt) => {
                 // Progress means work happened: a failed write is the watchdog's business, not a
                 // heartbeat.

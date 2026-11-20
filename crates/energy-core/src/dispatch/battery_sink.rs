@@ -77,6 +77,10 @@ impl<T: DeviceIo> BatterySink<T> {
                 pack_id: pack_id.clone(),
                 reason: error.to_string(),
             })?;
+        if observation.superseded {
+            // A safety hold has already taken over this episode. A second hold here would be a storm.
+            return Ok(WriteReceipt::superseded());
+        }
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
                 pack_id,
@@ -86,6 +90,7 @@ impl<T: DeviceIo> BatterySink<T> {
         Ok(WriteReceipt {
             applied_w: signed_watts(applied.command),
             verified: observation.confirmed == Some(applied.command),
+            superseded: false,
         })
     }
 }

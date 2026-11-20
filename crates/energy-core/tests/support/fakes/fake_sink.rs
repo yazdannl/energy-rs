@@ -124,9 +124,11 @@ impl CommandSink for FakeSink {
                     reason: "scripted rejection".to_owned(),
                 });
             }
+            let verified = !self.unverified_writes.load(Ordering::Relaxed);
             Ok(WriteReceipt {
                 applied_w: watts,
-                verified: !self.unverified_writes.load(Ordering::Relaxed),
+                verified,
+                superseded: false,
             })
         })
     }
@@ -141,6 +143,7 @@ impl CommandSink for FakeSink {
             Ok(WriteReceipt {
                 applied_w: 0.0,
                 verified: !self.unverified_holds.load(Ordering::Relaxed),
+                superseded: false,
             })
         })
     }
