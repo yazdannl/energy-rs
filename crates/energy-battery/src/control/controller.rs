@@ -10,7 +10,8 @@ use tokio::time::Instant;
 use crate::control::applied::Applied;
 use crate::control::clamp::clamp_command;
 use crate::control::command::Command;
-use crate::control::echo::ECHO_POLL_INTERVAL;
+use crate::control::confirmation;
+use crate::control::echo;
 use crate::control::emergency;
 use crate::control::fault::ControlFault;
 use crate::control::limits::ControlLimits;
@@ -18,6 +19,7 @@ use crate::control::observation::Observation;
 use crate::control::pacer::Pacer;
 use crate::control::pending::Pending;
 use crate::control::state::Inner;
+use crate::control::watch::RESTART_WINDOW;
 use crate::error::BatteryError;
 use crate::report::Report;
 use crate::transport::{DeviceIo, WriteAck, WriteRequest};
@@ -32,6 +34,10 @@ pub const FAULT_BACKOFF: Duration = Duration::from_secs(10);
 /// firmware that ignores holds from turning the failsafe into a write loop.
 pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 
+/// Safety-response bound for preempting an unresolved command, separate from the longer echo window.
+/// The preempted waiter resolves as superseded, not as a fault, so the hold is not repeated.
+pub const SAFETY_HOLD_WINDOW: Duration = Duration::from_secs(2);
+
 /// The control plane for one device.
 ///
 /// Reads are always allowed; writes are refused until the device has been read at least once.
@@ -39,21 +45,13 @@ pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 /// Ordering is the safety property, and it is enforced per device:
 ///
 /// * a write takes the pacer's single in-flight slot **first**, and only then re-reads the state,
-///   re-clamps against the live maximum and transmits. Waiting for the slot can take seconds, during
-///   which a poll can discover a lower limit, a restart or a wedge, so nothing decided before the
-///   slot is trusted at transmission time;
-/// * the clamped command is installed as [`Pending`] *before* the request leaves, so a report that
-///   arrives while the write is in flight is verified rather than consumed unheard, and no second
-///   writer may replace a command that is still unresolved;
-/// * a poll (fetch + fold) and a write (validate + install + transmit) never interleave, so the
-///   readback of one command belongs to that command;
-/// * only a report newer than the pre-write report can confirm or fault the pending command, and a
-///   report from another serial is ignored as a fault;
-/// * a newer report that still echoes the old limits leaves the write in doubt for at most
-///   [`ECHO_CONFIRM_WINDOW`](crate::control::ECHO_CONFIRM_WINDOW) (see
-///   [`poll_confirming`](Self::poll_confirming)); duplicates, foreign
-///   reports and safety faults are never tolerated;
-/// * a wedged device rejects every command except a bounded emergency hold.
+///   re-clamps against the live maximum and transmits;
+/// * the clamped command is installed as [`Pending`] before the request leaves, and no second writer
+///   may replace it while unresolved — except a hold, which preempts it after [`SAFETY_HOLD_WINDOW`];
+/// * a poll (fetch + fold) and a write (validate + install + transmit) never interleave;
+/// * only a report newer than the pre-write report can confirm a command, with wrap-safe counters;
+/// * every pending command has a bounded resolution path: [`poll_confirming`](Self::poll_confirming)
+///   expires it at a hard deadline, and a hold preempts it at the safety bound.
 pub struct DeviceController<T: DeviceIo> {
     transport: T,
     limits: ControlLimits,
@@ -115,64 +113,63 @@ impl<T: DeviceIo> DeviceController<T> {
     ///
     /// A wedge or a restart surfaces a fault and pushes the pacer out by [`FAULT_BACKOFF`].
     pub async fn poll(&self) -> Result<Observation, BatteryError> {
-        let (report, confirmed, fault) = {
+        let (report, (confirmed, fault, resolved_request)) = {
             let _transaction = self.transaction.lock().await;
             let report = self.transport.report().await?;
-            let (confirmed, fault) = self.record(&report);
-            (report, confirmed, fault)
+            let observed = self.record(&report);
+            (report, observed)
         };
         if fault.is_some() {
-            // After the transaction: a claim waiting for the slot may hold it, and only the pacer
-            // state is needed here.
             self.pacer.defer(FAULT_BACKOFF).await;
         }
-        Ok(Observation {
+        Ok(Observation::observed(
             report,
             confirmed,
             fault,
-        })
+            resolved_request,
+        ))
     }
 
-    /// Poll once, then keep polling while the newest report is fresh but still echoes the old
-    /// limits, for at most `window`.
+    /// Poll until the command this call was created for is resolved or `window` expires.
     ///
-    /// The first fresh report with the new limit confirms immediately; a duplicate, a foreign
-    /// report or a safety fault ends the wait at once. If the window expires, the stored mismatch
-    /// is returned as a single fault and the command is released, so one failed write gets exactly
-    /// one fail-safe hold from the caller. `on_progress` runs before each sleep: the engine's
-    /// watchdog must be marked while this call is waiting (see [`crate::control`] for the wiring).
-    ///
-    /// This does not claim the pacer slot and does not write: the one-write-at-a-time rule still
-    /// refuses another `apply` until this call resolves the command.
+    /// Every read is bounded by the same hard deadline; `on_progress` marks progress while a read
+    /// is in flight, and a report after the deadline is never accepted. One read stays pinned across
+    /// heartbeat beats. A read error resolves the command immediately; a waiter is bound to its
+    /// [`request_id`](Pending::request_id) and reports replacement as superseded, not as a fault.
     pub async fn poll_confirming(
         &self,
         window: Duration,
         on_progress: impl Fn(),
     ) -> Result<Observation, BatteryError> {
         let deadline = Instant::now() + window;
-        let mut observation = self.poll().await?;
-        while observation.confirmed.is_none()
-            && observation.fault.is_none()
-            && self.is_inconclusive()
+        let Some(target) = self.pending().map(|pending| pending.request_id) else {
+            return match tokio::time::timeout_at(deadline, self.poll()).await {
+                Ok(result) => result,
+                Err(_) => Err(BatteryError::Invalid {
+                    reason: "report read exceeded the confirmation deadline".to_owned(),
+                }),
+            };
+        };
+        match tokio::time::timeout_at(
+            deadline,
+            confirmation::confirm_loop(self, target, &on_progress),
+        )
+        .await
         {
-            let now = Instant::now();
-            if now >= deadline {
-                return Ok(self.expire_inconclusive(observation));
-            }
-            on_progress();
-            tokio::time::sleep((deadline - now).min(ECHO_POLL_INTERVAL)).await;
-            observation = self.poll().await?;
+            Ok(result) => result,
+            Err(_) => confirmation::expire(self, target, "confirmation deadline"),
         }
-        Ok(observation)
     }
 
     /// Pace, revalidate, clamp, send and remember one command.
     ///
-    /// The write slot is taken before the device state is read again, the pending command is
-    /// installed before the request is transmitted, and a second command is refused while the
-    /// previous one is unresolved (poll a fresh report first).
+    /// A hold has safety priority: after [`SAFETY_HOLD_WINDOW`] it cancels an unresolved command
+    /// instead of waiting for its echo. Other commands keep the one-write-at-a-time rule.
     pub async fn apply(&self, command: Command) -> Result<Applied, BatteryError> {
         let claim = self.pacer.claim().await;
+        if command.is_hold() {
+            confirmation::clear_for_hold(self).await;
+        }
         let (pending, ack) = {
             let _transaction = self.transaction.lock().await;
             let pending = self.prepare(command)?;
@@ -190,6 +187,24 @@ impl<T: DeviceIo> DeviceController<T> {
             command: pending.command,
             ack: ack?,
         })
+    }
+
+    /// Atomically clear an expired command for a safety hold; see [`Inner::clear_pending_for_hold`].
+    pub(super) fn clear_pending_for_hold(&self, deadline: Instant) -> Option<Duration> {
+        self.lock()
+            .and_then(|mut inner| inner.clear_pending_for_hold(Instant::now(), deadline))
+    }
+
+    /// Atomically expire one command and take a report for the returned observation.
+    pub(super) fn expire_pending(
+        &self,
+        request_id: u32,
+        fallback: ControlFault,
+    ) -> Option<(ControlFault, Report)> {
+        let mut inner = self.lock()?;
+        let fault = inner.expire(request_id, fallback)?;
+        let report = inner.last_report.clone()?;
+        Some((fault, report))
     }
 
     /// Revalidate and reserve the command, with the write slot already held.
@@ -226,7 +241,12 @@ impl<T: DeviceIo> DeviceController<T> {
             command,
             request_id,
             baseline: (report.message_id, report.timestamp),
+            baseline_sequence: inner.last_sequence,
+            last_seen_sequence: inner.last_sequence,
+            resync_credits: 1,
             acked_after: None,
+            acked_sequence: None,
+            sent_at: Instant::now(),
             emergency,
             inconclusive: None,
         };
@@ -234,10 +254,7 @@ impl<T: DeviceIo> DeviceController<T> {
         pending
     }
 
-    /// Close the write: a request id in the body is only useful with a request id in the state.
-    ///
-    /// An error means no ack, so nothing a report could confirm was accepted; the reservation is
-    /// released and the command is not believed sent.
+    /// Close the write: an ack's counter is unwrapped from the baseline, including across 0.
     fn finish(
         &self,
         pending: &Pending,
@@ -251,6 +268,11 @@ impl<T: DeviceIo> DeviceController<T> {
             Ok(ack) => {
                 if let Some(sent) = inner.pending.as_mut().filter(|sent| ours(sent)) {
                     sent.acked_after = ack.message_id.filter(|acked| *acked != pending.baseline.0);
+                    sent.acked_sequence = ack.message_id.and_then(|acked| {
+                        let delta = echo::forward(pending.baseline.0, acked);
+                        (delta > 0 && delta <= RESTART_WINDOW)
+                            .then(|| pending.baseline_sequence.saturating_add(u64::from(delta)))
+                    });
                 }
                 Ok(ack)
             }
@@ -263,35 +285,14 @@ impl<T: DeviceIo> DeviceController<T> {
         }
     }
 
-    fn is_inconclusive(&self) -> bool {
-        self.lock().is_some_and(|inner| inner.is_inconclusive())
-    }
-
-    fn expire_inconclusive(&self, observation: Observation) -> Observation {
-        let Some(mut inner) = self.lock() else {
-            return observation;
-        };
-        match inner.expire_inconclusive() {
-            Some(fault) => {
-                tracing::warn!(sn = self.transport.sn(), %fault, "echo confirmation timed out");
-                Observation {
-                    report: observation.report,
-                    confirmed: None,
-                    fault: Some(fault),
-                }
-            }
-            None => observation,
-        }
-    }
-
     fn lock(&self) -> Option<std::sync::MutexGuard<'_, Inner>> {
         self.inner.lock().ok()
     }
 
     /// Fold one report into the device state.
-    fn record(&self, report: &Report) -> (Option<Command>, Option<ControlFault>) {
+    fn record(&self, report: &Report) -> (Option<Command>, Option<ControlFault>, Option<u32>) {
         let Ok(mut inner) = self.inner.lock() else {
-            return (None, None);
+            return (None, None, None);
         };
         inner.record(report, self.transport.sn())
     }

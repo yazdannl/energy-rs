@@ -11,15 +11,9 @@ use crate::safety::Reason;
 use crate::safety::{CommandRequest, SafetyLimits};
 
 /// Turns a plan and a fleet read into per-pack commands.
-///
-/// A tick has three phases: *plan* (pure: the split, the ladder and the shadow answer for every
-/// pack), *validate* (pure: the summed vector against the fleet power caps and the site ceiling) and
-/// *send*. Nothing reaches a device before the whole vector has been validated, so a later pack can
-/// never invalidate the bound an earlier one was checked against.
-///
-/// The dispatcher owns exactly one piece of mutable state: the per-pack fault backoff. Everything
-/// else (authority, the plan, the latches, the overrides) is handed in per tick, so the engine can
-/// change its mind between ticks without the dispatcher remembering an old decision.
+/// A tick plans and validates the whole vector before sending any of it, so a later pack cannot
+/// invalidate a bound an earlier one was checked against. The dispatcher only owns per-pack fault
+/// backoff; authority, plan, latches and overrides are handed in per tick.
 pub struct Dispatcher {
     limits: SafetyLimits,
     failsafe_on_error: bool,
@@ -32,6 +26,8 @@ struct Sent {
     verified: bool,
     applied_w: f64,
     fail_safe: bool,
+    /// Why a safety hold took over this attempt; ownership stays with that hold.
+    superseded: Option<String>,
     error: Option<String>,
 }
 
@@ -42,6 +38,7 @@ impl Sent {
             verified: false,
             applied_w: 0.0,
             fail_safe: false,
+            superseded: None,
             error: None,
         }
     }
@@ -217,6 +214,7 @@ impl Dispatcher {
             written: sent.written,
             verified: sent.verified,
             fail_safe: sent.fail_safe,
+            superseded: sent.superseded,
             error: sent.error,
             note: plan.note,
         }
@@ -234,11 +232,17 @@ impl Dispatcher {
         // The heartbeat goes into the sink so the write/confirmation wait can mark every
         // successful transport step, not just the tick boundaries around it.
         let result = if watts.abs() <= HOLD_DEADBAND_W {
-            sink.hold_with_progress(pack_id, progress).await
+            sink.hold_with_progress(pack_id, progress, now).await
         } else {
-            sink.write_with_progress(pack_id, watts, progress).await
+            sink.write_with_progress(pack_id, watts, progress, now)
+                .await
         };
         match result {
+            // A safety hold replaced this write; that hold is the episode's one fail-safe action.
+            Ok(receipt) if receipt.superseded => Sent {
+                superseded: Some("safety hold".to_owned()),
+                ..Sent::none()
+            },
             Ok(receipt) => {
                 // Progress means work happened: a failed write is the watchdog's business, not a
                 // heartbeat.
@@ -247,8 +251,7 @@ impl Dispatcher {
                     written: true,
                     verified: receipt.verified,
                     applied_w: receipt.applied_w,
-                    fail_safe: false,
-                    error: None,
+                    ..Sent::none()
                 }
             }
             // The gate withdrew the command (mode change, emergency hold) before it was written.
@@ -278,7 +281,7 @@ impl Dispatcher {
                 ..Sent::none()
             };
         }
-        match sink.hold_with_progress(pack_id, progress).await {
+        match sink.hold_with_progress(pack_id, progress, now).await {
             Ok(receipt) => {
                 advance(progress, now);
                 Sent {
@@ -287,6 +290,7 @@ impl Dispatcher {
                     applied_w: receipt.applied_w,
                     fail_safe: true,
                     error: Some(format!("{cause}; fail-safe hold")),
+                    ..Sent::none()
                 }
             }
             Err(hold_error) => Sent {

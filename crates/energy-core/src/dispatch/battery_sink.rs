@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
 use energy_battery::control::{Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW};
@@ -20,6 +21,7 @@ use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt,
 /// mistaken for a stalled loop.
 pub struct BatterySink<T: DeviceIo> {
     devices: BTreeMap<String, Arc<DeviceController<T>>>,
+    confirm_window: Duration,
 }
 
 impl<T: DeviceIo> BatterySink<T> {
@@ -30,7 +32,15 @@ impl<T: DeviceIo> BatterySink<T> {
                 .into_iter()
                 .map(|device| (device.sn().to_owned(), device))
                 .collect(),
+            confirm_window: ECHO_CONFIRM_WINDOW,
         }
+    }
+
+    /// Shorten the bounded echo wait (tests; production keeps the measured window).
+    #[must_use]
+    pub fn with_confirm_window(mut self, window: Duration) -> Self {
+        self.confirm_window = window;
+        self
     }
 
     /// The serials this sink may command.
@@ -38,17 +48,19 @@ impl<T: DeviceIo> BatterySink<T> {
         self.devices.keys().map(String::as_str).collect()
     }
 
-    /// Apply one command and poll for its echo.
+    /// Apply one command and poll for its echo inside a hard, heartbeated deadline.
     ///
-    /// Both halves of the confirmation wait are transport steps: a write can wait on the device's
-    /// 2 s pacer, and the echo only arrives on a later report. Mark after each one that succeeds so
-    /// the watchdog sees a slow-but-progressing tick instead of a stalled loop. The mark takes the
-    /// clock at the step, not the tick's start, so the epoch half of the watchdog stays fresh too.
-    async fn send(
-        &self,
+    /// Both halves of the wait are transport steps: a write can wait on the device's 2 s pacer,
+    /// and the echo only arrives on a later report. Mark after each one that succeeds, taking the
+    /// clock at the step (never earlier than the tick's `now`) so the watchdog's epoch half stays
+    /// fresh too. A superseded waiter resolves as a non-error outcome: a safety hold has already
+    /// taken over this episode, so no second hold is issued.
+    async fn send<'a>(
+        &'a self,
         pack_id: String,
         command: Command,
-        progress: Option<&dyn Progress>,
+        progress: Option<&'a dyn Progress>,
+        now: i64,
     ) -> Result<WriteReceipt, SinkError> {
         let controller = self
             .devices
@@ -56,6 +68,7 @@ impl<T: DeviceIo> BatterySink<T> {
             .ok_or_else(|| SinkError::UnknownPack {
                 pack_id: pack_id.clone(),
             })?;
+        let mark = || advance(progress, Utc::now().timestamp().max(now));
         let applied = controller
             .apply(command)
             .await
@@ -63,21 +76,19 @@ impl<T: DeviceIo> BatterySink<T> {
                 pack_id: pack_id.clone(),
                 reason: error.to_string(),
             })?;
-        advance(progress, Utc::now().timestamp());
-        // A fresh report can still carry the pre-write limits while the device applies the
-        // command: wait out that bounded doubt instead of failing a write that is landing. The
-        // callback marks the watchdog on every wait step, and the same path covers the single
-        // fail-safe hold, so an expired write still gets exactly one hold.
+        mark();
         let observation = controller
-            .poll_confirming(ECHO_CONFIRM_WINDOW, || {
-                advance(progress, Utc::now().timestamp());
-            })
+            .poll_confirming(self.confirm_window, || mark())
             .await
             .map_err(|error| SinkError::Device {
                 pack_id: pack_id.clone(),
                 reason: error.to_string(),
             })?;
-        advance(progress, Utc::now().timestamp());
+        mark();
+        if observation.superseded {
+            // A safety hold has already taken over this episode. A second hold here would be a storm.
+            return Ok(WriteReceipt::superseded());
+        }
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
                 pack_id,
@@ -87,13 +98,19 @@ impl<T: DeviceIo> BatterySink<T> {
         Ok(WriteReceipt {
             applied_w: signed_watts(applied.command),
             verified: observation.confirmed == Some(applied.command),
+            superseded: false,
         })
     }
 }
 
 impl<T: DeviceIo> CommandSink for BatterySink<T> {
     fn write(&self, pack_id: &str, watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        self.write_with_progress(pack_id, watts, None)
+        let command = command_for(watts);
+        Box::pin(self.send(pack_id.to_owned(), command, None, 0))
+    }
+
+    fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+        Box::pin(self.send(pack_id.to_owned(), Command::Hold, None, 0))
     }
 
     fn write_with_progress<'a>(
@@ -101,20 +118,18 @@ impl<T: DeviceIo> CommandSink for BatterySink<T> {
         pack_id: &str,
         watts: f64,
         progress: Option<&'a dyn Progress>,
+        now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
-        Box::pin(self.send(pack_id.to_owned(), command_for(watts), progress))
-    }
-
-    fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
-        self.hold_with_progress(pack_id, None)
+        Box::pin(self.send(pack_id.to_owned(), command_for(watts), progress, now))
     }
 
     fn hold_with_progress<'a>(
         &'a self,
         pack_id: &str,
         progress: Option<&'a dyn Progress>,
+        now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
-        Box::pin(self.send(pack_id.to_owned(), Command::Hold, progress))
+        Box::pin(self.send(pack_id.to_owned(), Command::Hold, progress, now))
     }
 }
 

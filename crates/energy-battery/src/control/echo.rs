@@ -6,7 +6,6 @@ use crate::control::command::Command;
 use crate::control::direction::Direction;
 use crate::control::fault::ControlFault;
 use crate::control::pending::Pending;
-use crate::control::watch::RESTART_WINDOW;
 use crate::report::Report;
 
 /// The vendor's `POWER_TOLERANCE`: a limit counts as applied within 5 W.
@@ -17,10 +16,12 @@ pub const ECHO_TOLERANCE_W: u32 = 5;
 /// The 800 Plus emits reports continuously while it applies a write: measured on Kees
 /// (192.168.1.86) on 2026-11-18, a `-788 W` write was acknowledged at 20:18:23, reports at
 /// 20:18:23-27 still showed `outputLimit: 0`, and `outputLimit: 788` appeared at 20:18:28. The
-/// limit then stayed at 788 for ~9 s while `outputHomePower` ramped to 787 W. A single read-back
-/// therefore cannot decide the write. Six seconds covers the ~5 s worst observed lag plus the
-/// device's ~1 s report cadence, and is still below the engine's 15 s watchdog stall bound.
-pub const ECHO_CONFIRM_WINDOW: Duration = Duration::from_secs(6);
+/// limit then stayed at 788 for ~9 s while `outputHomePower` ramped to 787 W. The window covers
+/// **limit application** (~5 s observed), not the ~8-10 s power ramp that follows it. Eight seconds
+/// leaves a 3 s margin over the measured lag, and the heartbeat keeps it under the engine's 15 s
+/// watchdog stall bound. Safety holds use the much shorter
+/// [`SAFETY_HOLD_WINDOW`](crate::control::controller::SAFETY_HOLD_WINDOW).
+pub const ECHO_CONFIRM_WINDOW: Duration = Duration::from_secs(8);
 
 /// Spacing of read-backs while a write is in doubt (the device reports about once a second).
 pub const ECHO_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -94,22 +95,26 @@ fn verify_hold(report: &Report) -> Result<(), ControlFault> {
 ///
 /// Freshness is *not* application: the SolarFlow800 Plus keeps emitting reports while a write is
 /// being applied. A report can therefore have a newer `messageId` and still carry the pre-write
-/// limits (measured on hardware; see [`ECHO_CONFIRM_WINDOW`](crate::control::echo::ECHO_CONFIRM_WINDOW)).
+/// limits (measured on hardware; see [`ECHO_CONFIRM_WINDOW`]).
 /// Such a report is kept as a doubt by [`is_echo_doubt`], and a later fresh report with the new
 /// limit confirms.
-/// Nothing here accepts a duplicate or a foreign report, and the wait is bounded.
-pub fn is_fresh(pending: &Pending, report: &Report) -> bool {
-    let (baseline_id, baseline_ts) = pending.baseline;
-    let delta = forward(baseline_id, report.message_id);
-    if delta == 0 || delta > RESTART_WINDOW {
+///
+/// `sequence` is the 8-bit counter unwrapped by [`Inner`](crate::control::state::Inner), but only
+/// for reports that `watch::classify` accepts as *ordered*. Several
+/// 255→0 wraps are fine: each accepted step is small, so the sequence keeps rising. A duplicate,
+/// a backward/replayed counter or a device clock that went back is inconclusive. A forward jump
+/// over `MAX_FORWARD_STEPS_PER_READ` resynchronises the baseline once, but is never passed to this
+/// function: ambiguity cannot confirm the command. An equal clock is normal (the device reports
+/// several times per second with one-second resolution); the counter orders those reports.
+pub fn is_fresh(pending: &Pending, report: &Report, sequence: u64) -> bool {
+    let (_, baseline_ts) = pending.baseline;
+    if sequence <= pending.last_seen_sequence {
         return false;
     }
     if report.timestamp != 0 && report.timestamp < baseline_ts {
         return false;
     }
-    pending
-        .acked_after
-        .is_none_or(|acked| forward(acked, report.message_id) <= RESTART_WINDOW)
+    pending.acked_sequence.is_none_or(|acked| sequence >= acked)
 }
 
 /// Whether a mismatch is only a limit echo that may still be in flight.
@@ -124,6 +129,6 @@ pub fn is_echo_doubt(fault: &ControlFault) -> bool {
 }
 
 /// Forward distance between two 8-bit report counters.
-fn forward(from: u32, to: u32) -> u32 {
+pub(super) fn forward(from: u32, to: u32) -> u32 {
     to.wrapping_sub(from) & 0xFF
 }

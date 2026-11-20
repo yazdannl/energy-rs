@@ -30,6 +30,8 @@ pub struct PackReport {
     pub verified: bool,
     /// Whether this row is the one-shot fail-safe hold after a fault.
     pub fail_safe: bool,
+    /// Why a safety hold replaced this write; ownership was transferred, not failed or cleared.
+    pub superseded: Option<String>,
     /// The transport/echo error, when there was one.
     pub error: Option<String>,
     /// Why this row is what it is, in words the dispatch log can show (maintenance, balance

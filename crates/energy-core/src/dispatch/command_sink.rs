@@ -17,26 +17,31 @@ pub trait CommandSink: Send + Sync {
     /// Send the neutral hold (both limits 0, no `acMode`) to one pack.
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>>;
 
-    /// Write, advancing the watchdog as the transport completes each step.
+    /// Write, with the tick's heartbeat so a bounded echo wait can mark progress.
     ///
     /// A sink with no intermediate wait keeps the default (one plain write); the dispatcher marks
     /// the heartbeat once when the command returns. A sink that paces a write and then polls for
-    /// its echo overrides this so the wait cannot look like a stall.
+    /// its echo overrides this so the wait cannot look like a stall (see
+    /// [`BatterySink`](crate::dispatch::BatterySink)).
     fn write_with_progress<'a>(
         &'a self,
         pack_id: &str,
         watts: f64,
-        _progress: Option<&'a dyn Progress>,
+        progress: Option<&'a dyn Progress>,
+        now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
+        let _ = (progress, now);
         self.write(pack_id, watts)
     }
 
-    /// Hold, advancing the watchdog as the transport completes each step.
+    /// Hold, with the tick's heartbeat.
     fn hold_with_progress<'a>(
         &'a self,
         pack_id: &str,
-        _progress: Option<&'a dyn Progress>,
+        progress: Option<&'a dyn Progress>,
+        now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
+        let _ = (progress, now);
         self.hold(pack_id)
     }
 }

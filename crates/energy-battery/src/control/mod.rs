@@ -9,20 +9,25 @@
 //! * `smartMode: 1` (RAM, not flash) is re-asserted on every control write;
 //! * a hold is both limits at 0 and never writes `acMode`;
 //! * `acMode` outside {1, 2} means the AC path is wedged: stop writing and surface a fault;
-//! * a `messageId` that went backwards means the device rebooted: re-read before commanding.
+//! * a `messageId` that went backwards is only a proven reboot when the clock moved forward;
+//!   otherwise it is inconclusive, never a confirmation or a fault;
+//! * a fresh report can still show the old limits, so a write is confirmed inside a hard
+//!   [`ECHO_CONFIRM_WINDOW`] bound, and an ordered, unwrapped counter makes that comparison wrap-safe;
+//! * a neutralising hold has safety priority: it preempts an unresolved write after
+//!   [`SAFETY_HOLD_WINDOW`], so cell-voltage, emergency and shutdown holds cannot be blocked.
 //!
-//! # Heartbeat wiring for the echo wait
+//! # Heartbeat wiring
 //!
-//! [`DeviceController::poll_confirming`] keeps the engine's progress heartbeat alive through its
-//! `on_progress` callback. In energy-core, `crates/energy-core/src/dispatch/battery_sink.rs`
-//! (`BatterySink::send`) replaces `controller.poll().await` with
-//! `controller.poll_confirming(ECHO_CONFIRM_WINDOW, || advance(progress, now))`, threading the
-//! `progress` already held by `Dispatcher::send` into the sink. That one `send` covers both the
-//! setpoint write and its single fail-safe hold.
+//! [`DeviceController::poll_confirming`] marks progress while it waits *and while a read is in
+//! flight*. energy-core's `BatterySink::send` calls it with a callback that marks the watchdog at
+//! the step's clock; `Dispatcher::send` passes the tick's progress through
+//! `CommandSink::write_with_progress`/`hold_with_progress`. The same path serves the setpoint write
+//! and its one fail-safe hold.
 
 pub mod applied;
 pub mod clamp;
 pub mod command;
+mod confirmation;
 pub mod controller;
 pub mod direction;
 pub mod echo;
@@ -40,7 +45,7 @@ pub mod watch;
 pub use applied::Applied;
 pub use clamp::{Ceiling, ceiling_for, clamp_command, clamp_watts};
 pub use command::Command;
-pub use controller::{DeviceController, FAULT_BACKOFF, MAX_EMERGENCY_HOLDS};
+pub use controller::{DeviceController, FAULT_BACKOFF, MAX_EMERGENCY_HOLDS, SAFETY_HOLD_WINDOW};
 pub use direction::Direction;
 pub use echo::{ECHO_CONFIRM_WINDOW, ECHO_POLL_INTERVAL, ECHO_TOLERANCE_W, is_echo_doubt, verify};
 pub use fault::ControlFault;
