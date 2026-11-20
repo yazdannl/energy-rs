@@ -5,6 +5,7 @@
     clippy::panic,
     clippy::float_cmp,
     clippy::unreadable_literal,
+    clippy::assert_is_empty,
     clippy::cast_possible_wrap
 )]
 
@@ -13,15 +14,24 @@ mod support;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use energy_battery::{ECHO_CONFIRM_WINDOW, MIN_WRITE_SPACING};
 use energy_core::dispatch::PackReading;
-use energy_core::engine::{Engine, EngineError, PACK_HOLD_BUDGET};
+use energy_core::engine::{Engine, PACK_HOLD_BUDGET};
 use energy_core::safety::Authority;
 use energy_ledger::EventLevel;
 use support::fakes::{NOW, Sent, pack, plan};
 use support::harness;
 
 const IDS: [&str; 4] = ["SN-A", "SN-B", "SN-C", "SN-D"];
-const ECHO: Duration = Duration::from_secs(6);
+const SLOW_ECHO: Duration = ECHO_CONFIRM_WINDOW;
+
+#[test]
+fn the_hold_budget_tracks_the_echo_window() {
+    assert_eq!(
+        PACK_HOLD_BUDGET,
+        MIN_WRITE_SPACING + ECHO_CONFIRM_WINDOW + Duration::from_secs(2)
+    );
+}
 
 fn packs() -> Vec<PackReading> {
     IDS.iter().map(|id| pack(id, 50.0)).collect()
@@ -42,19 +52,23 @@ async fn four_slow_holds_confirm_concurrently_within_the_shutdown_budget() {
     let h = driven().await;
     let before = h.sink.len();
     for id in IDS {
-        h.sink.delay_hold(id, ECHO);
+        h.sink.delay_hold(id, SLOW_ECHO);
     }
     assert!(
-        ECHO + Duration::from_secs(2) <= PACK_HOLD_BUDGET,
+        SLOW_ECHO + Duration::from_secs(2) <= PACK_HOLD_BUDGET,
         "one pacer slot plus one echo window must fit the per-pack budget"
     );
 
     let start = tokio::time::Instant::now();
-    h.engine
+    let report = h
+        .engine
         .stop(NOW + 10, "sigterm")
         .await
         .expect("all four holds verified");
     let elapsed = start.elapsed();
+    assert_eq!(report.verified().len(), IDS.len());
+    assert!(report.unverified().is_empty());
+    assert!(report.fenced().is_empty());
 
     assert!(h.engine.latch().expect("latch").is_empty());
     let after: Vec<_> = h
@@ -75,7 +89,7 @@ async fn four_slow_holds_confirm_concurrently_within_the_shutdown_budget() {
     assert!(
         elapsed < PACK_HOLD_BUDGET,
         "serial holds would take {}s; fan-out took {elapsed:?}",
-        ECHO.as_secs() * u64::try_from(IDS.len()).unwrap_or(u64::MAX)
+        SLOW_ECHO.as_secs() * u64::try_from(IDS.len()).unwrap_or(u64::MAX)
     );
     let events = h
         .ledger
@@ -88,7 +102,9 @@ async fn four_slow_holds_confirm_concurrently_within_the_shutdown_budget() {
         "every slow pack confirmed: {events:?}"
     );
     assert!(events.iter().any(|event| {
-        event.kind == "engine.shutdown" && event.message.contains("4 pack(s) held")
+        event.kind == "engine.shutdown"
+            && event.message.contains("4 verified")
+            && event.message.contains("0 unverified")
     }));
 }
 
@@ -96,20 +112,17 @@ async fn four_slow_holds_confirm_concurrently_within_the_shutdown_budget() {
 async fn an_unconfirmed_pack_is_reported_per_pack_without_delaying_the_others() {
     let h = driven().await;
     for id in IDS.iter().filter(|id| **id != "SN-D") {
-        h.sink.delay_hold(id, ECHO);
+        h.sink.delay_hold(id, SLOW_ECHO);
     }
     h.sink.never_confirm_hold("SN-D");
 
     let start = tokio::time::Instant::now();
-    let error = h.engine.stop(NOW + 10, "sigterm").await.expect_err("echo");
+    let report = h.engine.stop(NOW + 10, "sigterm").await.expect("report");
     let elapsed = start.elapsed();
-    match error {
-        EngineError::Holds { failed, detail } => {
-            assert_eq!(failed, 1, "{detail}");
-            assert!(detail.contains("SN-D"), "the stuck pack must be named");
-        }
-        other => panic!("expected a per-pack hold failure, got {other:?}"),
-    }
+    assert_eq!(report.verified().len(), 3);
+    assert_eq!(report.unverified(), &[String::from("SN-D")]);
+    assert!(report.fenced().is_empty());
+    assert!(report.summary().contains("SN-D"));
     assert!(
         elapsed <= PACK_HOLD_BUDGET + Duration::from_secs(1),
         "a stuck echo must not outlive the budget: {elapsed:?}"
@@ -132,6 +145,9 @@ async fn an_unconfirmed_pack_is_reported_per_pack_without_delaying_the_others() 
     assert_eq!(unverified.len(), 1, "one journal line, for the stuck pack");
     assert!(unverified[0].message.contains("SN-D"));
     assert_eq!(unverified[0].level, EventLevel::Warn);
+    assert!(events.iter().any(|event| {
+        event.kind == "engine.shutdown" && event.message.contains("1 unverified (SN-D)")
+    }));
 
     let dispatch = h
         .ledger
@@ -170,4 +186,42 @@ async fn shutdown_fences_the_generation_before_any_hold() {
         seen.iter().all(|generation| *generation > before),
         "holds ran before the fence: before {before}, seen {seen:?}"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_fenced_hold_is_reported_separately_from_verified_and_unverified() {
+    let h = driven().await;
+    h.sink.fence_hold("SN-C");
+
+    let report = h.engine.stop(NOW + 10, "sigterm").await.expect("holds");
+    assert_eq!(report.verified().len(), 3);
+    assert_eq!(report.fenced(), &[String::from("SN-C")]);
+    assert!(report.unverified().is_empty());
+    assert!(report.summary().contains("1 fenced (SN-C)"));
+    assert!(
+        h.engine.latch().expect("latch").get("SN-C").is_some(),
+        "a fenced command owns the pack until a device confirms"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_short_hold_budget_reports_every_pack_unverified_within_the_budget() {
+    let h = driven().await;
+    for id in IDS {
+        h.sink.delay_hold(id, SLOW_ECHO);
+    }
+    let budget = Duration::from_secs(2);
+
+    let start = tokio::time::Instant::now();
+    let report = h
+        .engine
+        .stop_within(NOW + 10, "deadline slice", budget)
+        .await
+        .expect("bounded holds");
+    let elapsed = start.elapsed();
+    assert!(report.verified().is_empty());
+    assert_eq!(report.unverified().len(), IDS.len());
+    assert!(report.fenced().is_empty());
+    assert!(elapsed <= budget + Duration::from_secs(1), "{elapsed:?}");
+    assert_eq!(h.engine.latch().expect("latch").len(), IDS.len());
 }

@@ -9,6 +9,7 @@ use futures_util::future::join_all;
 use crate::dispatch::{CommandSink, SinkError};
 use crate::engine::control::Engine;
 use crate::engine::error::EngineError;
+use crate::engine::hold_report::HoldReport;
 use crate::safety::Reason;
 
 /// The budget for one pack's verified hold: a device pacer slot, one echo window and scheduling
@@ -16,6 +17,14 @@ use crate::safety::Reason;
 /// budget per pack.
 pub const PACK_HOLD_BUDGET: Duration =
     Duration::from_secs(MIN_WRITE_SPACING.as_secs() + ECHO_CONFIRM_WINDOW.as_secs() + 2);
+
+/// One pack's hold outcome: only `Verified` may be counted as held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldState {
+    Verified,
+    Unverified,
+    Fenced,
+}
 
 impl Engine {
     /// One guard step: hold everything if the loop stopped making progress, then retry boot recovery.
@@ -28,23 +37,20 @@ impl Engine {
         let mut held = false;
         if stalled {
             self.lock()?.watchdog.mark(now);
+            let mut detail = format!("nothing written in {} mode", mode.slug());
             if mode.may_write() {
                 self.gate.fence();
-                self.hold_all(now, Reason::WatchdogHold, None).await?;
+                let report = self.hold_all(now, Reason::WatchdogHold, None).await?;
                 held = true;
+                detail = report.summary();
             }
             self.event(
                 now,
                 EventLevel::Error,
                 "watchdog.hold",
                 format!(
-                    "no control progress for {} s; {}",
-                    self.config.stall_after_s(),
-                    if held {
-                        "held all packs".to_owned()
-                    } else {
-                        format!("nothing written in {} mode", mode.slug())
-                    }
+                    "no control progress for {} s; {detail}",
+                    self.config.stall_after_s()
                 ),
             )?;
         }
@@ -57,29 +63,42 @@ impl Engine {
     /// In `auto` every pack is held. Outside `auto` nothing at all is written -- not even a hold --
     /// so the latch is kept and boot recovery owns those packs from then on.
     pub async fn shutdown(&self, now: i64, reason: &str) -> Result<(), EngineError> {
+        self.shutdown_within(now, reason, PACK_HOLD_BUDGET)
+            .await
+            .map(|_| ())
+    }
+
+    /// The same shutdown, with the hold budget taken from the caller's absolute deadline.
+    pub(crate) async fn shutdown_within(
+        &self,
+        now: i64,
+        reason: &str,
+        budget: Duration,
+    ) -> Result<HoldReport, EngineError> {
         let mode = self.gate.mode();
         let pending = self.lock()?.latch.pack_ids().len();
         self.gate.fence();
-        let held = if mode.may_write() {
-            self.hold_all(now, Reason::Shutdown, None).await?
+        let report = if mode.may_write() {
+            self.hold_all_within(now, Reason::Shutdown, None, budget)
+                .await?
         } else {
-            Vec::new()
+            HoldReport::default()
         };
         let detail = if mode.may_write() {
-            format!("{} pack(s) held", held.len())
+            report.summary()
         } else {
             format!(
                 "nothing written in {} mode, {pending} latched pack(s) kept",
                 mode.slug()
             )
         };
-        self.event(
-            now,
-            EventLevel::Info,
-            "engine.shutdown",
-            format!("{reason}: {detail}"),
-        )?;
-        Ok(())
+        let level = if report.unverified().is_empty() && report.fenced().is_empty() {
+            EventLevel::Info
+        } else {
+            EventLevel::Warn
+        };
+        self.event(now, level, "engine.shutdown", format!("{reason}: {detail}"))?;
+        Ok(report)
     }
 
     /// Neutralise the latched packs before leaving `auto` (mode change, dry-run flip).
@@ -113,32 +132,47 @@ impl Engine {
         now: i64,
         reason: Reason,
         only: Option<&[String]>,
-    ) -> Result<Vec<String>, EngineError> {
+    ) -> Result<HoldReport, EngineError> {
+        self.hold_all_within(now, reason, only, PACK_HOLD_BUDGET)
+            .await
+    }
+
+    /// Fan out every hold under one budget, keeping the three outcomes separate.
+    pub(crate) async fn hold_all_within(
+        &self,
+        now: i64,
+        reason: Reason,
+        only: Option<&[String]>,
+        budget: Duration,
+    ) -> Result<HoldReport, EngineError> {
         let attempts =
             self.hold_targets(only)?
                 .into_iter()
                 .map(|(pack_id, ledger_id)| async move {
                     let outcome = self
-                        .hold_one(&pack_id, ledger_id, now, reason, PACK_HOLD_BUDGET)
+                        .hold_one(&pack_id, ledger_id, now, reason, budget)
                         .await;
                     (pack_id, outcome)
                 });
-        let mut held = Vec::new();
+        let mut verified = Vec::new();
+        let mut unverified = Vec::new();
+        let mut fenced = Vec::new();
         let mut failures = Vec::new();
         for (pack_id, outcome) in join_all(attempts).await {
             match outcome {
-                Ok(true) => held.push(pack_id),
-                Ok(false) => {}
+                Ok(HoldState::Verified) => verified.push(pack_id),
+                Ok(HoldState::Unverified) => unverified.push(pack_id),
+                Ok(HoldState::Fenced) => fenced.push(pack_id),
                 Err(error) => failures.push(format!("{pack_id}: {error}")),
             }
         }
-        if failures.is_empty() {
-            return Ok(held);
+        if !failures.is_empty() {
+            return Err(EngineError::Holds {
+                failed: failures.len(),
+                detail: failures.join("; "),
+            });
         }
-        Err(EngineError::Holds {
-            failed: failures.len(),
-            detail: failures.join("; "),
-        })
+        Ok(HoldReport::new(verified, unverified, fenced))
     }
 
     /// Who a hold targets: an explicit list, or every known pack plus anything still latched.
@@ -171,7 +205,7 @@ impl Engine {
         now: i64,
         reason: Reason,
         budget: Duration,
-    ) -> Result<bool, EngineError> {
+    ) -> Result<HoldState, EngineError> {
         let token = self.gate.token();
         let sink = self.guarded(token, now);
         let call = sink.hold(pack_id);
@@ -188,14 +222,14 @@ impl Engine {
                 )
                 .verified(receipt.applied_w);
                 self.ledger.dispatch()?.insert(&entry)?;
-                Ok(true)
+                Ok(HoldState::Verified)
             }
             Ok(Ok(_)) => {
                 self.record_unverified(pack_id, ledger_id, now, reason, "hold not echoed")?;
-                Ok(true)
+                Ok(HoldState::Unverified)
             }
             // Authority or generation withdrew the command: nothing was sent and ownership stays.
-            Ok(Err(SinkError::Fenced { .. })) => Ok(false),
+            Ok(Err(SinkError::Fenced { .. })) => Ok(HoldState::Fenced),
             Ok(Err(error)) => {
                 self.event(
                     now,
@@ -203,15 +237,12 @@ impl Engine {
                     "hold.failed",
                     format!("{pack_id}: {error}"),
                 )?;
-                Ok(false)
+                Ok(HoldState::Unverified)
             }
             Err(_) => {
                 let detail = format!("hold not verified within the {}s budget", budget.as_secs());
                 self.record_unverified(pack_id, ledger_id, now, reason, &detail)?;
-                Err(EngineError::Holds {
-                    failed: 1,
-                    detail: format!("{pack_id}: {detail}"),
-                })
+                Ok(HoldState::Unverified)
             }
         }
     }

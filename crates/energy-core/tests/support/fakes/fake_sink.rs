@@ -31,6 +31,7 @@ pub struct FakeSink {
     observer: Mutex<Option<Observer>>,
     hold_delays: Mutex<BTreeMap<String, Duration>>,
     stuck_holds: Mutex<BTreeSet<String>>,
+    fenced_holds: Mutex<BTreeSet<String>>,
     hold_observer: Mutex<Option<Observer>>,
 }
 
@@ -44,6 +45,7 @@ impl Default for FakeSink {
             observer: Mutex::new(None),
             hold_delays: Mutex::new(BTreeMap::new()),
             stuck_holds: Mutex::new(BTreeSet::new()),
+            fenced_holds: Mutex::new(BTreeSet::new()),
             hold_observer: Mutex::new(None),
         }
     }
@@ -79,6 +81,14 @@ impl FakeSink {
         self.stuck_holds
             .lock()
             .expect("sink stuck holds")
+            .insert(pack_id.to_owned());
+    }
+
+    /// This pack's hold is refused by the transport's generation check: no write, no echo.
+    pub fn fence_hold(&self, pack_id: &str) {
+        self.fenced_holds
+            .lock()
+            .expect("sink fenced holds")
             .insert(pack_id.to_owned());
     }
 
@@ -195,6 +205,11 @@ impl CommandSink for FakeSink {
             .lock()
             .expect("sink stuck holds")
             .contains(pack_id);
+        let fenced = self
+            .fenced_holds
+            .lock()
+            .expect("sink fenced holds")
+            .contains(pack_id);
         let unverified = self.unverified_holds.load(Ordering::Relaxed);
         let pack_id = pack_id.to_owned();
         Box::pin(async move {
@@ -203,6 +218,9 @@ impl CommandSink for FakeSink {
             }
             if stuck {
                 std::future::pending::<()>().await;
+            }
+            if fenced {
+                return Err(SinkError::Fenced { pack_id });
             }
             if pack_id == "SN-FAIL" {
                 return Err(SinkError::UnknownPack { pack_id });

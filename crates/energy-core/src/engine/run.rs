@@ -7,6 +7,7 @@ use chrono::Utc;
 
 use crate::engine::control::Engine;
 use crate::engine::error::EngineError;
+use crate::engine::hold_report::HoldReport;
 use crate::stream::EngineCommand;
 use tokio::sync::mpsc;
 
@@ -84,8 +85,19 @@ impl Engine {
     }
 
     /// Trigger a graceful shutdown hold without a signal (the server's `/stop` and the tests).
-    pub async fn stop(&self, now: i64, reason: &str) -> Result<(), EngineError> {
-        self.shutdown(now, reason).await
+    pub async fn stop(&self, now: i64, reason: &str) -> Result<HoldReport, EngineError> {
+        self.stop_within(now, reason, crate::engine::PACK_HOLD_BUDGET)
+            .await
+    }
+
+    /// Stop with the hold budget remaining from the caller's absolute shutdown deadline.
+    pub async fn stop_within(
+        &self,
+        now: i64,
+        reason: &str,
+        budget: Duration,
+    ) -> Result<HoldReport, EngineError> {
+        self.shutdown_within(now, reason, budget).await
     }
 
     /// The guard loop: watchdog, boot-recovery retry and, later, the maintenance publisher.
