@@ -137,12 +137,16 @@ async fn wire_engine(
         ledger,
     )));
     let pv = energy_core::plan_source::PvHandle::shared(config::pv(ledger));
-    let source = engine::plan_source(
+    let supply = energy_core::plan_source::HaPlanSupply::new(
         connection,
         Arc::clone(&prices.repository),
         prices.settlement(),
-        Arc::clone(profiles),
-        Arc::clone(&pv),
+    )
+    .with_load_profiles(Arc::clone(profiles))
+    .with_pv(Arc::clone(&pv));
+    let source = engine::plan_source(
+        supply,
+        engine::source_config(&config, policy.get()),
         Arc::clone(&policy),
     );
     Ok(engine::engine(

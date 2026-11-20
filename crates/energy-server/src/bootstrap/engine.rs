@@ -8,11 +8,10 @@ use std::sync::Arc;
 
 use energy_core::dispatch::{BatteryFleet, BatterySink, CommandSink, DeviceFleet, PackCatalog};
 use energy_core::engine::{Engine, EngineConfig, PlanSource};
-use energy_core::plan_source::{HaPlanSupply, LivePlanSource, LoadProfiles};
+use energy_core::plan::Policy;
+use energy_core::plan_source::{HaPlanSupply, LivePlanSource, PolicyHandle, SourceConfig};
 use energy_core::wiring::LedgerLearningStore;
-use energy_ha::Connection;
 use energy_ledger::Ledger;
-use energy_price::{PriceRepository, Settlement};
 
 use crate::bootstrap::fleet::Fleet;
 
@@ -44,30 +43,28 @@ pub fn fleet_ports(
     )
 }
 
-/// The live plan source over the shared HA socket, the price store and the learned profile.
-pub fn plan_source(
-    connection: std::sync::Arc<Connection>,
-    prices: Arc<dyn PriceRepository>,
-    settlement: Settlement,
-    profiles: Arc<LoadProfiles>,
-    pv: std::sync::Arc<energy_core::plan_source::PvHandle>,
-    handle: Arc<energy_core::plan_source::PolicyHandle>,
-) -> Arc<dyn PlanSource> {
-    let policy = handle.get();
-    let config = energy_core::plan_source::SourceConfig {
-        policy,
+/// The plan-side policy from the engine's operator settings.
+///
+/// The hard `reserve_soc_pct` must be the same number the planner uses for `e_min_kwh` and the
+/// clamp ladder uses to stop a discharge. The policy's peak and solar reserves are different:
+/// the first is a soft end-of-horizon guideline, the second is headroom kept free of grid energy;
+/// neither lowers or raises this floor.
+pub fn source_config(engine: &EngineConfig, policy: Policy) -> SourceConfig {
+    SourceConfig {
+        reserve_soc_pct: engine.reserve_soc_pct,
         wear_eur_per_kwh: policy.wear_eur_per_kwh,
-        ..energy_core::plan_source::SourceConfig::default()
-    };
-    Arc::new(
-        LivePlanSource::new(
-            HaPlanSupply::new(connection, prices, settlement)
-                .with_load_profiles(profiles)
-                .with_pv(pv),
-            config,
-        )
-        .with_policy(handle),
-    )
+        policy,
+        ..SourceConfig::default()
+    }
+}
+
+/// The live plan source over an assembled supply, with the boot config and live policy handle.
+pub fn plan_source(
+    supply: HaPlanSupply,
+    config: SourceConfig,
+    handle: Arc<PolicyHandle>,
+) -> Arc<dyn PlanSource> {
+    Arc::new(LivePlanSource::new(supply, config).with_policy(handle))
 }
 
 /// Build the engine over the assembled ports (the caller attaches the API stream).

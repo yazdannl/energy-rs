@@ -12,7 +12,14 @@ use crate::plan::{PackState, PlanInput, Policy};
 /// EWMA fallback.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceConfig {
-    /// Per-pack reserve floor above the pack minimum, percent.
+    /// Hard SoC floor, percent of each pack's capacity, never below its own `min_soc_pct`.
+    ///
+    /// The planner raises its aggregate `e_min_kwh` to this value, and the dispatcher's clamp
+    /// ladder uses the same number to refuse discharges below it: planning deeper would schedule
+    /// energy the ladder will not deliver. It is distinct from `Policy::peak_reserve_pct` (a soft
+    /// end-of-horizon guideline) and `Policy::solar_reserve_pct` (headroom kept free of grid
+    /// energy); neither of those is a hard floor. The server copies the operator's stored setting
+    /// here when it builds this config at boot.
     pub reserve_soc_pct: f64,
     /// Wear cost per kWh delivered, EUR/kWh.
     pub wear_eur_per_kwh: f64,

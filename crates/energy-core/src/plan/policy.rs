@@ -13,8 +13,14 @@ pub struct Policy {
     /// Export rule.
     pub export: ExportPolicy,
     /// Headroom kept free of grid energy, percent of capacity.
+    ///
+    /// A planning/dispatch ceiling on grid charging, not a floor: it does not stop the pack
+    /// discharging towards the hard `PlanInput::reserve_soc_pct` floor.
     pub solar_reserve_pct: f64,
     /// Energy worth keeping for a peak the forecast missed, percent of capacity.
+    ///
+    /// A soft end-of-horizon target (and its reported kWh figure), not a floor: the solver may
+    /// spend it when the horizon pays. The hard floor is `PlanInput::reserve_soc_pct`.
     pub peak_reserve_pct: f64,
     /// What a kWh of peak headroom is worth, EUR/kWh (the soft target's penalty).
     pub peak_reserve_value_eur_per_kwh: f64,

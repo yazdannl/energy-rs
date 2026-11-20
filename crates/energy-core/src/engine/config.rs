@@ -24,7 +24,11 @@ pub struct EngineConfig {
     pub replan_seconds: i64,
     /// Absolute stale-plan bound, seconds.
     pub stale_plan_seconds: i64,
-    /// Per-pack reserve floor above the pack minimum, percent.
+    /// Hard SoC floor, percent of each pack's capacity (at least its own minimum).
+    ///
+    /// The server passes this to both the plan source and the safety ladder so they enforce one
+    /// floor. It is not the peak or solar reserve: those are a soft terminal guideline and grid
+    /// charging headroom respectively, in `plan::Policy`.
     pub reserve_soc_pct: f64,
     /// Headroom kept free of grid energy at dispatch, percent of capacity.
     pub solar_reserve_pct: f64,

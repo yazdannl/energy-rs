@@ -9,7 +9,10 @@ use crate::safety::{
 pub struct SafetyLimits {
     /// Authority mode; advisory and dry-run write nothing.
     pub mode: Authority,
-    /// Per-pack reserve floor above `min_soc_pct`, percent.
+    /// Hard SoC floor, percent of each pack's capacity (at least its own `min_soc_pct`).
+    ///
+    /// The same value the plan source uses for its minimum stored energy, so a scheduled slot can
+    /// always be delivered. The policy's peak/solar reserves are not floors.
     pub reserve_soc_pct: f64,
     /// Headroom kept free of grid energy, percent of capacity (0 disables the clause).
     pub solar_reserve_pct: f64,
