@@ -132,6 +132,11 @@ impl Engine {
         Ok(self.gate.mode())
     }
 
+    /// The current control generation, so a hold can be shown to fence past a tick's token.
+    pub fn generation(&self) -> u64 {
+        self.gate.token()
+    }
+
     /// The plan in force, if one is stored.
     pub fn current_plan(&self) -> Result<Option<Plan>, EngineError> {
         Ok(self.lock()?.plan.clone())
