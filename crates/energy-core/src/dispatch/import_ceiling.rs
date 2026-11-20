@@ -11,21 +11,24 @@
 //! * `limit = SafetyLimits::max_grid_import_w`; `limit <= 0` (or non-finite) disables the guard.
 //! * `margin = max(0, grid_import_margin_w)`, so `margin = 0` holds exactly at the limit.
 //! * `target_import = max(0, limit - margin)`: a margin wider than the limit targets zero import.
-//! * The guard needs a finite meter reading and a fresh, available fleet. A missing/stale reading
-//!   changes nothing -- the plan stands, and no discharge is guessed.
+//! * The guard needs a finite meter reading and a fresh, available fleet. A missing/stale *meter*
+//!   reading changes nothing -- the plan stands, and no discharge is guessed. Plan availability is
+//!   not telemetry freshness: with no executable plan the replacement target is neutral
+//!   ([`NO_PLAN_TARGET_W`]), so the guard can still discharge protectively but never charge.
 //! * `excess = measured_grid_w - target_import`. With `deadband = grid_follow_deadband_w`:
 //!   - `excess > deadband`: arm and ask the fleet for `measured_battery_w - excess` W. Adding that
 //!     change to the battery's *measured* output is what brings the meter down by `excess`, without
 //!     integrating last tick's correction into this one.
-//!   - `-deadband <= excess <= deadband` while armed: hold the measured battery output. This is
-//!     the hysteresis: the guard reuses the grid-follow deadband (no separate setting), so a pack
-//!     that just brought the meter to the target is not released on the very next tick and made to
-//!     flap between the plan and the ceiling.
-//!   - `excess < -deadband`: disarm and execute the plan again. Before the first arm, a reading
-//!     inside the band is the plan's business and leaves the setpoint untouched.
-//! * The requested setpoint is then `min(plan_w, guard_w)`: only a move towards discharge survives;
-//!   a grid-charge slot is reduced or stopped, but a charge is never started by this module. The
-//!   result is capped by the fleet's usable discharge capability, and every pack bound (SoC floor,
+//!   - armed and `excess <= deadband`: hold the measured battery output, unless releasing is safe.
+//!   - Release is decided by the *replacement* command, not by the meter alone. If the guard let
+//!     go, the pack would return to `replacement_w`, so the settled grid is predicted as
+//!     `measured_grid_w + replacement_w - measured_battery_w`. Release only when that is at most
+//!     `target_import - deadband`. A meter dip caused by our own discharge therefore cannot release
+//!     the guard and recreate the overload; a genuine load drop, or a plan that already discharges
+//!     enough, can. This is the hysteresis, and it reuses the grid-follow deadband (no new setting).
+//! * The requested setpoint is then `min(replacement_w, guard_w)`: only a move towards discharge
+//!   survives; a grid-charge slot is reduced or stopped, but a charge is never started. The guard's
+//!   own ask is capped by the fleet's usable discharge capability, and every pack bound (SoC floor,
 //!   cell latch, ramp, fleet/site ceilings) still applies downstream.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,20 +36,32 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::dispatch::{FleetView, MeterReading, PackReading};
 use crate::safety::{EPS_W, SafetyLimits};
 
+/// Neutral replacement target when no plan can be executed: the guard may only lower it.
+pub(crate) const NO_PLAN_TARGET_W: f64 = 0.0;
+
 /// The guard's answer for one tick.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Ceiling {
     /// The fleet setpoint after the guard, W.
     pub(crate) target_w: f64,
-    /// Whether the guard actually lowered the plan's setpoint (for the dispatch reason).
+    /// Whether the guard actually lowered the replacement target (for the dispatch reason).
     pub(crate) active: bool,
+}
+
+impl Ceiling {
+    const fn off(replacement_w: f64) -> Self {
+        Self {
+            target_w: replacement_w,
+            active: false,
+        }
+    }
 }
 
 /// The reactive ceiling's hysteresis memory, owned by the dispatcher.
 ///
 /// One bit for the whole fleet: the guard is armed by a measured breach and holds its discharge
-/// until the meter is clearly back below the target. An `AtomicBool` keeps the dispatcher's `tick`
-/// signature unchanged, exactly as the fault backoff does.
+/// until releasing would still keep the import under the ceiling. An `AtomicBool` keeps the
+/// dispatcher's `tick` signature unchanged, exactly as the fault backoff does.
 #[derive(Debug, Default)]
 pub(crate) struct Guard {
     armed: AtomicBool,
@@ -54,19 +69,18 @@ pub(crate) struct Guard {
 
 impl Guard {
     /// Fold the reactive ceiling into the plan/follow target for this tick.
+    ///
+    /// `replacement_w` is what would run without the guard: the plan/follow setpoint when the plan
+    /// is executable, otherwise [`NO_PLAN_TARGET_W`]. The guard never raises it.
     pub(crate) fn apply(
         &self,
-        plan_w: f64,
+        replacement_w: f64,
         meter: &MeterReading,
         fleet: &FleetView,
         limits: &SafetyLimits,
-        stale: bool,
     ) -> Ceiling {
-        let off = Ceiling {
-            target_w: plan_w,
-            active: false,
-        };
-        if stale || !plan_w.is_finite() || !limits.max_grid_import_w.is_finite() {
+        let off = Ceiling::off(replacement_w);
+        if !replacement_w.is_finite() || !limits.max_grid_import_w.is_finite() {
             self.disarm();
             return off;
         }
@@ -94,29 +108,32 @@ impl Guard {
         }
         let deadband_w = finite_nonnegative(limits.grid_follow_deadband_w);
         let excess = grid_w - target_import;
-        let armed = self.armed.load(Ordering::SeqCst);
-        if excess < -deadband_w {
-            self.disarm();
-            return off;
-        }
         let breached = excess > deadband_w;
-        if !armed && !breached {
-            return off;
-        }
         if breached {
             self.armed.store(true, Ordering::SeqCst);
+        } else {
+            // Releasing means the pack goes back to `replacement_w`. Predict the grid it would
+            // settle at before giving up the correction, including actuator lag in the measurement.
+            let settled_grid_w = grid_w + replacement_w - battery_w;
+            if settled_grid_w <= target_import - deadband_w {
+                self.disarm();
+                return off;
+            }
+            if !self.armed.load(Ordering::SeqCst) {
+                return off;
+            }
         }
         let guard_w = if breached {
             battery_w - excess
         } else {
             battery_w
         };
-        // Cap the guard's own ask first, then lower the plan with it. Reversing these two steps
-        // could *raise* a plan that already discharges more than this fleet can deliver.
-        let target_w = plan_w.min(guard_w.max(-capability_w));
+        // Cap the guard's own ask first, then lower the replacement with it. Reversing these two
+        // steps could *raise* a plan that already discharges more than this fleet can deliver.
+        let target_w = replacement_w.min(guard_w.max(-capability_w));
         Ceiling {
             target_w,
-            active: target_w < plan_w - EPS_W,
+            active: target_w < replacement_w - EPS_W,
         }
     }
 

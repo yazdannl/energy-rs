@@ -1,7 +1,7 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
 use crate::dispatch::grid_telemetry;
-use crate::dispatch::import_ceiling::Guard;
+use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
 use crate::dispatch::pack_context::{measured, reason_for, requested_watts};
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
@@ -85,20 +85,26 @@ impl Dispatcher {
             input.plan.and_then(|plan| slot_power(plan, input.now))
         };
         // The plan's setpoint, corrected from the meter: the grid is what we actually hold.
-        let plan_target_w = crate::dispatch::follow_target::target(
-            plan_power_w.unwrap_or(0.0),
-            slot.as_ref(),
-            input.meter,
-            input.fleet,
-            limits,
-            stale,
-        );
+        // With no executable plan the replacement is neutral: protection does not depend on an
+        // economic plan being available, and a missing plan can never start a charge.
+        let replacement_w = if stale {
+            NO_PLAN_TARGET_W
+        } else {
+            crate::dispatch::follow_target::target(
+                plan_power_w.unwrap_or(0.0),
+                slot.as_ref(),
+                input.meter,
+                input.fleet,
+                limits,
+                stale,
+            )
+        };
         // Safety over the plan: a measured breach of the import ceiling lowers the setpoint only.
         // The pre-guard split is kept so the reason can be attributed to the packs it changed.
-        let (baseline, _) = allocate(input, limits, plan_target_w, slot.as_ref());
+        let (baseline, _) = allocate(input, limits, replacement_w, slot.as_ref());
         let ceiling = self
             .ceiling
-            .apply(plan_target_w, input.meter, input.fleet, limits, stale);
+            .apply(replacement_w, input.meter, input.fleet, limits);
         let (allocation, grid_limit) = allocate(input, limits, ceiling.target_w, slot.as_ref());
         let grid_hold = grid_limit == Some(Reason::GridTelemetryMissing);
         let grid_base = grid_telemetry::base(input, slot.as_ref(), limits);
@@ -142,14 +148,12 @@ impl Dispatcher {
             .iter()
             .find(|latch| latch.pack_id == pack_id);
         let overridden = context.overrides.active(pack_id, context.now);
-        let allocated = if context.stale {
-            0.0
-        } else {
-            frame.allocation.watts_for(pack_id).unwrap_or(0.0)
-        };
         let before = frame.baseline.watts_for(pack_id).unwrap_or(0.0);
+        let allocated = frame.allocation.watts_for(pack_id).unwrap_or(0.0);
         let guarded = frame.import_ceiling && allocated < before - EPS_W;
-        let requested = requested_watts(&context, overridden, allocated);
+        // A stale plan normally holds every pack, but a protective guard discharge still goes out:
+        // safety must not depend on an economic plan being fresh.
+        let requested = requested_watts(&context, overridden, allocated, guarded);
         let request = CommandRequest::new(
             pack_id,
             requested,

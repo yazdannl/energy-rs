@@ -49,6 +49,10 @@ fn limits() -> SafetyLimits {
     }
 }
 
+fn written_w(sink: &FakeSink) -> f64 {
+    sink.writes().iter().sum()
+}
+
 fn latch(pack_id: &str) -> CellLatch {
     let at = Utc.timestamp_opt(0, 0).single().expect("epoch");
     CellLatch {
@@ -73,6 +77,8 @@ struct Scenario {
     meter: MeterReading,
     mode: Authority,
     stale: bool,
+    /// Simulates a tick with no stored plan at all (distinct from an expired one).
+    no_plan: bool,
     /// Shared across ticks so the guard's hysteresis and the fault backoff survive between them.
     dispatcher: Option<Dispatcher>,
 }
@@ -88,6 +94,7 @@ impl Scenario {
             meter: MeterReading::grid(grid_w),
             mode: Authority::Auto,
             stale: false,
+            no_plan: false,
             dispatcher: None,
         }
     }
@@ -117,7 +124,7 @@ impl Scenario {
         let input = TickInput {
             now: NOW,
             mode: self.mode,
-            plan: Some(&self.plan),
+            plan: (!self.no_plan).then_some(&self.plan),
             fleet: &fleet,
             meter: &self.meter,
             latches: &self.latches,
@@ -252,8 +259,9 @@ async fn hysteresis_holds_the_discharge_until_the_meter_is_clearly_below_target(
     );
     assert_eq!(second_sink.writes(), vec![-100.0]);
 
-    // 20 W below the target, outside the 10 W deadband: release back to the plan.
-    scenario.meter = MeterReading::grid(7_480.0);
+    // A genuine 120 W load drop makes the replacement plan safe: 7480 + 0 - (-100) = 7480,
+    // inside the 7490 W release bound. The old plan comes back.
+    scenario.meter = MeterReading::grid(7_380.0);
     let (third, third_sink) = scenario.run().await;
     assert_eq!(third.target_w, 0.0);
     assert!(
@@ -304,12 +312,178 @@ async fn missing_or_stale_telemetry_never_guesses_a_discharge() {
         "a stale fleet cannot anchor the guard"
     );
     assert!(sink.writes().is_empty());
+    // Plan staleness is a different axis (see `an_expired_plan_still_protects_the_ceiling`).
+}
 
-    scenario.packs[0].stale = false;
-    scenario.stale = true;
-    let (outcome, sink) = scenario.run().await;
-    assert_eq!(outcome.target_w, 0.0, "a stale plan holds");
+#[tokio::test]
+async fn negative_meter_noise_around_the_release_threshold_does_not_cycle() {
+    // 5000 W limit, 6000 W import: a meter 11 W below the 4800 W target is still our correction.
+    let mut scenario = Scenario::hold(6_000.0);
+    scenario.limits.max_grid_import_w = 5_000.0;
+    let (first, first_sink) = scenario.run().await;
+    assert_eq!(first.target_w, -1_200.0);
+    assert_eq!(written_w(&first_sink), -1_200.0);
+    scenario.set_battery_power("SN-A", -800.0);
+    scenario.set_battery_power("SN-B", -400.0);
+
+    for noisy_grid in [4_789.0, 4_795.0, 4_801.0] {
+        scenario.meter = MeterReading::grid(noisy_grid);
+        let (outcome, sink) = scenario.run().await;
+        assert_eq!(
+            outcome.target_w, -1_200.0,
+            "{noisy_grid} W must not restore the 6000 W import"
+        );
+        assert_eq!(written_w(&sink), -1_200.0);
+        assert!(sink.writes().iter().all(|watts| *watts <= 0.0));
+    }
+}
+
+#[tokio::test]
+async fn a_genuine_load_drop_releases_and_restores_normal_charge() {
+    let mut scenario = Scenario::hold(6_000.0);
+    scenario.limits.max_grid_import_w = 5_000.0;
+    let (_, _) = scenario.run().await;
+    scenario.set_battery_power("SN-A", -800.0);
+    scenario.set_battery_power("SN-B", -400.0);
+
+    // A real 1200 W load drop releases: 3580 + 1200 = 4780 W is inside the release bound.
+    scenario.meter = MeterReading::grid(3_580.0);
+    let (released, sink) = scenario.run().await;
+    assert_eq!(released.target_w, 0.0);
+    assert!(sink.writes().is_empty(), "the neutral plan is back");
+
+    scenario.plan = netted_plan(0.2, 3.58);
+    scenario.meter = MeterReading::grid(2_000.0);
+    scenario.set_battery_power("SN-A", 0.0);
+    let (charge, sink) = scenario.run().await;
+    assert_eq!(charge.target_w, 200.0, "no zero-charge-room residue");
+    assert!(
+        (written_w(&sink) - 100.0).abs() < 0.5,
+        "the plan's own tracking bound still applies: {} W",
+        written_w(&sink)
+    );
+}
+
+#[tokio::test]
+async fn actuator_delay_does_not_overshoot_the_ceiling_correction() {
+    let mut scenario = Scenario::hold(6_000.0);
+    scenario.limits.max_grid_import_w = 5_000.0;
+    let (first, _) = scenario.run().await;
+    assert_eq!(first.target_w, -1_200.0);
+
+    // Eight seconds later only 300 W arrived; the absolute correction cannot integrate to 2100 W.
+    scenario.set_battery_power("SN-A", -200.0);
+    scenario.set_battery_power("SN-B", -100.0);
+    scenario.meter = MeterReading::grid(5_700.0);
+    let (second, sink) = scenario.run().await;
+    assert_eq!(second.target_w, -1_200.0);
+    assert_eq!(written_w(&sink), -1_200.0);
+}
+
+#[tokio::test]
+async fn an_absent_plan_still_protects_the_ceiling() {
+    let mut missing = Scenario::hold(7_600.0);
+    missing.no_plan = true;
+    let (outcome, sink) = missing.run().await;
+    assert_eq!(outcome.plan_power_w, None);
+    assert_eq!(outcome.target_w, -100.0);
+    assert_eq!(sink.writes(), vec![-100.0]);
+    assert_eq!(
+        outcome.report("SN-A").expect("writer").reason,
+        Reason::GridImportCeiling
+    );
+
+    // Latches, the reserve floor and the write gate still win.
+    let mut latched = Scenario::hold(7_600.0);
+    latched.no_plan = true;
+    latched.latches = vec![latch("SN-A")];
+    let (outcome, sink) = latched.run().await;
+    assert_eq!(sink.writes(), vec![-100.0]);
+    assert_eq!(outcome.report("SN-A").expect("latched").intended_w, 0.0);
+    let mut empty = Scenario::hold(7_600.0);
+    empty.no_plan = true;
+    empty.packs = vec![pack("SN-A", 10.0), pack("SN-B", 10.0)];
+    let (_, sink) = empty.run().await;
+    assert!(sink.writes().is_empty(), "the reserve still wins");
+
+    let mut shadow = Scenario::hold(7_600.0);
+    shadow.no_plan = true;
+    shadow.mode = Authority::DryRun;
+    let (outcome, sink) = shadow.run().await;
+    assert_eq!(outcome.target_w, -100.0);
+    assert!(sink.writes().is_empty(), "nothing is written outside auto");
+}
+
+#[tokio::test]
+async fn an_expired_plan_still_protects_the_ceiling() {
+    let mut expired = Scenario::hold(7_600.0);
+    expired.stale = true;
+    let (outcome, sink) = expired.run().await;
+    assert!(outcome.stale_input);
+    assert_eq!(outcome.plan_power_w, None);
+    assert_eq!(outcome.target_w, -100.0);
+    assert_eq!(sink.writes(), vec![-100.0]);
+    assert_eq!(
+        outcome.report("SN-A").expect("writer").reason,
+        Reason::GridImportCeiling
+    );
+
+    let mut latched = Scenario::hold(7_600.0);
+    latched.stale = true;
+    latched.latches = vec![latch("SN-A")];
+    let (_, sink) = latched.run().await;
+    assert_eq!(sink.writes(), vec![-100.0]);
+    let mut empty = Scenario::hold(7_600.0);
+    empty.stale = true;
+    empty.packs = vec![pack("SN-A", 10.0), pack("SN-B", 10.0)];
+    let (_, sink) = empty.run().await;
     assert!(sink.writes().is_empty());
+
+    let mut shadow = Scenario::hold(7_600.0);
+    shadow.stale = true;
+    shadow.mode = Authority::DryRun;
+    let (outcome, sink) = shadow.run().await;
+    assert_eq!(outcome.target_w, -100.0);
+    assert!(sink.writes().is_empty());
+}
+
+#[tokio::test]
+async fn a_stronger_planned_discharge_is_not_raised_by_the_guard() {
+    let mut scenario = Scenario::hold(7_600.0);
+    scenario.plan = netted_plan(-1.0, 0.0);
+    let (outcome, _) = scenario.run().await;
+    assert_eq!(outcome.target_w, -1_000.0, "the plan already serves more");
+    assert!(
+        outcome
+            .packs
+            .iter()
+            .all(|row| row.reason != Reason::GridImportCeiling)
+    );
+}
+
+#[tokio::test]
+async fn an_export_limit_still_binds_when_the_guard_reverses_a_charge() {
+    let mut scenario = Scenario::hold(1_000.0);
+    scenario.limits.max_grid_import_w = 500.0;
+    scenario.limits.grid_import_margin_w = 1_000.0; // target import 0 W
+    scenario.limits.max_grid_export_w = 1_500.0;
+    scenario.plan = netted_plan(1.5, 0.0);
+    for slot in &mut scenario.plan.slots {
+        slot.pv_kw = 1.0; // forecast a surplus while the meter still imports
+    }
+    let (outcome, sink) = scenario.run().await;
+    assert_eq!(outcome.target_w, -1_000.0, "the charge was reversed");
+    assert_eq!(
+        outcome.grid_limit,
+        Some(Reason::GridExportLimit),
+        "the export ceiling is independent of the import guard"
+    );
+    assert!(
+        (written_w(&sink) + 500.0).abs() < 5.0,
+        "{} W",
+        written_w(&sink)
+    );
+    assert!(sink.writes().iter().all(|watts| *watts <= 0.0));
 }
 
 #[tokio::test]

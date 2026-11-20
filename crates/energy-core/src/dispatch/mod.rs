@@ -10,7 +10,8 @@
 //! Nothing here decides authority: [`TickInput::mode`] is the gate, `advisory`/`dry_run` run the
 //! whole ladder in shadow, log the intended write and send nothing at all -- not even a hold.
 //! Staleness is also decided above: [`TickInput::stale`] makes the tick hold instead of keeping the
-//! last setpoint (survey §7 trap 4).
+//! last setpoint (survey §7 trap 4). The sole exception is the reactive import ceiling: a measured
+//! breach still commands a protective discharge with a neutral no-plan target.
 //!
 //! The real implementations of the two ports live here too: [`BatteryFleet`] wraps the fleet cache
 //! from `energy-battery` and [`BatterySink`] wraps its per-device controllers (pacing and echo

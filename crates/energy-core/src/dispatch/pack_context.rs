@@ -60,11 +60,16 @@ pub(crate) fn requested_watts(
     context: &PackContext<'_>,
     overridden: Option<&ManualOverride>,
     allocated_w: f64,
+    guard_active: bool,
 ) -> f64 {
     if let Some(entry) = overridden {
         return entry.action.watts();
     }
-    if context.stale { 0.0 } else { allocated_w }
+    if context.stale && !guard_active {
+        0.0
+    } else {
+        allocated_w
+    }
 }
 
 /// The binding reason for what this pack's row reports.
@@ -84,16 +89,17 @@ pub(crate) fn reason_for(
     let primary = match decision.primary() {
         Reason::Ok if maintenance_hold => Reason::MaintenanceHold,
         Reason::Ok if overridden.is_some() => Reason::ManualOverride,
-        Reason::Ok if context.stale => Reason::StaleInput,
         other => other,
     };
-    // The ceiling guard explains a discharge that the plan did not ask for. It outranks generic
-    // clamp reasons, but never a bound that actually stopped the pack: a latched cell, an empty
-    // pack or a missing meter must still say what it is.
+    // The ceiling guard explains a discharge that the plan did not ask for, including a stale or
+    // absent plan. It outranks generic clamp reasons, but never a bound that actually stopped the
+    // pack: a latched cell, an empty pack or a missing meter must still say what it is.
     if guarded && !hard_safety(primary) {
-        Reason::GridImportCeiling
-    } else {
-        primary
+        return Reason::GridImportCeiling;
+    }
+    match primary {
+        Reason::Ok if context.stale => Reason::StaleInput,
+        other => other,
     }
 }
 
