@@ -4,7 +4,8 @@ use energy_battery::protection::CellLatch;
 use energy_ledger::plan::PlanSlot;
 
 use crate::dispatch::{
-    ManualOverride, MeterReading, OverrideAction, OverrideSource, Overrides, PackReading,
+    HOLD_DEADBAND_W, ManualOverride, MeterReading, OverrideAction, OverrideSource, Overrides,
+    PackReading,
 };
 use crate::safety::{Authority, Measured, Reason, SafetyDecision, SafetyLimits};
 
@@ -62,6 +63,29 @@ pub(crate) fn requested_watts(
         return entry.action.watts();
     }
     if context.stale { 0.0 } else { allocated_w }
+}
+
+/// A cell-latch command that must bypass write backoff, and its log reason.
+///
+/// Both halves of the guard are safety traffic: a blocked pack needs a neutral hold, and a pack
+/// below cutoff needs its emergency charge. Neither may wait for a write fault to expire, and the
+/// guard cannot rely on the write path it protects. Outside `auto` nothing is written at all.
+pub(crate) fn cell_safety(
+    latch: Option<&CellLatch>,
+    allowed_w: f64,
+    mode: Authority,
+) -> Option<Reason> {
+    if !mode.may_write() {
+        return None;
+    }
+    let latch = latch?;
+    if latch.blocks_discharge() && allowed_w.abs() <= HOLD_DEADBAND_W {
+        Some(Reason::CellVoltageGuard)
+    } else if latch.forces_charge() && allowed_w > HOLD_DEADBAND_W {
+        Some(Reason::CellVoltageEmergencyCharge)
+    } else {
+        None
+    }
 }
 
 /// The binding reason for what this pack's row reports.
