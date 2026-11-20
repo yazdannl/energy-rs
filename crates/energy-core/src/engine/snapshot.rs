@@ -15,8 +15,8 @@ use crate::engine::control::Engine;
 use crate::engine::faults;
 use crate::plan::Plan;
 use crate::stream::{
-    EngineSnapshot, ForecastSnapshot, MeterSnapshot, PackSnapshot, PlanSnapshot, RuntimeView,
-    SnapshotPublisher,
+    EngineSnapshot, ForecastSnapshot, MaintenanceSnapshot, MeterSnapshot, PackSnapshot,
+    PlanSnapshot, RuntimeView, SnapshotPublisher,
 };
 
 /// Forecast energy in one 15-minute slot, Wh (1 kW for 900 s).
@@ -44,6 +44,10 @@ impl Engine {
             return EngineSnapshot::default();
         };
         let plan = state.plan.clone();
+        let maintenance = plan
+            .as_ref()
+            .map(|plan| plan.maintenance.clone())
+            .unwrap_or_default();
         let plan_id = state.plan_id;
         let overrides: Vec<ManualOverride> = state
             .overrides
@@ -56,7 +60,7 @@ impl Engine {
         drop(state);
 
         let mode = self.gate.mode();
-        let packs = self.pack_snapshots(view, now, &overrides);
+        let packs = self.pack_snapshots(view, now, &overrides, &maintenance);
         let plan_snapshot = plan.as_ref().map(|plan| plan_snapshot(plan, plan_id));
         let faults = faults::derive(
             now,
@@ -142,6 +146,7 @@ impl Engine {
         view: &FleetView,
         now: i64,
         overrides: &[ManualOverride],
+        maintenance: &[energy_battery::protection::full_charge::FullChargeAssignment],
     ) -> Vec<PackSnapshot> {
         view.packs
             .iter()
@@ -161,6 +166,18 @@ impl Engine {
                         .iter()
                         .find(|entry| entry.pack_id == sn && entry.active(now))
                         .cloned(),
+                    maintenance: maintenance.iter().find(|entry| entry.pack_id == sn).map(
+                        |entry| MaintenanceSnapshot {
+                            state: if now < entry.charge_end {
+                                "charging"
+                            } else {
+                                "dwell"
+                            },
+                            target_soc_pct: entry.target_soc_pct,
+                            charge_end: entry.charge_end,
+                            dwell_until: entry.dwell_until,
+                        },
+                    ),
                 }
             })
             .collect()

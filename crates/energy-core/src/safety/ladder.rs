@@ -99,7 +99,15 @@ impl<'a> Ladder<'a> {
     fn soc(&mut self, energy_kwh: f64) {
         let eta_charge = self.pack.eta_charge;
         let eta_discharge = self.pack.eta_discharge;
-        let room = (self.pack.e_max_kwh() - energy_kwh).max(0.0);
+        // A balancing charge is the one case allowed past the normal SoC ceiling: the pack's
+        // device limit, ramp, cell guard, grid ceiling and one-write-at-a-time pacer still apply.
+        let max_soc = if self.request.maintenance_full_charge {
+            100.0
+        } else {
+            self.pack.max_soc_pct
+        };
+        let ceiling_kwh = self.pack.capacity_kwh * max_soc / 100.0;
+        let room = (ceiling_kwh - energy_kwh).max(0.0);
         let headroom = (energy_kwh - self.pack.e_min_kwh(self.limits.reserve_soc_pct)).max(0.0);
         let hi = room / (self.dt_hours * eta_charge) * 1000.0;
         let lo = -headroom * eta_discharge / self.dt_hours * 1000.0;

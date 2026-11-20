@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use energy_battery::protection::full_charge::{FullChargeAction, FullChargeScheduler};
 use energy_battery::protection::{CellLatch, CellVoltageGuard};
 
 use crate::dispatch::ManualOverride;
@@ -30,10 +29,6 @@ pub(crate) struct EngineState {
     pub(crate) overrides: Vec<ManualOverride>,
     pub(crate) watchdog: Watchdog,
     pub(crate) cells: CellVoltageGuard,
-    pub(crate) maintenance: FullChargeScheduler,
-    pub(crate) maintenance_action: FullChargeAction,
-    /// Set by a manual `full_charge` request: the maintenance overrides apply to this pack only.
-    pub(crate) maintenance_pack: Option<String>,
     pub(crate) last_minute: Option<i64>,
     pub(crate) last_session_check: Option<i64>,
     pub(crate) pack_ids: BTreeMap<String, i64>,

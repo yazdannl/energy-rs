@@ -31,6 +31,10 @@ pub struct Pack {
     pub learned_confidence: Option<f64>,
     /// When the learned numbers were written, UTC epoch seconds.
     pub learned_at: Option<i64>,
+    /// Last balancing dwell completed at 100 %, UTC epoch seconds.
+    pub last_full_charge_at: Option<i64>,
+    /// When the current balancing dwell started, UTC epoch seconds.
+    pub dwell_started_at: Option<i64>,
 }
 
 impl Pack {
@@ -51,6 +55,8 @@ impl Pack {
             learned_round_trip: None,
             learned_confidence: None,
             learned_at: None,
+            last_full_charge_at: None,
+            dwell_started_at: None,
         }
     }
 
@@ -89,6 +95,8 @@ impl Pack {
             learned_round_trip: row.get(11)?,
             learned_confidence: row.get(12)?,
             learned_at: row.get(13)?,
+            last_full_charge_at: row.get(14)?,
+            dwell_started_at: row.get(15)?,
         })
     }
 }

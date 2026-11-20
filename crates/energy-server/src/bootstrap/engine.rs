@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use energy_core::dispatch::{BatteryFleet, BatterySink, CommandSink, DeviceFleet, PackCatalog};
 use energy_core::engine::{Engine, EngineConfig, PlanSource};
+use energy_core::maintenance::{FullChargeHistory, LedgerFullChargeHistory, MaintenancePort};
 use energy_core::plan_source::{HaPlanSupply, LivePlanSource, LoadProfiles};
 use energy_core::wiring::LedgerLearningStore;
 use energy_ha::Connection;
@@ -52,22 +53,27 @@ pub fn plan_source(
     profiles: Arc<LoadProfiles>,
     pv: std::sync::Arc<energy_core::plan_source::PvHandle>,
     handle: Arc<energy_core::plan_source::PolicyHandle>,
-) -> Arc<dyn PlanSource> {
+) -> LivePlanSource<HaPlanSupply> {
     let policy = handle.get();
     let config = energy_core::plan_source::SourceConfig {
         policy,
         wear_eur_per_kwh: policy.wear_eur_per_kwh,
         ..energy_core::plan_source::SourceConfig::default()
     };
-    Arc::new(
-        LivePlanSource::new(
-            HaPlanSupply::new(connection, prices, settlement)
-                .with_load_profiles(profiles)
-                .with_pv(pv),
-            config,
-        )
-        .with_policy(handle),
+    LivePlanSource::new(
+        HaPlanSupply::new(connection, prices, settlement)
+            .with_load_profiles(profiles)
+            .with_pv(pv),
+        config,
     )
+    .with_policy(handle)
+}
+
+/// The shared maintenance port: ledger-backed history plus the resolved settings.
+pub fn maintenance_port(ledger: &Arc<Ledger>, config: &EngineConfig) -> Arc<MaintenancePort> {
+    let history: Arc<dyn FullChargeHistory> =
+        Arc::new(LedgerFullChargeHistory::new(Arc::clone(ledger)));
+    Arc::new(MaintenancePort::new(history, config.full_charge))
 }
 
 /// Build the engine over the assembled ports (the caller attaches the API stream).

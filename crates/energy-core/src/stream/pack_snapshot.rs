@@ -3,6 +3,7 @@
 use energy_battery::{CellLatch, LearningProfile};
 
 use crate::dispatch::ManualOverride;
+use crate::stream::MaintenanceSnapshot;
 
 /// Everything the Batteries screen and the safety ladder need to know about one pack.
 ///
@@ -31,4 +32,6 @@ pub struct PackSnapshot {
     pub latch: Option<CellLatch>,
     /// A manual override while it is still in force.
     pub override_state: Option<ManualOverride>,
+    /// The maintenance phase assigned by the current plan, if any.
+    pub maintenance: Option<MaintenanceSnapshot>,
 }

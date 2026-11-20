@@ -20,8 +20,8 @@ mod plan_error;
 mod plan_input;
 mod plan_summary;
 mod policy;
-mod summary;
-mod timeline;
+pub(crate) mod summary;
+pub(crate) mod timeline;
 
 pub use differential::Differential;
 pub use export_policy::ExportPolicy;

@@ -6,6 +6,7 @@ use energy_price::PriceBook;
 
 use crate::dispatch::BoxFuture;
 use crate::engine::PlanSource;
+use crate::maintenance::MaintenancePort;
 use crate::plan::{Differential, HORIZON_SLOTS, PackState, Plan, PlanError, SLOT_SECONDS};
 use crate::plan_source::PolicyHandle;
 use crate::plan_source::{MIN_HORIZON_SLOTS, PlanSupply, SourceConfig, Supply};
@@ -23,6 +24,7 @@ pub struct LivePlanSource<S: PlanSupply> {
     pending: Mutex<Changes>,
     last: Mutex<Option<Fingerprint>>,
     differential: Differential,
+    maintenance: Option<Arc<MaintenancePort>>,
 }
 
 /// What makes a stored plan's inputs outdated without reading the inputs again.
@@ -52,6 +54,7 @@ impl<S: PlanSupply> LivePlanSource<S> {
             pending: Mutex::new(Changes::none()),
             last: Mutex::new(None),
             differential: Differential::default(),
+            maintenance: None,
         }
     }
 
@@ -59,6 +62,21 @@ impl<S: PlanSupply> LivePlanSource<S> {
     #[must_use]
     pub fn with_policy(mut self, policy: Arc<PolicyHandle>) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// Attach the price-aware full-charge rule.
+    #[must_use]
+    pub fn with_maintenance(mut self, maintenance: Arc<MaintenancePort>) -> Self {
+        self.maintenance = Some(maintenance);
+        self
+    }
+
+    /// The import and fleet ceilings the maintenance planner must stay below.
+    #[must_use]
+    pub fn with_maintenance_budget(mut self, grid_w: f64, fleet_w: f64) -> Self {
+        self.config.maintenance_budget_w = grid_w;
+        self.config.maintenance_fleet_cap_w = fleet_w;
         self
     }
 
@@ -73,6 +91,7 @@ impl<S: PlanSupply> LivePlanSource<S> {
         let slots = horizon_slots(&supply.prices, now)?;
         let from = supply.prices.slot_at(now).map_or(now, |slot| slot.t_start);
         let forecast = self.forecast(&supply, from, slots, now)?;
+        let maintenance_packs = packs.clone();
         let mut input = self
             .config
             .input(now, packs, supply.prices, supply.settlement)
@@ -89,7 +108,36 @@ impl<S: PlanSupply> LivePlanSource<S> {
             None => input,
         };
         let check = self.differential.due(now).then_some(&self.differential);
-        input.plan_checked(check)
+        let mut plan = input.plan_checked(check)?;
+        self.place_maintenance(now, &maintenance_packs, &mut plan);
+        Ok(plan)
+    }
+
+    /// Fold due packs' cheap-slot charges into the solved plan.
+    fn place_maintenance(&self, now: i64, packs: &[PackState], plan: &mut Plan) {
+        let Some(port) = &self.maintenance else {
+            return;
+        };
+        let budget = self.maintenance_budget(packs);
+        let candidates = crate::maintenance::candidates(plan, now, budget);
+        let assignments = port.assignments(now, packs, &candidates, budget);
+        let capacity: f64 = packs.iter().map(|pack| pack.spec.capacity_kwh).sum();
+        let eta = super::live_support::weighted_charge_efficiency(packs);
+        crate::maintenance::apply(plan, &assignments, capacity, eta);
+        plan.maintenance = assignments;
+    }
+
+    /// The smaller of the grid-import budget and the fleet charge ceiling.
+    fn maintenance_budget(&self, packs: &[PackState]) -> f64 {
+        let pack_cap: f64 = packs.iter().map(|pack| pack.spec.max_charge_w).sum();
+        let mut budget = pack_cap.max(0.0);
+        if self.config.maintenance_budget_w > 0.0 {
+            budget = budget.min(self.config.maintenance_budget_w);
+        }
+        if self.config.maintenance_fleet_cap_w > 0.0 {
+            budget = budget.min(self.config.maintenance_fleet_cap_w);
+        }
+        budget
     }
 
     /// Refuse a price book whose publication is older than the configured bound.
@@ -115,7 +163,8 @@ impl<S: PlanSupply> LivePlanSource<S> {
         if let Some(forecast) = self.fresh_forecast(supply, slots, now) {
             return Ok(forecast);
         }
-        let note = fallback_note(supply, slots, now, self.config.forecast_max_age_s);
+        let note =
+            super::live_support::fallback_note(supply, slots, now, self.config.forecast_max_age_s);
         let fallback = supply
             .history
             .degraded_forecast(from, slots, now, note.clone())?;
@@ -197,6 +246,10 @@ impl<S: PlanSupply> PlanSource for LivePlanSource<S> {
             |mut pending| std::mem::take(&mut *pending),
         )
     }
+
+    fn maintenance(&self) -> Option<&MaintenancePort> {
+        self.maintenance.as_deref()
+    }
 }
 
 /// Contiguous quarter-hours the book covers from the slot containing `now`, capped at the horizon.
@@ -233,19 +286,4 @@ fn horizon_slots(prices: &PriceBook, now: i64) -> Result<usize, PlanError> {
         });
     }
     Ok(slots)
-}
-
-/// Why the provider forecast was not used.
-fn fallback_note(supply: &Supply, slots: usize, now: i64, max_age_s: i64) -> String {
-    match &supply.forecast {
-        None => "no forecast available; EWMA fallback from measured history".to_owned(),
-        Some(forecast) if forecast.len() < slots => format!(
-            "forecast covers {} of {slots} slots; EWMA fallback",
-            forecast.len()
-        ),
-        Some(forecast) => {
-            let age = now.saturating_sub(forecast.as_of).max(0);
-            format!("forecast is {age}s old (limit {max_age_s}s); EWMA fallback")
-        }
-    }
 }

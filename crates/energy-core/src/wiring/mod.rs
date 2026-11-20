@@ -6,8 +6,6 @@
 //! * [`measurements`] — one 1-minute sample per pack plus the 5-minute rollup.
 //! * [`sessions`] — re-extract completed runs and relearn the pack that just finished one.
 //! * [`cells`] — evaluate the low-cell latch from the newest `min_cell_v` and persist changes.
-//! * [`maintenance`] — consult the weekly full-charge scheduler before the plan and turn its answer
-//!   into expiring per-pack overrides.
 //!
 //! Saving (P9) is deliberately absent: savings rows are derived from measured integrals and belong
 //! to the savings phase, not to the control loop.
@@ -15,7 +13,6 @@
 pub(crate) mod cells;
 pub(crate) mod error;
 pub(crate) mod forecast_store;
-pub(crate) mod maintenance;
 pub(crate) mod measurements;
 pub(crate) mod packs;
 pub(crate) mod sessions;

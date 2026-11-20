@@ -11,9 +11,11 @@
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use energy_core::dispatch::BoxFuture;
 use energy_core::engine::PlanSource;
+use energy_core::maintenance::MaintenancePort;
 use energy_core::plan::{PackState, Plan, PlanError};
 use energy_core::replan::Changes;
 
@@ -23,6 +25,7 @@ pub struct FakeSource {
     refuse: AtomicBool,
     changes: Changes,
     calls: AtomicUsize,
+    maintenance: OnceLock<Arc<MaintenancePort>>,
 }
 
 impl FakeSource {
@@ -32,6 +35,7 @@ impl FakeSource {
             refuse: AtomicBool::new(false),
             changes: Changes::none(),
             calls: AtomicUsize::new(0),
+            maintenance: OnceLock::new(),
         }
     }
 
@@ -42,6 +46,15 @@ impl FakeSource {
 
     pub fn refuse(&self, refuse: bool) {
         self.refuse.store(refuse, Ordering::Relaxed);
+    }
+
+    pub fn with_maintenance(self, port: Arc<MaintenancePort>) -> Self {
+        self.set_maintenance(port);
+        self
+    }
+
+    pub fn set_maintenance(&self, port: Arc<MaintenancePort>) {
+        let _ = self.maintenance.set(port);
     }
 }
 
@@ -62,5 +75,9 @@ impl PlanSource for FakeSource {
 
     fn changes(&self) -> Changes {
         self.changes
+    }
+
+    fn maintenance(&self) -> Option<&MaintenancePort> {
+        self.maintenance.get().map(Arc::as_ref)
     }
 }

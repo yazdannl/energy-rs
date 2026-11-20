@@ -14,8 +14,9 @@
 //!   modes `advisory` -> `dry_run` -> `auto`, per-pack overrides and the shutdown hold.
 //! * [`savings`] — measured daily savings against a no-battery counterfactual, the four-way split
 //!   of the difference and the rollup that writes `savings_daily` (see `docs/SAVINGS.md`).
-//! * [`wiring`] — measurements, session extraction, capacity relearning, cell latch and the
-//!   full-charge maintenance window.
+//! * [`maintenance`] — the seven-day balancing rule: cheap plan slots, per-pack history and the
+//!   completed dwell that starts the next interval.
+//! * [`wiring`] — measurements, session extraction, capacity relearning and the cell latch.
 //! * [`mode`] — the persisted control mode.
 //! * [`stream`] — the contract with the HTTP server: the [`stream::EngineSnapshot`] the loop
 //!   publishes after every tick, the [`stream::SnapshotPublisher`] that carries it, and the small
@@ -27,6 +28,7 @@
 pub mod allocation;
 pub mod dispatch;
 pub mod engine;
+pub mod maintenance;
 pub mod mode;
 pub mod plan;
 pub mod plan_source;

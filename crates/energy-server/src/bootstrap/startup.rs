@@ -137,13 +137,23 @@ async fn wire_engine(
         ledger,
     )));
     let pv = energy_core::plan_source::PvHandle::shared(config::pv(ledger));
-    let source = engine::plan_source(
-        connection,
-        Arc::clone(&prices.repository),
-        prices.settlement(),
-        Arc::clone(profiles),
-        Arc::clone(&pv),
-        Arc::clone(&policy),
+    let grid_budget = if config.max_grid_import_w > 0.0 {
+        (config.max_grid_import_w - config.grid_import_margin_w.max(0.0)).max(0.0)
+    } else {
+        0.0
+    };
+    let port = engine::maintenance_port(ledger, &config);
+    let source: Arc<dyn energy_core::engine::PlanSource> = Arc::new(
+        engine::plan_source(
+            connection,
+            Arc::clone(&prices.repository),
+            prices.settlement(),
+            Arc::clone(profiles),
+            Arc::clone(&pv),
+            Arc::clone(&policy),
+        )
+        .with_maintenance(port)
+        .with_maintenance_budget(grid_budget, config.fleet_max_charge_w),
     );
     Ok(engine::engine(
         Arc::clone(ledger),

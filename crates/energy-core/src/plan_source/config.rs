@@ -30,6 +30,10 @@ pub struct SourceConfig {
     pub price_max_age_s: i64,
     /// Oldest forward forecast the planner still accepts, seconds.
     pub forecast_max_age_s: i64,
+    /// Grid import budget for maintenance charge, W (0 = the pack limits decide).
+    pub maintenance_budget_w: f64,
+    /// Fleet charge ceiling for maintenance, W (0 = the pack limits decide).
+    pub maintenance_fleet_cap_w: f64,
 }
 
 impl Default for SourceConfig {
@@ -44,6 +48,8 @@ impl Default for SourceConfig {
             stale_plan_seconds: 1800,
             price_max_age_s: 6 * 3600,
             forecast_max_age_s: 1800,
+            maintenance_budget_w: 0.0,
+            maintenance_fleet_cap_w: 0.0,
         }
     }
 }

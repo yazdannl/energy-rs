@@ -1,5 +1,6 @@
 //! One plan: the solver's timeline plus the header the ledger and the UI read.
 
+use energy_battery::protection::full_charge::FullChargeAssignment;
 use energy_ledger::plan::PlanSlot;
 
 use crate::plan::{PlanSummary, SLOT_SECONDS};
@@ -42,6 +43,8 @@ pub struct Plan {
     pub degraded: Option<String>,
     /// The 15-minute timeline.
     pub slots: Vec<PlanSlot>,
+    /// Price-aware maintenance charges folded into this plan, one per due pack.
+    pub maintenance: Vec<FullChargeAssignment>,
 }
 
 impl Plan {
