@@ -12,10 +12,9 @@ describe('pack fixtures', () => {
       spreadMv: 30,
       packVoltageV: 49.7,
       maxTempC: 29.1,
-      level: 'ok',
     });
     expect(packs[1]?.state?.cells?.minCellV).toBeNull();
-    expect(packs[1]?.state?.cells?.level).toBeNull();
+    expect(packs[1]?.state?.cells?.maxTempC).toBeNull();
   });
 });
 

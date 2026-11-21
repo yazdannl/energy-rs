@@ -59,9 +59,6 @@ export interface PackLimits {
   maxDischargeW: number | null;
 }
 
-/** The guard bands the API uses to label the lowest cell. */
-export type CellLevel = 'ok' | 'below_resume' | 'below_cutoff';
-
 /** Highest/lowest cell of one pack, their spread and the pack context; all null with no packData. */
 export interface PackCells {
   minCellV: number | null;
@@ -69,7 +66,6 @@ export interface PackCells {
   spreadMv: number | null;
   packVoltageV: number | null;
   maxTempC: number | null;
-  level: CellLevel | null;
 }
 
 export interface PackState {

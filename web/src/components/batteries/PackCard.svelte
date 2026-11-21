@@ -5,7 +5,7 @@
   import Zap from '@lucide/svelte/icons/zap';
 
   import type { Pack } from '../../lib/api/types';
-  import { cellBadge, formatCells } from '../../lib/format/cells';
+  import { cellAge, formatCellPair, formatCells, formatPackContext } from '../../lib/format/cells';
   import { fmtKwh, fmtW } from '../../lib/format/energy';
   import { packLabel } from '../../lib/format/pack';
   import { ago } from '../../lib/format/time';
@@ -20,13 +20,17 @@
   interface Props {
     pack: Pack;
     onchanged: () => void;
+    /** Fixed clock for deterministic age tests; the page reads the clock on every refresh. */
+    now?: number;
   }
 
-  let { pack, onchanged }: Props = $props();
+  let { pack, onchanged, now }: Props = $props();
 
   const flow = $derived(batteryFlow(pack.state?.powerW ?? null));
   const cellText = $derived(formatCells(pack.state?.cells));
-  const cellsBadge = $derived(cellBadge(pack.state?.cells?.level));
+  const cellPair = $derived(formatCellPair(pack.state?.cells));
+  const packContext = $derived(formatPackContext(pack.state?.cells));
+  const cellsAge = $derived(cellAge(pack.state?.sampledAt ?? null, now ?? Date.now()));
 </script>
 
 <article class="card p-3.5">
@@ -63,13 +67,20 @@
         <HeartPulse class="size-3" aria-hidden="true" />
         sampled {ago(pack.state?.sampledAt ?? null)} · seen {ago(pack.lastSeenAt)}
       </p>
-      <p class="flex min-w-0 items-center gap-1 text-[10px] text-faint" title={cellText}>
-        <Activity class="size-3 shrink-0" aria-hidden="true" />
-        <span class="num min-w-0 flex-1 truncate">cells {cellText}</span>
-        {#if cellsBadge}
-          <Badge tone={cellsBadge.tone}>{cellsBadge.label}</Badge>
-        {/if}
-      </p>
+      <div
+        class="min-w-0 space-y-0.5 text-[10px] text-faint"
+        title={`${cellText} · ${cellsAge.label}`}
+      >
+        <p class="flex min-w-0 items-start gap-1">
+          <Activity class="mt-px size-3 shrink-0" aria-hidden="true" />
+          <span class="num min-w-0 break-words">
+            cells {cellPair}<span class={cellsAge.stale ? 'text-warn' : 'text-faint'}>
+              · {cellsAge.label}</span
+            >
+          </span>
+        </p>
+        <p class="num break-words pl-4">{packContext}</p>
+      </div>
     </div>
   </div>
 

@@ -249,7 +249,6 @@ export function makePacks(now: Date): PacksResponse {
           spreadMv: 30,
           packVoltageV: 49.7,
           maxTempC: 29.1,
-          level: 'ok',
         },
       },
       learned: {
@@ -307,7 +306,6 @@ export function makePacks(now: Date): PacksResponse {
           spreadMv: null,
           packVoltageV: null,
           maxTempC: null,
-          level: null,
         },
       },
       learned: {

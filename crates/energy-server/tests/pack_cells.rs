@@ -37,7 +37,6 @@ async fn packs_carry_cells_for_a_report_and_nulls_for_an_empty_pack_data() {
     assert_eq!(reported["spreadMv"], 30.0);
     assert_eq!(reported["packVoltageV"], 49.7);
     assert_eq!(reported["maxTempC"], 29.1);
-    assert_eq!(reported["level"], "ok");
     // The cells share the state's existing freshness signal; no second clock is introduced.
     assert!(packs[0]["state"]["sampledAt"].is_string());
     assert_eq!(packs[0]["state"]["stale"], false);
@@ -48,12 +47,11 @@ async fn packs_carry_cells_for_a_report_and_nulls_for_an_empty_pack_data() {
     assert!(empty["spreadMv"].is_null());
     assert!(empty["packVoltageV"].is_null());
     assert!(empty["maxTempC"].is_null());
-    assert!(empty["level"].is_null());
     assert_eq!(packs[1]["state"]["socPct"], 60.0);
 }
 
 #[tokio::test]
-async fn cells_level_uses_the_low_cell_guard_bands() {
+async fn cells_are_raw_readings_without_a_guard_verdict() {
     let fixture = Fixture::new();
     fixture.publish_cells(
         CellVoltages {
@@ -62,14 +60,18 @@ async fn cells_level_uses_the_low_cell_guard_bands() {
             spread_mv: Some(330.0),
             ..CellVoltages::default()
         },
-        CellVoltages {
-            min_cell_v: Some(3.10),
-            ..CellVoltages::default()
-        },
+        CellVoltages::default(),
     );
 
     let (_, body) = get(&fixture.router(), "/api/v1/packs").await;
     let packs = body["packs"].as_array().unwrap();
-    assert_eq!(packs[0]["state"]["cells"]["level"], "below_cutoff");
-    assert_eq!(packs[1]["state"]["cells"]["level"], "below_resume");
+    let cells = packs[0]["state"]["cells"].as_object().unwrap();
+    assert_eq!(cells["minCellV"], 2.99);
+    assert_eq!(cells["spreadMv"], 330.0);
+    assert!(
+        !cells.contains_key("level"),
+        "no voltage-only guard verdict"
+    );
+    // Blocking stays the latch's statement, including its hysteresis.
+    assert_eq!(packs[0]["latch"]["blocked"], true);
 }

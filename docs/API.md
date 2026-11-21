@@ -118,7 +118,7 @@ override.
   "firstSeenAt": "...", "lastSeenAt": "...",
   "state": { "socPct": 60.0, "powerW": 120.0, "sampledAt": "...", "stale": false,
              "cells": { "minCellV": 3.32, "maxCellV": 3.35, "spreadMv": 30,
-                        "packVoltageV": 49.7, "maxTempC": 29.1, "level": "ok" } },
+                        "packVoltageV": 49.7, "maxTempC": 29.1 } },
   "learned": { "capacityKwh": 1.85, "capacityConfidence": 0.8, "capacityApplied": true,
                "capacityDecision": "capacity_learned", "capacityBandLowKwh": 1.7,
                "capacityBandHighKwh": 1.92, "roundTrip": 0.9, "etaCharge": 0.9486833,
@@ -137,11 +137,11 @@ override.
 
 `state.cells` reports the device's highest and lowest cell of the pack, their difference in mV,
 and the pack voltage and temperature for context. A pack that publishes no `packData` (it happens
-while full) still has a `cells` object, with `null` in every field and no `level`; the existing
-`state.sampledAt`/`state.stale` are the freshness signal for these numbers too. `level` is the lowest
-cell judged against the low-cell guard's own cutoff/resume config: `below_cutoff` below 3.00 V,
-`below_resume` below 3.18 V, otherwise `ok`. The guard itself still uses the raw lowest cell, never
-this display value.
+while full) still has a `cells` object with `null` in every field; the existing
+`state.sampledAt`/`state.stale` are the freshness signal for these numbers too. These are raw
+readings, not a guard verdict: the voltage alone cannot say whether discharge is blocked, because
+the low-cell latch keeps its state across recovery. `latch` remains the single statement about
+protection.
 
 `learned`, `latch` and `override` are `null` when the engine has no value for them.
 `maintenance.lastFullCharge` stamps the end of a completed 100 % balancing dwell, never the moment

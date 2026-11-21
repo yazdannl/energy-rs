@@ -2,10 +2,12 @@
 
 use serde::Serialize;
 
-use energy_battery::protection::CellConfig;
 use energy_core::stream::CellVoltages;
 
-/// The device's highest/lowest cell, their spread and the pack context, in V/mV/°C.
+/// Raw device readings for one pack: highest/lowest cell, spread and pack context, in V/mV/°C.
+///
+/// There is deliberately no guard verdict here. Blocking is the protection latch's statement, and
+/// the latch carries hysteresis that a snapshot of the voltage alone cannot reproduce.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CellsDto {
@@ -14,28 +16,15 @@ pub(crate) struct CellsDto {
     spread_mv: Option<f64>,
     pack_voltage_v: Option<f64>,
     max_temp_c: Option<f64>,
-    /// `below_cutoff`, `below_resume` or `ok`: the lowest cell against the guard's own config.
-    level: Option<&'static str>,
 }
 
-/// Render the cell readings, judging the level with the same config the guard uses.
+/// Render the readings exactly as the engine published them.
 pub(crate) fn cells_dto(cells: &CellVoltages) -> CellsDto {
-    let guard = CellConfig::default();
-    let level = cells.min_cell_v.map(|voltage| {
-        if voltage < guard.cutoff_v {
-            "below_cutoff"
-        } else if voltage < guard.resume_v {
-            "below_resume"
-        } else {
-            "ok"
-        }
-    });
     CellsDto {
         min_cell_v: cells.min_cell_v,
         max_cell_v: cells.max_cell_v,
         spread_mv: cells.spread_mv,
         pack_voltage_v: cells.pack_voltage_v,
         max_temp_c: cells.max_temp_c,
-        level,
     }
 }

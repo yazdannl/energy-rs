@@ -7,7 +7,7 @@
   import { ago } from '../lib/format/time';
   import { fmtW } from '../lib/format/energy';
   import { api } from '../lib/state/runtime';
-  import { poll } from '../lib/state/poller';
+  import { poll, pollVisible } from '../lib/state/poller';
   import { resource } from '../lib/state/resource.svelte';
   import PageHeader from '../components/layout/PageHeader.svelte';
   import PackCard from '../components/batteries/PackCard.svelte';
@@ -17,6 +17,11 @@
   import ErrorNote from '../components/ui/ErrorNote.svelte';
   import Panel from '../components/ui/Panel.svelte';
   import Skeleton from '../components/ui/Skeleton.svelte';
+
+  // Cell readings move every engine tick (5 s); 10 s keeps them current without re-reading
+  // identical snapshots. Dispatch is a log, so it keeps its slower cadence.
+  const PACK_POLL_MS = 10_000;
+  const DISPATCH_POLL_MS = 60_000;
 
   const packs = resource(() => api.packs());
   const site = resource(() => api.site());
@@ -44,12 +49,11 @@
     void packs.load();
     void site.load();
     void dispatch.load();
-    const stopPoll = poll(() => {
-      void packs.load();
-      void dispatch.load();
-    }, 60_000);
+    const stopPacks = pollVisible(() => void packs.load(), PACK_POLL_MS);
+    const stopDispatch = poll(() => void dispatch.load(), DISPATCH_POLL_MS);
     return () => {
-      stopPoll();
+      stopPacks();
+      stopDispatch();
       packs.dispose();
       site.dispose();
       dispatch.dispose();
@@ -174,6 +178,8 @@
 
 <p class="mt-2 text-[10px] leading-relaxed text-faint">
   Pack addresses are not part of the v1 contract; the serial is the only identity the API exposes. A
-  stale sample is shown as stale, never as a fresh measurement. Cell badges follow the engine's
-  low-cell guard; a pack with no packData shows an em dash instead of a number.
+  stale sample is shown as stale, never as a fresh measurement. Packs refresh every 10 s while this
+  tab is visible and pause when it is hidden. Cell values are the device's raw readings; the
+  protection latch states whether discharge is blocked. A pack with no packData shows an em dash
+  instead of a number.
 </p>
