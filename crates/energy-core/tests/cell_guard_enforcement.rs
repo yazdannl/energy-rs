@@ -263,6 +263,46 @@ async fn an_emergency_charge_bypasses_the_write_backoff_after_a_neutral_hold() {
     assert_eq!(report.reason, Reason::CellVoltageEmergencyCharge);
     assert_eq!(h.sink.writes().last(), Some(&800.0));
     assert!(report.written && report.verified);
+    // The bypass write's own receipt must survive the still-active backoff.
+    assert_eq!(report.applied_w, 800.0);
+    assert!(
+        report.error.is_none(),
+        "safety write was relabelled: {report:?}"
+    );
+}
+
+/// A rejected safety write reports its transport failure, not the backoff that was bypassed.
+#[tokio::test]
+async fn a_failed_safety_write_during_backoff_keeps_its_own_failure() {
+    let h = discharge_with_backoff().await;
+    let mut low = pack("SN-A", 50.0);
+    low.power_w = -799.0;
+    low.min_cell_v = Some(3.15);
+    h.fleet.set(vec![low]);
+    h.engine.tick_once(NOW + 15).await.expect("neutral hold");
+
+    let mut below = pack("SN-A", 50.0);
+    below.min_cell_v = Some(2.90);
+    below.power_w = 0.0;
+    h.fleet.set(vec![below]);
+    assert!(
+        h.engine.dispatcher().faults().blocking("SN-A", NOW + 16),
+        "the backoff must still be active for this to prove the exemption"
+    );
+    h.sink.reject_writes(true);
+
+    let outcome = h.engine.tick_once(NOW + 16).await.expect("charged tick");
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.reason, Reason::CellVoltageEmergencyCharge);
+    let error = report.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("scripted rejection"),
+        "the transport failure must survive: {report:?}"
+    );
+    assert!(
+        !error.contains("not sent"),
+        "the safety write was attempted, not suppressed: {report:?}"
+    );
 }
 
 /// A discharge still awaiting its echo is preempted by the cell-safety hold at the bounded window.

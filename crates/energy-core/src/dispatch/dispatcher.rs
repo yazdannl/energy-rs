@@ -1,15 +1,17 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
+mod backoff;
 mod write;
+
+use std::sync::Mutex;
 
 use crate::dispatch::grid_telemetry;
 use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
 use crate::dispatch::pack_context::{cell_safety, measured, reason_for, requested_watts};
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    CommandSink, FaultGuard, HOLD_DEADBAND_W, OverrideAction, OverrideSource, PackReading,
-    PackReport, Planned, TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp,
-    slot_power,
+    CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading, PackReport, Planned,
+    TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp, slot_power,
 };
 use crate::safety::Reason;
 use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
@@ -30,6 +32,8 @@ pub struct Dispatcher {
     failsafe_on_error: bool,
     faults: FaultGuard,
     ceiling: Guard,
+    /// Last non-hold command issued per pack, so a backoff row can name a real standing command.
+    last_commands: Mutex<backoff::LastCommands>,
 }
 
 /// Per-send context: the tick clock and whether this command bypasses fault backoff.
@@ -47,6 +51,7 @@ impl Dispatcher {
             failsafe_on_error,
             faults: FaultGuard::new(backoff_seconds),
             ceiling: Guard::default(),
+            last_commands: Mutex::new(backoff::LastCommands::new()),
         }
     }
 
@@ -238,14 +243,7 @@ impl Dispatcher {
         } else {
             Sent::none()
         };
-        if let Some(cause) = &plan.backoff_cause {
-            let (flow_w, detail) = backoff_flow(&plan);
-            if let Some(flow_w) = flow_w {
-                sent.applied_w = flow_w;
-                sent.flow_measured = true;
-            }
-            sent.error = Some(format!("not sent; backing off after {cause}{detail}"));
-        }
+        backoff::finish(&self.last_commands, &plan, &mut sent);
         PackReport {
             pack_id: plan.pack_id,
             ledger_id: plan.ledger_id,
@@ -261,26 +259,6 @@ impl Dispatcher {
             superseded: sent.superseded,
             error: sent.error,
             note: plan.note,
-        }
-    }
-}
-
-/// A suppressed write still has a live measurement when the pack was read this tick.
-///
-/// With no fresh read the flow is unknown, not zero, even if the ladder clamped the pack to 0 W.
-fn backoff_flow(plan: &Planned) -> (Option<f64>, String) {
-    let standing =
-        plan.requested_w.abs() > HOLD_DEADBAND_W || plan.command_w.abs() > HOLD_DEADBAND_W;
-    match plan.measured_flow_w {
-        None => (None, "; no fresh reading, flow unknown".to_owned()),
-        Some(_) if !standing => (None, String::new()),
-        Some(flow_w) => {
-            let detail = if flow_w.abs() <= energy_battery::FLOW_THRESHOLD_W as f64 {
-                "; previous command still standing; no flow measured".to_owned()
-            } else {
-                format!("; previous command still standing; measured {flow_w:.0} W")
-            };
-            (Some(flow_w), detail)
         }
     }
 }

@@ -394,8 +394,7 @@ async fn a_backoff_row_names_the_fault_that_armed_it() {
 /// A cell-voltage refusal stays visible as a safety action even while the pack is backing off.
 #[tokio::test]
 async fn a_cell_guard_refusal_is_not_relabelled_as_transport_backoff() {
-    // A negative manual setpoint keeps the request alive: the allocator itself excludes a cell-
-    // blocked pack, which would otherwise hide the guard behind a 0 W request.
+    // A negative manual setpoint keeps the request alive; the allocator excludes a cell-blocked pack.
     let overrides = Overrides::new(vec![ManualOverride::manual(
         "SN-A",
         OverrideAction::Charge { watts: -800.0 },
@@ -405,10 +404,16 @@ async fn a_cell_guard_refusal_is_not_relabelled_as_transport_backoff() {
     let sink = FakeSink::new();
     sink.reject_writes(true);
     let dispatcher = dispatcher(SafetyLimits::default());
-
-    fixture
+    let failed = fixture
         .tick(&dispatcher, &sink, NOW + 5, Authority::Auto, false)
         .await;
+    assert!(
+        failed
+            .report("SN-A")
+            .and_then(|report| report.error.as_deref())
+            .is_some_and(|error| error.contains("scripted rejection")),
+        "the original failure keeps its own row"
+    );
     let outcome = fixture
         .tick_with_latches(&dispatcher, &sink, NOW + 10, &[blocking_latch("SN-A")])
         .await;
@@ -420,11 +425,15 @@ async fn a_cell_guard_refusal_is_not_relabelled_as_transport_backoff() {
         report.reason
     );
     assert!(
-        report
+        report.written && report.verified,
+        "the guard hold must carry its own receipt: {report:?}"
+    );
+    assert!(
+        !report
             .error
             .as_deref()
-            .is_some_and(|error| error.contains("scripted rejection")),
-        "the fault cause must still be journalled: {:?}",
+            .is_some_and(|error| error.contains("not sent")),
+        "a bypass write must not be relabelled as suppressed: {:?}",
         report.error
     );
 }

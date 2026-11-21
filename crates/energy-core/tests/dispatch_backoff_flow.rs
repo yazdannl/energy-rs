@@ -135,3 +135,39 @@ async fn a_stale_or_unavailable_pack_reports_unknown_flow_not_zero_delivery() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_suppressed_stop_tick_still_reports_continuing_discharge() {
+    // No plan, no prior write: nothing in this tick claims a command is standing, yet the fresh
+    // reading shows real output. The watts must be published without inventing a command.
+    let h = harness::build(
+        Authority::Auto,
+        vec![pack_reporting(-799.0, false, true)],
+        plan(NOW, 0.0, 0.96),
+    );
+    h.engine.boot(NOW).await.expect("boot");
+    h.engine
+        .dispatcher()
+        .faults()
+        .arm("SN-A", NOW, "scripted backoff");
+
+    let outcome = h
+        .engine
+        .tick_once(NOW + 5)
+        .await
+        .expect("suppressed stop tick");
+    let report = outcome.report("SN-A").expect("pack row");
+    assert_eq!(report.applied_w, -799.0);
+    assert!(report.flow_measured);
+    assert!(!report.written);
+    assert!(!report.verified);
+    assert!(
+        report.error.as_deref().is_some_and(|error| {
+            error.contains("no command is standing")
+                && error.contains("flow unexplained")
+                && error.contains("799 W")
+        }),
+        "the row must name the unexplained flow: {:?}",
+        report.error
+    );
+}
