@@ -416,6 +416,7 @@ fn the_fold_replaces_a_conflicting_discharge_and_scales_a_clipped_slot() {
             expected_cost_eur: 0.003,
             missing_kwh: 0.0,
             partial_reason: None,
+            band_deadline: NOW,
             band_ceil_eur_per_kwh: 0.08,
         }],
         1.92,
@@ -449,6 +450,7 @@ fn assignment(pack_id: &str, charge_end: i64, dwell_until: i64) -> FullChargeAss
         expected_cost_eur: 0.0,
         missing_kwh: 0.0,
         partial_reason: None,
+        band_deadline: charge_end,
         band_ceil_eur_per_kwh: 0.08,
     }
 }

@@ -1,5 +1,6 @@
 //! Shared maintenance port: settings, history and one-shot manual forcing.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use energy_battery::protection::full_charge::{
@@ -98,17 +99,42 @@ impl MaintenancePort {
         if let Ok(mut saved) = self.previous.lock() {
             saved.clone_from(&assignments.assignments);
         }
-        // A partial charge does not satisfy a manual request: the pack is not at the target.
-        if !assignments.assignments.is_empty()
-            && assignments
-                .assignments
-                .iter()
-                .all(FullChargeAssignment::is_complete)
-            && let Ok(mut pending) = self.forced.lock()
-        {
-            *pending = None;
-        }
+        self.acknowledge_forced(forced.as_ref(), &due, &assignments);
         assignments
+    }
+
+    /// Clear only the requested packs that actually completed a full charge.
+    ///
+    /// Refused and partial packs stay pending; a fleet-wide request is narrowed to its unresolved
+    /// members after each solve.
+    fn acknowledge_forced(
+        &self,
+        forced: Option<&Vec<String>>,
+        due: &[DuePack],
+        plan: &IntervalPlan,
+    ) {
+        let Some(list) = forced else {
+            return;
+        };
+        let complete: HashSet<&str> = plan
+            .assignments
+            .iter()
+            .filter(|entry| entry.is_complete())
+            .map(|entry| entry.pack_id.as_str())
+            .collect();
+        let requested: Vec<String> = if list.is_empty() {
+            due.iter().map(|pack| pack.pack_id.clone()).collect()
+        } else {
+            list.clone()
+        };
+        let unresolved: Vec<String> = requested
+            .into_iter()
+            .filter(|id| !complete.contains(id.as_str()))
+            .collect();
+        let pending = (!unresolved.is_empty()).then_some(unresolved);
+        if let Ok(mut guard) = self.forced.lock() {
+            *guard = pending;
+        }
     }
 
     /// The durable history, for the dwell writer.

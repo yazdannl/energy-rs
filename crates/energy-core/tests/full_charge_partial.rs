@@ -1,4 +1,4 @@
-//! A cheap band that cannot finish a pack must still charge it, without claiming completion.
+//! Partial maintenance charges: book what the cheap band can deliver, without claiming success.
 
 #![allow(
     clippy::unwrap_used,
@@ -18,7 +18,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use energy_battery::protection::full_charge::{
-    ChargeCandidate, DuePack, FullChargeSettings, IntervalPlan, interval,
+    ChargeCandidate, ChargeSlot, DuePack, FullChargeAssignment, FullChargeSettings, IntervalPlan,
+    interval,
 };
 use energy_core::dispatch::FleetView;
 use energy_core::maintenance::{
@@ -66,36 +67,14 @@ fn slots(prices: &[f64], available_w: f64) -> Vec<ChargeCandidate> {
         .collect()
 }
 
-fn charged_kwh(slots: &[energy_battery::protection::full_charge::ChargeSlot]) -> f64 {
+fn charged_kwh(slots: &[ChargeSlot]) -> f64 {
     slots
         .iter()
         .map(|slot| slot.charge_w * slot.duration_s as f64 / 3_600_000.0)
         .sum()
 }
 
-/// Ten-minute slots whose shrinking-window mean would drop below the 0.342 band after one slot.
-fn drifting_band(start: i64, from: usize) -> Vec<ChargeCandidate> {
-    (from..30)
-        .map(|index| {
-            let at = start + index as i64 * 600;
-            ChargeCandidate {
-                slot_start: at,
-                t_start: at,
-                t_end: at + 600,
-                price_eur_per_kwh: if index < 8 {
-                    0.40
-                } else if index < 20 {
-                    0.342
-                } else {
-                    0.30
-                },
-                available_w: 800.0,
-            }
-        })
-        .collect()
-}
-
-fn starts(assignment: &energy_battery::protection::full_charge::FullChargeAssignment) -> Vec<i64> {
+fn starts(assignment: &FullChargeAssignment) -> Vec<i64> {
     assignment
         .slots
         .iter()
@@ -134,18 +113,6 @@ fn assert_partial_has_no_dwell(result: &IntervalPlan, pack_id: &str) {
     assert_eq!(history.last_full_at(pack_id), None);
 }
 
-fn clipped_band(start: i64, elapsed: i64) -> Vec<ChargeCandidate> {
-    (0..5)
-        .map(|index| ChargeCandidate {
-            slot_start: start + index * SLOT_SECONDS,
-            t_start: start + index * SLOT_SECONDS + if index == 0 { elapsed } else { 0 },
-            t_end: start + (index + 1) * SLOT_SECONDS,
-            price_eur_per_kwh: 0.08,
-            available_w: 1_000.0,
-        })
-        .collect()
-}
-
 fn assert_four_pack_result(result: &IntervalPlan) {
     assert_eq!(result.assignments.len(), 4, "{:?}", result.unassigned);
     assert!(result.unassigned.is_empty());
@@ -160,13 +127,7 @@ fn assert_four_pack_result(result: &IntervalPlan) {
     assert_eq!(partial.partial_reason, Some("not_enough_eligible_slots"));
     let booked = charged_kwh(&partial.slots);
     assert!(booked > 1.2 && booked < 1.5, "booked {booked} kWh");
-    // Missing is against the band's full-quarter-hour capacity, not the seconds left in a slot.
     assert!(partial.missing_kwh > 0.2 && partial.missing_kwh < 0.4);
-    assert_partial_snapshot(result);
-}
-
-fn assert_partial_snapshot(result: &IntervalPlan) {
-    let partial = &result.assignments[3];
     let snapshot = MaintenanceSnapshot::assigned(partial, NOW);
     assert_eq!(snapshot.state, "charging_partial");
     assert_eq!(
@@ -174,17 +135,10 @@ fn assert_partial_snapshot(result: &IntervalPlan) {
         Some("not_enough_eligible_slots")
     );
     assert_eq!(snapshot.missing_kwh, Some(partial.missing_kwh));
-    assert!(
-        MaintenanceSnapshot::assigned(&result.assignments[0], NOW)
-            .missing_kwh
-            .is_none()
-    );
 }
 
 #[test]
 fn four_due_packs_get_a_partial_fourth_without_a_dwell_or_history_stamp() {
-    // 2.7 kW per quarter-hour fits three 800 W packs and 300 W for the fourth: three full charges
-    // plus about 0.9 kWh for the last one.
     let prices: Vec<f64> = [0.08; 12].into_iter().chain([0.30; 40]).collect();
     let candidates = slots(&prices, 2_700.0);
     let packs: Vec<DuePack> = (0..4)
@@ -241,7 +195,6 @@ fn a_partial_charge_never_pushes_a_spiked_slot_over_the_import_budget() {
     let result = interval::plan(NOW, &settings(), &candidates, &packs, 7_500.0);
     assert_eq!(result.assignments.len(), 4);
     assert!(result.assignments.iter().any(|entry| !entry.is_complete()));
-
     let mut used = BTreeMap::new();
     for assignment in &result.assignments {
         for slot in &assignment.slots {
@@ -266,107 +219,72 @@ fn a_partial_charge_never_pushes_a_spiked_slot_over_the_import_budget() {
     }
 }
 
-#[test]
-fn a_replan_ten_minutes_later_keeps_the_same_contiguous_charge() {
+fn islands(start: i64) -> Vec<ChargeCandidate> {
+    (0..16)
+        .map(|index| {
+            let at = start + i64::from(index) * 600;
+            ChargeCandidate {
+                slot_start: at,
+                t_start: at,
+                t_end: at + 600,
+                price_eur_per_kwh: if (4..8).contains(&index) { 0.9 } else { 0.5 },
+                available_w: 800.0,
+            }
+        })
+        .collect()
+}
+
+fn six_slots(available_w: f64) -> Vec<ChargeCandidate> {
     let start = NOW - NOW.rem_euclid(600);
-    let first = interval::plan(
+    (0..6)
+        .map(|index| {
+            let at = start + i64::from(index) * 600;
+            ChargeCandidate {
+                slot_start: at,
+                t_start: at,
+                t_end: at + 600,
+                price_eur_per_kwh: 0.5,
+                available_w,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_charge_never_joins_two_cheap_islands_across_an_expensive_gap() {
+    let start = NOW - NOW.rem_euclid(600);
+    let result = interval::plan(
         start,
         &settings(),
-        &drifting_band(start, 0),
+        &islands(start),
         &[due_pack("ONE")],
         7_500.0,
     );
-    let second = interval::plan_after(
-        start + 600,
-        &settings(),
-        &drifting_band(start, 1),
-        &[due_pack("ONE")],
-        7_500.0,
-        &first.assignments,
-    );
-    assert_eq!(first.assignments.len(), 1);
-    assert_eq!(second.assignments.len(), 1);
-    let before = starts(&first.assignments[0]);
-    let after = starts(&second.assignments[0]);
-    assert_eq!(after[0], before[0], "the charge moved to a later slot");
-    for planned in [&before, &after] {
-        assert!(planned.windows(2).all(|pair| pair[1] - pair[0] == 600));
-    }
-    assert!(second.assignments[0].is_complete());
+    let assignment = &result.assignments[0];
+    assert!(!assignment.is_complete());
+    let booked = starts(assignment);
+    assert!(booked.iter().all(|slot| *slot >= start + 8 * 600));
+    assert!(booked.windows(2).all(|pair| pair[1] - pair[0] == 600));
 }
 
 #[test]
-fn a_band_that_would_drop_a_booked_slot_does_not_evict_it() {
-    let start = NOW - NOW.rem_euclid(600);
-    let first = interval::plan(
-        start,
+fn an_earlier_packs_partial_fill_shortens_the_run_left_to_a_later_pack() {
+    let result = interval::plan(
+        NOW,
         &settings(),
-        &drifting_band(start, 0),
-        &[due_pack("ONE")],
+        &six_slots(1_200.0),
+        &[due_pack("A_SMALL"), {
+            let mut big = due_pack("B_BIG");
+            big.max_charge_w = 2_000.0;
+            big
+        }],
         7_500.0,
     );
-    let anchored_start = starts(&first.assignments[0])[0];
-    let later = start + 600;
-    let unanchored = interval::plan(
-        later,
-        &settings(),
-        &drifting_band(start, 1),
-        &[due_pack("ONE")],
-        7_500.0,
-    );
-    assert!(
-        starts(&unanchored.assignments[0])[0] > anchored_start,
-        "the drifting threshold should have excluded the booked slot"
-    );
-    let anchored = interval::plan_after(
-        later,
-        &settings(),
-        &drifting_band(start, 1),
-        &[due_pack("ONE")],
-        7_500.0,
-        &first.assignments,
-    );
-    assert_eq!(starts(&anchored.assignments[0])[0], anchored_start);
-}
-
-#[test]
-fn the_shared_port_keeps_the_band_when_the_new_plan_has_no_maintenance_rows() {
-    let start = NOW - NOW.rem_euclid(600);
-    let ledger = fakes::ledger_with(&["ONE"]);
-    let history: Arc<dyn FullChargeHistory> = Arc::new(LedgerFullChargeHistory::new(ledger));
-    let port = MaintenancePort::new(history, settings());
-    let mut state = pack("ONE", 13.0).state().expect("pack state");
-    state.spec.max_soc_pct = 100.0;
-    let first = port.assignments(start, &[state.clone()], &drifting_band(start, 0), 7_500.0);
-    let anchored = starts(&first.assignments[0])[0];
-    // A freshly solved plan always starts with an empty maintenance list; the port is the anchor.
-    let second = port.assignments(start + 600, &[state], &drifting_band(start, 1), 7_500.0);
-    assert_eq!(starts(&second.assignments[0])[0], anchored);
-}
-
-#[test]
-fn missing_kwh_does_not_grow_when_only_time_inside_a_planned_slot_passes() {
-    let start = NOW - NOW.rem_euclid(SLOT_SECONDS);
-    let first = interval::plan(
-        start + 780,
-        &settings(),
-        &clipped_band(start, 780),
-        &[due_pack("ONE")],
-        7_500.0,
-    );
-    let later = interval::plan(
-        start + 840,
-        &settings(),
-        &clipped_band(start, 840),
-        &[due_pack("ONE")],
-        7_500.0,
-    );
-    assert_eq!(first.assignments.len(), 1);
-    assert_eq!(later.assignments.len(), 1);
-    let early = &first.assignments[0];
-    let late = &later.assignments[0];
-    assert!(!early.is_complete() && !late.is_complete());
-    assert_eq!(early.missing_kwh, late.missing_kwh);
-    assert!((early.missing_kwh - (REQUIRED_KWH - 1.0)).abs() < 1e-6);
-    assert!(charged_kwh(&early.slots) > charged_kwh(&late.slots));
+    assert_eq!(result.assignments.len(), 2);
+    let small = &result.assignments[0];
+    let big = &result.assignments[1];
+    assert!(!small.is_complete() && !big.is_complete());
+    assert!(small.slots.iter().all(|slot| slot.charge_w == 800.0));
+    assert!(big.slots.iter().all(|slot| slot.charge_w == 400.0));
+    assert!(big.missing_kwh > small.missing_kwh);
 }

@@ -1,16 +1,83 @@
-//! Earliest-first slot filling, shared by complete and partial maintenance charges.
+//! Largest contiguous cheap run, shared by complete and partial maintenance charges.
 
 use crate::protection::full_charge::{ChargeCandidate, ChargeSlot, DuePack};
 
 /// Reserved slots by eligible index, cost EUR, delivered AC kWh, and whether the need was met.
 pub(crate) type FilledWindow = (Vec<(usize, ChargeSlot)>, f64, f64, bool);
 
-/// Fill one run of eligible slots from `start`, skipping slots others have exhausted.
+const ENERGY_EPS_KWH: f64 = 1e-6;
+/// Price difference that counts as a revised publication rather than a rounding artefact.
+const PRICE_EPS_EUR: f64 = 1e-6;
+
+/// Only ceilings from this night and this price publication may anchor the band.
+pub(crate) fn anchored_ceiling(
+    previous: &[crate::protection::full_charge::FullChargeAssignment],
+    deadline: i64,
+    candidates: &[ChargeCandidate],
+) -> f64 {
+    previous
+        .iter()
+        .filter(|entry| entry.band_deadline == deadline)
+        .filter(|entry| {
+            !entry
+                .slots
+                .iter()
+                .any(|slot| price_changed(candidates, slot))
+        })
+        .map(|entry| entry.band_ceil_eur_per_kwh)
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// Whether a booked slot's price was revised since it was planned.
+fn price_changed(candidates: &[ChargeCandidate], slot: &ChargeSlot) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.slot_start == slot.slot_start
+            && (candidate.price_eur_per_kwh - slot.price_eur_per_kwh).abs() > PRICE_EPS_EUR
+    })
+}
+
+/// Fill the temporally contiguous run with the most deliverable energy.
 ///
-/// Watts never exceed the pack's ceiling or the headroom left in a slot. The returned energy is
-/// what the plan can really deliver in the remaining seconds, so a partial fill is never counted
-/// as a complete charge.
+/// Expensive gaps and slots other packs have exhausted end a run. Ties go to the earliest start,
+/// so a cheap island never gets joined to another through quarters that are not eligible.
 pub(crate) fn fill(
+    pack: &DuePack,
+    eligible: &[ChargeCandidate],
+    remaining: &[f64],
+    needed: f64,
+) -> FilledWindow {
+    let mut best: FilledWindow = (Vec::new(), 0.0, 0.0, false);
+    for start in 0..eligible.len() {
+        if remaining[start] <= 0.0 {
+            continue;
+        }
+        let run = fill_run(pack, eligible, remaining, start, needed);
+        if better(&run, &best) {
+            best = run;
+        }
+    }
+    best
+}
+
+/// A complete run beats a partial one; otherwise prefer more energy, then the earlier run.
+fn better(candidate: &FilledWindow, best: &FilledWindow) -> bool {
+    let (_, _, energy, complete) = *candidate;
+    let (_, _, best_energy, best_complete) = *best;
+    if complete != best_complete {
+        return complete;
+    }
+    if (energy - best_energy).abs() > ENERGY_EPS_KWH {
+        return energy > best_energy;
+    }
+    first_start(candidate) < first_start(best)
+}
+
+fn first_start(run: &FilledWindow) -> i64 {
+    run.0.first().map_or(i64::MAX, |(_, slot)| slot.t_start)
+}
+
+/// Walk one run from `start`, stopping at a price gap or an exhausted slot.
+fn fill_run(
     pack: &DuePack,
     eligible: &[ChargeCandidate],
     remaining: &[f64],
@@ -23,8 +90,12 @@ pub(crate) fn fill(
     let mut cost = 0.0;
     let mut delivered = 0.0;
     let mut complete = false;
+    let mut previous_end: Option<i64> = None;
     for index in start..eligible.len() {
         let candidate = eligible[index];
+        if previous_end.is_some_and(|end| candidate.slot_start != end) {
+            break;
+        }
         let seconds = candidate.t_end - candidate.t_start;
         if seconds <= 0 {
             continue;
@@ -34,7 +105,7 @@ pub(crate) fn fill(
             .min(unfilled * 3_600_000.0 / seconds as f64)
             .max(0.0);
         if watts <= 0.0 {
-            continue;
+            break;
         }
         let energy = watts * seconds as f64 / 3_600_000.0;
         cost += energy * candidate.price_eur_per_kwh;
@@ -52,7 +123,8 @@ pub(crate) fn fill(
             },
         ));
         reserved[index] -= watts;
-        if unfilled <= 1e-6 {
+        previous_end = Some(candidate.t_end);
+        if unfilled <= ENERGY_EPS_KWH {
             complete = true;
             break;
         }

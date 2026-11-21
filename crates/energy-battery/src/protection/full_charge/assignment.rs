@@ -24,8 +24,10 @@ pub struct FullChargeAssignment {
     pub missing_kwh: f64,
     /// Cause of a partial charge: `not_enough_eligible_slots` or `insufficient_capacity`.
     pub partial_reason: Option<&'static str>,
-    /// Cheap-band price ceiling used for this plan, EUR/kWh. Carried forward so a later replan
-    /// cannot demote a slot that was already booked just because the remaining-window median fell.
+    /// Overnight deadline (07:00 local) this band belongs to; a rollover drops the anchor.
+    pub band_deadline: i64,
+    /// Cheap-band price ceiling used for this plan, EUR/kWh. Carried forward inside its own night
+    /// and unchanged publication so a falling median cannot demote an already-booked slot.
     pub band_ceil_eur_per_kwh: f64,
 }
 
