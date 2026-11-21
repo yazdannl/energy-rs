@@ -20,6 +20,8 @@ pub struct DeviceSnapshot {
     pub fetched_at: Option<Instant>,
     pub error: Option<String>,
     pub fault: Option<ControlFault>,
+    /// Historical fault, kept after the transient observation has gone quiet.
+    pub historical_fault: Option<ControlFault>,
     pub confirmed: Option<Command>,
 }
 
@@ -31,18 +33,24 @@ impl DeviceSnapshot {
             fetched_at: None,
             error: None,
             fault: None,
+            historical_fault: None,
             confirmed: None,
         }
     }
 
-    /// Fold one successful observation into the cache.
-    pub fn from_observation(observation: Observation, at: Instant) -> Self {
+    /// Fold one successful observation and its controller fault history into the cache.
+    pub fn from_observation(
+        observation: Observation,
+        at: Instant,
+        historical_fault: Option<ControlFault>,
+    ) -> Self {
         Self {
             sn: observation.report.sn.clone(),
             report: Some(observation.report),
             fetched_at: Some(at),
             error: None,
             fault: observation.fault,
+            historical_fault,
             confirmed: observation.confirmed,
         }
     }

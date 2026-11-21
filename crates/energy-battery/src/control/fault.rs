@@ -42,6 +42,15 @@ pub enum ControlFault {
         detail: String,
     },
     #[error(
+        "write to {sn} echoed {direction} {echoed_w} W but measured only {observed_w} W: the AC path did not carry power"
+    )]
+    NoFlow {
+        sn: String,
+        direction: Direction,
+        echoed_w: u32,
+        observed_w: i64,
+    },
+    #[error(
         "hold on {sn} not confirmed: report echoes inputLimit {input_w} W / outputLimit {output_w} W"
     )]
     HoldEcho {

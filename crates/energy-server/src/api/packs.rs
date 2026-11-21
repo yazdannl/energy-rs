@@ -29,6 +29,11 @@ struct StateDto {
     power_w: Option<f64>,
     sampled_at: Option<Timestamp>,
     stale: bool,
+    /// Active control fault (a messageId reset or a pack that never drew power).
+    control_fault: Option<String>,
+    /// Historical device fault; sustained discharge power with a contradictory status.
+    last_control_fault: Option<String>,
+    flow_alarm: Option<String>,
 }
 
 /// The applied learning result, including its provenance.
@@ -179,6 +184,9 @@ fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> StateDto {
             power_w: live.power_w.map(watts),
             sampled_at: Timestamp::lenient(live.sampled_at),
             stale: live.stale,
+            control_fault: live.control_fault.clone(),
+            last_control_fault: live.last_control_fault.clone(),
+            flow_alarm: live.flow_alarm.clone(),
         };
     }
     let last = stored.last.as_ref();
@@ -187,7 +195,10 @@ fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> StateDto {
         soc_pct: last.and_then(|sample| sample.soc_pct),
         power_w: last.and_then(|sample| sample.power_w).map(watts),
         sampled_at: Timestamp::lenient(sampled_at),
+        control_fault: None,
         stale: sampled_at.is_none_or(|at| now - at > STALE_AFTER_S),
+        last_control_fault: None,
+        flow_alarm: None,
     }
 }
 

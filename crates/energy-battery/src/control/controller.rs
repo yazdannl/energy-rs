@@ -25,7 +25,10 @@ use crate::report::Report;
 use crate::transport::{DeviceIo, WriteAck, WriteRequest};
 
 /// How long a restarted or wedged device is left alone before the next write attempt.
-pub const FAULT_BACKOFF: Duration = Duration::from_secs(10);
+///
+/// A pack whose local API restarted needs minutes, not one control tick: re-writing while it is
+/// still coming back is what produced the 20 s command stream in the 2026-11-21 incident.
+pub const FAULT_BACKOFF: Duration = Duration::from_secs(300);
 
 /// Emergency neutralising holds a wedged device gets per wedge episode before it is left alone.
 ///
@@ -101,10 +104,6 @@ impl<T: DeviceIo> DeviceController<T> {
         self.lock().and_then(|inner| inner.pending.clone())
     }
 
-    pub fn last_fault(&self) -> Option<ControlFault> {
-        self.lock().and_then(|inner| inner.last_fault.clone())
-    }
-
     pub fn is_wedged(&self) -> bool {
         self.inner.lock().is_ok_and(|inner| inner.wedged.is_some())
     }
@@ -113,7 +112,7 @@ impl<T: DeviceIo> DeviceController<T> {
     ///
     /// A wedge or a restart surfaces a fault and pushes the pacer out by [`FAULT_BACKOFF`].
     pub async fn poll(&self) -> Result<Observation, BatteryError> {
-        let (report, (confirmed, fault, resolved_request)) = {
+        let (report, (confirmed, partial, fault, resolved_request)) = {
             let _transaction = self.transaction.lock().await;
             let report = self.transport.report().await?;
             let observed = self.record(&report);
@@ -125,6 +124,7 @@ impl<T: DeviceIo> DeviceController<T> {
         Ok(Observation::observed(
             report,
             confirmed,
+            partial,
             fault,
             resolved_request,
         ))
@@ -239,6 +239,9 @@ impl<T: DeviceIo> DeviceController<T> {
             sent_at: Instant::now(),
             emergency,
             inconclusive: None,
+            flow_samples: 0,
+            full_flow_samples: 0,
+            flow_w: 0,
         };
         inner.pending = Some(pending.clone());
         pending
@@ -280,9 +283,17 @@ impl<T: DeviceIo> DeviceController<T> {
     }
 
     /// Fold one report into the device state.
-    fn record(&self, report: &Report) -> (Option<Command>, Option<ControlFault>, Option<u32>) {
+    fn record(
+        &self,
+        report: &Report,
+    ) -> (
+        Option<Command>,
+        Option<Command>,
+        Option<ControlFault>,
+        Option<u32>,
+    ) {
         let Ok(mut inner) = self.inner.lock() else {
-            return (None, None, None);
+            return (None, None, None, None);
         };
         inner.record(report, self.transport.sn())
     }

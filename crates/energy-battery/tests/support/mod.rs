@@ -46,6 +46,8 @@ pub fn report_json(sn: &str) -> Value {
         "properties": {
             "electricLevel": 45,
             "acMode": 2,
+            "acStatus": 0,
+            "dcStatus": 0,
             "inputLimit": 0,
             "outputLimit": 0,
             "smartMode": 1,
@@ -118,6 +120,42 @@ pub fn report_at(sn: &str, message_id: u32, timestamp: i64, overrides: Value) ->
     properties.insert("ts".to_owned(), json!(timestamp));
     for (key, value) in overrides.as_object().unwrap() {
         properties.insert(key.clone(), value.clone());
+    }
+    // A healthy scripted pack carries real AC flow whenever its echo says a direction is live.
+    // Tests of an echo-only ack override these fields explicitly to keep the flow at zero.
+    let ac_mode = properties
+        .get("acMode")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let input = properties
+        .get("inputLimit")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let output = properties
+        .get("outputLimit")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let override_keys = overrides.as_object().unwrap();
+    if input > 0 && ac_mode == 1 {
+        if !override_keys.contains_key("acStatus") {
+            properties.insert("acStatus".to_owned(), json!(2));
+        }
+        if !override_keys.contains_key("dcStatus") {
+            properties.insert("dcStatus".to_owned(), json!(1));
+        }
+        if !override_keys.contains_key("gridInputPower") {
+            properties.insert("gridInputPower".to_owned(), json!(input));
+        }
+    } else if output > 0 && ac_mode == 2 {
+        if !override_keys.contains_key("acStatus") {
+            properties.insert("acStatus".to_owned(), json!(1));
+        }
+        if !override_keys.contains_key("dcStatus") {
+            properties.insert("dcStatus".to_owned(), json!(1));
+        }
+        if !override_keys.contains_key("outputHomePower") {
+            properties.insert("outputHomePower".to_owned(), json!(output));
+        }
     }
     parse(&document)
 }

@@ -104,8 +104,13 @@ async fn a_same_second_backward_reorder_is_inconclusive() {
     assert!(controller.pending().is_some());
 
     device.push_report(echo(4214, T0 + 2, 300));
+    device.push_report(echo(4215, T0 + 3, 300));
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 300 })
     );
 }
@@ -136,8 +141,13 @@ async fn a_replay_after_several_wraps_is_inconclusive() {
         assert!(controller.pending().is_some());
     }
     device.push_report(echo(3, T0 + 3, 500));
+    device.push_report(echo(4, T0 + 4, 500));
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 500 })
     );
 }
@@ -161,8 +171,13 @@ async fn a_thirty_three_step_burst_resynchronises_without_confirming() {
     assert!(burst.fault.is_none() && controller.pending().is_some());
 
     device.push_report(echo(134, T0 + 2, 300));
+    device.push_report(echo(135, T0 + 3, 300));
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 300 })
     );
 }
@@ -210,8 +225,13 @@ async fn a_thirty_two_step_wrap_confirms_but_thirty_three_resynchronises() {
         .await
         .unwrap();
     device.push_report(echo(26, T0 + 1, 500)); // 250 -> 26 is exactly 32 steps
+    device.push_report(echo(27, T0 + 2, 500));
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 500 })
     );
 
@@ -231,8 +251,13 @@ async fn a_thirty_two_step_wrap_confirms_but_thirty_three_resynchronises() {
     assert_eq!(burst.confirmed, None);
     assert!(burst.fault.is_none() && controller.pending().is_some());
     device.push_report(echo(28, T0 + 2, 500));
+    device.push_report(echo(29, T0 + 3, 500));
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 500 })
     );
 }

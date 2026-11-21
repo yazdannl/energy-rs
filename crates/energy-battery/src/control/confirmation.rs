@@ -165,6 +165,7 @@ pub(super) fn read_miss<T: DeviceIo>(
     Ok(Observation {
         report,
         confirmed: None,
+        partial: None,
         fault: None,
         resolved_request: Some(request_id),
         superseded: false,
@@ -196,6 +197,7 @@ pub(super) fn expire<T: DeviceIo>(
     Ok(Observation {
         report,
         confirmed: None,
+        partial: None,
         fault: Some(fault),
         resolved_request: Some(request_id),
         superseded: false,

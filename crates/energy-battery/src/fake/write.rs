@@ -92,6 +92,26 @@ impl FakeState {
         if let Some(limit) = properties.get("outputLimit").and_then(Value::as_i64) {
             self.output_limit_w = decode::watts(limit);
         }
+        if !self.behaviour.simulate_flow {
+            // The pathological pack: registers change, AC relay stays open, nothing moves.
+            return;
+        }
+        if self.input_limit_w > 0 && self.ac_mode == 1 {
+            self.grid_input_w = i64::from(self.input_limit_w);
+            self.output_home_w = 0;
+            self.ac_status = 2;
+            self.dc_status = 1;
+        } else if self.output_limit_w > 0 && self.ac_mode == 2 {
+            self.output_home_w = i64::from(self.output_limit_w);
+            self.grid_input_w = 0;
+            self.ac_status = 1;
+            self.dc_status = 1;
+        } else if self.input_limit_w == 0 && self.output_limit_w == 0 {
+            self.grid_input_w = 0;
+            self.output_home_w = 0;
+            self.ac_status = 0;
+            self.dc_status = 0;
+        }
     }
 }
 

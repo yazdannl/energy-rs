@@ -1,4 +1,6 @@
-//! Confirmation by echo: the only success signal the device gives.
+//! Echo confirmation: the fast first gate, not proof of power.
+//!
+//! Direction changes also need measured flow; see [`flow`](crate::control::flow).
 
 use std::time::Duration;
 
@@ -26,9 +28,11 @@ pub const ECHO_CONFIRM_WINDOW: Duration = Duration::from_secs(8);
 /// Spacing of read-backs while a write is in doubt (the device reports about once a second).
 pub const ECHO_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Check the *next* report against a command.
+/// Check the *next* report's limits against a command.
 ///
-/// The limit echo is the signal; `acMode` is checked when the device reports a usable direction, and
+/// This is a preliminary gate only for charge/discharge: a pack can echo a limit with its AC relay
+/// open. [`flow::is_flowing`](crate::control::flow::is_flowing) is the final verdict.
+/// `acMode` is checked when the device reports a usable direction, and
 /// skipped when it reports 0 (a firmware that does not fill the field must not look like a fault).
 pub fn verify(command: &Command, report: &Report) -> Result<(), ControlFault> {
     match *command {

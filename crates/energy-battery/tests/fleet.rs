@@ -110,7 +110,7 @@ async fn a_dead_device_is_a_partial_failure_not_an_abort() {
     assert_eq!(snapshot.device(SN_A).unwrap().soc_pct(), Some(45.0));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn fanout_reports_every_device_and_a_partial_failure() {
     let first = fake(SN_A, FakeState::new(SN_A)).await;
     let second = fake(SN_B, FakeState::new(SN_B)).await;

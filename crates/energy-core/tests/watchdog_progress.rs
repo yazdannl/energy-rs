@@ -143,6 +143,7 @@ impl CommandSink for ProbeSink {
             Ok(WriteReceipt {
                 applied_w: watts,
                 verified: true,
+                partial: false,
                 superseded: false,
             })
         })
@@ -167,6 +168,7 @@ impl CommandSink for ProbeSink {
             Ok(WriteReceipt {
                 applied_w: 0.0,
                 verified: true,
+                partial: false,
                 superseded: false,
             })
         })
@@ -366,6 +368,9 @@ fn report_at(message_id: u32, output_limit: u32) -> energy_battery::Report {
                 "acMode": 2,
                 "inputLimit": 0,
                 "outputLimit": output_limit,
+                "acStatus": i32::from(output_limit > 0),
+                "dcStatus": i32::from(output_limit > 0),
+                "outputHomePower": output_limit,
                 "smartMode": 1,
                 "minSoc": 5,
                 "chargeMaxLimit": 800,
@@ -394,7 +399,7 @@ async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
         reports: Mutex::new(VecDeque::from(vec![
             report_at(1, 0),
             report_at(2, 800),
-            report_at(3, 0),
+            report_at(3, 800),
             report_at(4, 0),
         ])),
     };
@@ -412,13 +417,13 @@ async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
     assert!(write.verified, "the fresh report must echo the command");
     assert_eq!(
         spy.0.load(Ordering::Relaxed),
-        3,
-        "the write ack and both echo-wait marks must advance the watchdog"
+        5,
+        "the write ack and every echo/flow-wait mark must advance the watchdog"
     );
     let hold = sink
         .hold_with_progress("SN-A", Some(&spy), NOW)
         .await
         .expect("hold");
     assert!(hold.verified, "the fresh report must echo the hold");
-    assert_eq!(spy.0.load(Ordering::Relaxed), 6);
+    assert_eq!(spy.0.load(Ordering::Relaxed), 8);
 }

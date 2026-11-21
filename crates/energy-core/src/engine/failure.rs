@@ -68,6 +68,9 @@ impl Engine {
         let orphans: Vec<String> = owned
             .into_iter()
             .filter(|pack_id| !commanded(pack_id, outcome))
+            // A faulted pack is deliberately left alone. An orphan hold is another write; sending
+            // one to a pack that just reset or never carried power restarts the command storm.
+            .filter(|pack_id| !self.dispatcher.faults().blocking(pack_id, now))
             .collect();
         if orphans.is_empty() {
             return Ok(());

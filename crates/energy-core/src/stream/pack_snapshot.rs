@@ -22,6 +22,12 @@ pub struct PackSnapshot {
     pub sampled_at: Option<i64>,
     /// Whether the engine considers the reading stale.
     pub stale: bool,
+    /// Active control-fault backoff (e.g. a messageId reset), surfaced to the API.
+    pub control_fault: Option<String>,
+    /// Historical device fault, kept after idle telemetry looks healthy again.
+    pub last_control_fault: Option<String>,
+    /// Sustained discharge power contradicted by a status value: mapping alarm, not a fault.
+    pub flow_alarm: Option<String>,
     /// Effective charge limit after config and device clamping, W.
     pub max_charge_w: Option<f64>,
     /// Effective discharge limit after config and device clamping, W.

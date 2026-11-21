@@ -2,16 +2,17 @@
 
 /// The result of one command, as far as the device has proven it.
 ///
-/// `verified` is the echo check, not the HTTP result: `energy-battery` only confirms a write when
-/// the next report echoes its limit within tolerance. An accepted but unconfirmed write still
-/// returns `written = true` through [`PackReport`](crate::dispatch::PackReport) and stays latched,
-/// because the device may be executing it.
+/// `verified` requires both the echo and measured flow in the commanded direction (a hold only
+/// needs its zero-limit echo). `applied_w` is the pack's own measurement, not the clamped setpoint:
+/// an accepted write whose AC path never carried power is never reported as applied.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WriteReceipt {
-    /// The watts the device echoed, W (positive charging); `0.0` for a hold.
+    /// The watts the pack measured flowing, W (positive charging); `0.0` when unverified.
     pub applied_w: f64,
     /// Whether the device confirmed the command with its next report.
     pub verified: bool,
+    /// Real but lower-than-requested flow: the command is confirmed without claiming the setpoint.
+    pub partial: bool,
     /// A safety hold replaced this command while it waited; not a device fault, no retry needed.
     pub superseded: bool,
 }
@@ -22,6 +23,17 @@ impl WriteReceipt {
         Self {
             applied_w,
             verified: true,
+            partial: false,
+            superseded: false,
+        }
+    }
+
+    /// Direction-correct flow that stayed below the command: measured, not a fault.
+    pub const fn partial(applied_w: f64) -> Self {
+        Self {
+            applied_w,
+            verified: false,
+            partial: true,
             superseded: false,
         }
     }
@@ -31,6 +43,7 @@ impl WriteReceipt {
         Self {
             applied_w: 0.0,
             verified: false,
+            partial: false,
             superseded: false,
         }
     }
@@ -40,6 +53,7 @@ impl WriteReceipt {
         Self {
             applied_w: 0.0,
             verified: false,
+            partial: false,
             superseded: true,
         }
     }

@@ -5,7 +5,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use energy_battery::control::{Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW};
+use energy_battery::BatteryError;
+use energy_battery::control::flow::measured_w;
+use energy_battery::control::{
+    Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW, ECHO_TOLERANCE_W,
+    FLOW_CONFIRM_WINDOW,
+};
 use energy_battery::transport::DeviceIo;
 
 use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt, advance};
@@ -20,6 +25,7 @@ use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt,
 pub struct BatterySink<T: DeviceIo> {
     devices: BTreeMap<String, Arc<DeviceController<T>>>,
     confirm_window: Duration,
+    flow_window: Duration,
 }
 
 impl<T: DeviceIo> BatterySink<T> {
@@ -31,13 +37,15 @@ impl<T: DeviceIo> BatterySink<T> {
                 .map(|device| (device.sn().to_owned(), device))
                 .collect(),
             confirm_window: ECHO_CONFIRM_WINDOW,
+            flow_window: FLOW_CONFIRM_WINDOW,
         }
     }
 
-    /// Shorten the bounded echo wait (tests; production keeps the measured window).
+    /// Shorten the bounded waits (tests; production keeps the measured windows).
     #[must_use]
     pub fn with_confirm_window(mut self, window: Duration) -> Self {
         self.confirm_window = window;
+        self.flow_window = window;
         self
     }
 
@@ -67,16 +75,29 @@ impl<T: DeviceIo> BatterySink<T> {
                 pack_id: pack_id.clone(),
             })?;
         let mark = || advance(progress, Utc::now().timestamp().max(now));
-        let applied = controller
-            .apply(command)
-            .await
-            .map_err(|error| SinkError::Device {
-                pack_id: pack_id.clone(),
-                reason: error.to_string(),
-            })?;
+        let applied = match controller.apply(command).await {
+            Ok(applied) => Some(applied),
+            // An earlier tick's write is still waiting for the AC ramp. It is not a device fault:
+            // a fail-safe hold here would cancel a charge that is about to start drawing power.
+            Err(BatteryError::Unconfirmed { .. }) => None,
+            Err(error) => {
+                return Err(SinkError::Device {
+                    pack_id: pack_id.clone(),
+                    reason: error.to_string(),
+                });
+            }
+        };
         mark();
+        let target = applied.map_or(command, |applied| applied.command);
+        // A direction change needs the whole AC ramp (20-36 s measured), not the short echo
+        // window. A hold has no flow to wait for.
+        let window = if target.direction().is_some() {
+            self.flow_window
+        } else {
+            self.confirm_window
+        };
         let observation = controller
-            .poll_confirming(self.confirm_window, &mark)
+            .poll_confirming(window, &mark)
             .await
             .map_err(|error| SinkError::Device {
                 pack_id: pack_id.clone(),
@@ -97,11 +118,7 @@ impl<T: DeviceIo> BatterySink<T> {
                 fault: Box::new(fault),
             });
         }
-        Ok(WriteReceipt {
-            applied_w: signed_watts(applied.command),
-            verified: observation.confirmed == Some(applied.command),
-            superseded: false,
-        })
+        Ok(receipt(target, &observation))
     }
 }
 
@@ -135,6 +152,45 @@ impl<T: DeviceIo> CommandSink for BatterySink<T> {
     }
 }
 
+/// A receipt from the observation, never from the clamped intention: an echoed limit with the AC
+/// relay open must not be reported as applied power.
+fn receipt(command: Command, observation: &energy_battery::Observation) -> WriteReceipt {
+    let verified = observation
+        .confirmed
+        .is_some_and(|confirmed| same_intent(confirmed, command));
+    let partial = observation
+        .partial
+        .is_some_and(|confirmed| same_intent(confirmed, command));
+    let measured = measured_w(&command, &observation.report).max(0) as f64;
+    let applied_w = if verified || partial {
+        match command.direction() {
+            Some(Direction::Discharge) => -measured,
+            Some(Direction::Charge) | None => measured,
+        }
+    } else {
+        0.0
+    };
+    if partial {
+        return WriteReceipt::partial(applied_w);
+    }
+    WriteReceipt {
+        applied_w,
+        verified,
+        partial: false,
+        superseded: false,
+    }
+}
+
+/// Two commands ask for the same thing when their direction matches and the device's clamped
+/// limit is within echo tolerance of the request.
+fn same_intent(left: Command, right: Command) -> bool {
+    left.direction() == right.direction()
+        && left
+            .watts()
+            .zip(right.watts())
+            .is_none_or(|(left, right)| left.abs_diff(right) <= ECHO_TOLERANCE_W)
+}
+
 /// The command for a signed setpoint; tiny values become a hold instead of a trickle charge.
 fn command_for(watts: f64) -> Command {
     let magnitude = whole_watts(watts.abs());
@@ -145,16 +201,6 @@ fn command_for(watts: f64) -> Command {
         Command::Charge { watts: magnitude }
     } else {
         Command::Discharge { watts: magnitude }
-    }
-}
-
-/// The engine's signed watts for a command (positive charging).
-fn signed_watts(command: Command) -> f64 {
-    let magnitude = f64::from(command.watts().unwrap_or(0));
-    if command.direction() == Some(Direction::Discharge) {
-        -magnitude
-    } else {
-        magnitude
     }
 }
 

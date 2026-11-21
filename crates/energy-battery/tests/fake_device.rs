@@ -41,7 +41,10 @@ async fn charge_is_applied_and_echoed() {
         .await
         .unwrap();
     assert_eq!(applied.ack.sn.as_deref(), Some(SN));
-    let observation = controller.poll().await.unwrap();
+    let observation = controller
+        .poll_confirming(Duration::from_secs(2), || {})
+        .await
+        .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 650 }));
 
     let state = fake.state().unwrap();
@@ -96,7 +99,10 @@ async fn pacing_keeps_two_writes_from_being_dropped() {
         .await
         .unwrap();
     // The first command must be echoed before the next one may be sent.
-    let observation = controller.poll().await.unwrap();
+    let observation = controller
+        .poll_confirming(Duration::from_secs(2), || {})
+        .await
+        .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 300 }));
     controller
         .apply(Command::Discharge { watts: 200 })
@@ -153,7 +159,7 @@ async fn a_dropped_write_shows_up_as_an_echo_fault() {
     assert_eq!(observation.report.properties.input_limit_w, 300);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_wedged_device_reports_a_typed_fault_and_refuses_writes() {
     let fake = spawn(FakeBehaviour::default().without_spacing_rule()).await;
     let controller = controller(&fake);

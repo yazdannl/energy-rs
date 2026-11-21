@@ -49,6 +49,7 @@ async fn a_write_is_confirmed_by_the_next_report() {
     let (_, controller) = fast_controller(vec![
         echo(0, json!({"acMode": 2, "inputLimit": 0, "outputLimit": 0})),
         echo(1, json!({"acMode": 1, "inputLimit": 650, "outputLimit": 0})),
+        echo(2, json!({"acMode": 1, "inputLimit": 650, "outputLimit": 0})),
     ]);
     controller.poll().await.unwrap();
     let applied = controller
@@ -56,7 +57,10 @@ async fn a_write_is_confirmed_by_the_next_report() {
         .await
         .unwrap();
     assert_eq!(applied.command, Command::Charge { watts: 650 });
-    let observation = controller.poll().await.unwrap();
+    let observation = controller
+        .poll_confirming(Duration::from_secs(1), || {})
+        .await
+        .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 650 }));
     assert!(observation.is_healthy());
     assert!(controller.pending().is_none());
@@ -104,13 +108,20 @@ async fn an_echo_inside_the_tolerance_is_confirmed() {
             1,
             json!({"acMode": 1, "inputLimit": echo_w, "outputLimit": 0}),
         ),
+        echo(
+            2,
+            json!({"acMode": 1, "inputLimit": echo_w, "outputLimit": 0}),
+        ),
     ]);
     controller.poll().await.unwrap();
     controller
         .apply(Command::Charge { watts: 650 })
         .await
         .unwrap();
-    let observation = controller.poll().await.unwrap();
+    let observation = controller
+        .poll_confirming(Duration::from_secs(1), || {})
+        .await
+        .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 650 }));
 }
 
@@ -324,12 +335,18 @@ async fn the_live_maximum_is_rechecked_after_waiting_for_the_write_slot() {
         async move { controller.apply(Command::Charge { watts: 700 }).await }
     });
     tokio::task::yield_now().await;
-    device.push_report(echo(
-        1,
-        json!({"acMode": 1, "inputLimit": 900, "outputLimit": 0, "chargeMaxLimit": 400}),
-    ));
+    for id in 1..=2 {
+        device.push_report(echo(
+            id,
+            json!({"acMode": 1, "inputLimit": 900, "outputLimit": 0, "chargeMaxLimit": 400}),
+        ));
+    }
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 900 })
     );
     tokio::time::advance(MIN_WRITE_SPACING).await;
