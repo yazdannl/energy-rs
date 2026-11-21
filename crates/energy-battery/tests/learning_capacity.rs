@@ -57,7 +57,13 @@ fn recency_makes_the_newest_sessions_win() {
         sessions.push(charge(20.0, 40.0, capacity, SPLIT, at(index as i64 * 2)));
     }
     let report = LearningReport::learn(PACK, &sessions, &bounds(None), None, at(24));
-    assert!((capacity_of(&report) - 1.5).abs() < 1e-9, "{report}");
+    // The newest runs still decide the raw measurement; the published value is shrunk toward the
+    // label because six 20-point runs are not much information.
+    assert!(
+        (report.capacity.raw_kwh.unwrap() - 1.5).abs() < 1e-9,
+        "{report}"
+    );
+    assert!(capacity_of(&report) > 1.5 && capacity_of(&report) < LABEL_KWH);
     let newest = report.weights.first().unwrap();
     let oldest = report.weights.last().unwrap();
     assert_eq!(newest.rank, 0);
@@ -69,7 +75,9 @@ fn recency_makes_the_newest_sessions_win() {
 fn the_newest_sessions_alone_would_explain_the_same_number() {
     let sessions = charges(60.0, 80.0, 1.5, SPLIT, 3);
     let report = LearningReport::learn(PACK, &sessions, &bounds(None), None, at(24));
-    assert!((capacity_of(&report) - 1.5).abs() < 1e-9);
+    assert!((report.capacity.raw_kwh.unwrap() - 1.5).abs() < 1e-9);
+    assert!(capacity_of(&report) > 1.5 && capacity_of(&report) < LABEL_KWH);
+    assert!(report.capacity.confidence < 0.1);
 }
 
 #[test]
@@ -82,9 +90,15 @@ fn a_median_absolute_deviation_trim_rejects_one_bad_session() {
         charge(20.0, 50.0, 1.55, SPLIT, at(8)),
     ];
     let report = LearningReport::learn(PACK, &sessions, &bounds(None), None, at(12));
-    assert!((capacity_of(&report) - 1.55).abs() < 1e-9, "{report}");
+    assert!(
+        (report.capacity.raw_kwh.unwrap() - 1.55).abs() < 1e-9,
+        "{report}"
+    );
+    assert!(capacity_of(&report) > 1.55 && capacity_of(&report) < LABEL_KWH);
     assert_eq!(report.used, 4);
     assert_eq!(report.capacity.trimmed, 1);
+    assert_eq!(report.capacity.cycles_used, 4);
+    assert!((report.capacity.soc_points - 120.0).abs() < TOL);
     // Weights are ordered newest first, so the oldest (the bad one) is last.
     assert!(report.capacity.kept[..4].iter().all(|kept| *kept));
     assert!(!report.capacity.kept[4]);
@@ -92,10 +106,11 @@ fn a_median_absolute_deviation_trim_rejects_one_bad_session() {
 
 #[test]
 fn the_band_stops_an_estimate_above_the_label() {
-    let sessions = charges(20.0, 40.0, 3.0, SPLIT, 3);
-    let report = LearningReport::learn(PACK, &sessions, &bounds(None), None, at(12));
+    // Long spans give the 3 kWh measurement real confidence; even then the band holds.
+    let sessions = charges(20.0, 80.0, 3.0, SPLIT, 6);
+    let report = LearningReport::learn(PACK, &sessions, &bounds(None), None, at(24));
     assert!((report.capacity.raw_kwh.unwrap() - 3.0).abs() < 1e-9);
-    assert!((capacity_of(&report) - LABEL_KWH * 1.25).abs() < 1e-9);
+    assert!((capacity_of(&report) - LABEL_KWH * 1.06).abs() < 1e-9);
     assert_eq!(report.capacity.decision, LearningDecision::ClampedHigh);
 }
 
@@ -114,9 +129,10 @@ fn a_reported_capacity_above_the_band_does_not_widen_it() {
     let sessions = charges(20.0, 40.0, 2.35, SPLIT, 3);
     let reported = CapacityBounds::new(LABEL_KWH, Some(2.5));
     let report = LearningReport::learn(PACK, &sessions, &reported, None, at(12));
-    assert!((capacity_of(&report) - 2.35).abs() < 1e-9);
-    assert_eq!(report.capacity.decision, LearningDecision::Applied);
-    assert!((report.capacity.band_high_kwh - LABEL_KWH * 1.25).abs() < 1e-9);
+    // A report above the band becomes the prior only at the band edge, never beyond it.
+    assert!((capacity_of(&report) - LABEL_KWH * 1.06).abs() < 1e-9);
+    assert_eq!(report.capacity.decision, LearningDecision::ClampedHigh);
+    assert!((report.capacity.band_high_kwh - LABEL_KWH * 1.06).abs() < 1e-9);
 }
 
 #[test]

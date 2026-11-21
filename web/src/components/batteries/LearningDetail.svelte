@@ -34,9 +34,10 @@
           <span class="font-mono text-[10px] text-ink">{learned.capacityDecision}</span>
           <br />
         {/if}
-        {learned.sessionsUsed ?? 0} learning session{(learned.sessionsUsed ?? 0) === 1 ? '' : 's'},
-        updated {ago(learned.updatedAt)}. The learner applies a capacity only when the band is tight
-        enough; confidence is its own estimate, not a measurement.
+        {learned.cyclesUsed ?? learned.sessionsUsed ?? 0} usable cycle{(learned.cyclesUsed ?? learned.sessionsUsed ?? 0) === 1 ? '' : 's'},
+        {(learned.socPointsCovered ?? 0).toFixed(0)} SoC points, source {learned.capacitySource ?? 'label'},
+        updated {ago(learned.updatedAt)}. Confidence comes from covered SoC and span length, not
+        session count; a pooled value means this pack had too little evidence of its own.
       </Tooltip>
     </div>
   </div>

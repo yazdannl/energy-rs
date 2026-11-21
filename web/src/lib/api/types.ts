@@ -73,6 +73,10 @@ export interface PackLearned {
   capacityDecision: string | null;
   capacityBandLowKwh: number | null;
   capacityBandHighKwh: number | null;
+  /** `label`, `pooled`, `own` or `previous` — why the capacity has this value. */
+  capacitySource?: 'label' | 'pooled' | 'own' | 'previous';
+  socPointsCovered?: number | null;
+  cyclesUsed?: number | null;
   roundTrip: number | null;
   etaCharge: number | null;
   etaDischarge: number | null;

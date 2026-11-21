@@ -28,8 +28,12 @@ pub struct SessionWeight {
     pub direction: Direction,
     /// Position when sorted newest first, 0-based.
     pub rank: usize,
-    /// Recency weight in `(0, 1]`.
+    /// Recency weight in `(0, 1]`; unchanged from the legacy contract.
     pub weight: f64,
+    /// How much of that weight survived the span-quality discount, in `[0, 1]`.
+    pub span_quality: f64,
+    /// SoC points this session covered; short spans carry little information.
+    pub soc_points: f64,
     /// The capacity this one session implies, kWh (before any band clamp).
     pub capacity_kwh: f64,
     /// True when the session was used as the discharge fallback rather than the charge basis.

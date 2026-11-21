@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::error::BatteryError;
 use crate::learning::bounds::CapacityBounds;
+use crate::learning::pool::CapacityPool;
 use crate::learning::profile::LearningProfile;
 use crate::learning::report::LearningReport;
 use crate::learning::session::SessionRecord;
@@ -21,8 +22,21 @@ pub fn relearn(
     bounds: &CapacityBounds,
     now: DateTime<Utc>,
 ) -> Result<LearningReport, BatteryError> {
+    relearn_with_pool(store, pack_id, sessions, bounds, None, now)
+}
+
+/// The same pass with the identical-label peer pool as the capacity prior.
+pub fn relearn_with_pool(
+    store: &dyn LearningStore,
+    pack_id: &str,
+    sessions: &[SessionRecord],
+    bounds: &CapacityBounds,
+    pool: Option<&CapacityPool>,
+    now: DateTime<Utc>,
+) -> Result<LearningReport, BatteryError> {
     let previous = store.load(pack_id)?;
-    let report = LearningReport::learn(pack_id, sessions, bounds, previous.as_ref(), now);
+    let report =
+        LearningReport::learn_with_pool(pack_id, sessions, bounds, previous.as_ref(), pool, now);
     store.save(&LearningProfile::from_report(&report))?;
     Ok(report)
 }

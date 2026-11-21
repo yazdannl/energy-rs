@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::learning::decision::LearningDecision;
 use crate::learning::efficiency::EfficiencyEstimate;
 use crate::learning::report::LearningReport;
+use crate::learning::source::CapacitySource;
 
 /// One pack's durable learning result.
 ///
@@ -41,6 +42,15 @@ pub struct LearningProfile {
     pub efficiency_applied: bool,
     /// Capacity samples that contributed at the last pass.
     pub sessions_used: usize,
+    /// SoC points the contributing cycles actually covered.
+    #[serde(default)]
+    pub soc_points_covered: f64,
+    /// Usable cycles behind the last capacity estimate.
+    #[serde(default)]
+    pub cycles_used: usize,
+    /// Whether the value came from the label, the peer pool, this pack or an earlier pass.
+    #[serde(default)]
+    pub capacity_source: CapacitySource,
     /// When the profile last changed.
     pub updated_at: DateTime<Utc>,
 }
@@ -64,6 +74,9 @@ impl LearningProfile {
             efficiency_confidence: efficiency.confidence,
             efficiency_applied: efficiency.is_confident(),
             sessions_used: report.used,
+            soc_points_covered: capacity.soc_points,
+            cycles_used: capacity.cycles_used,
+            capacity_source: capacity.source,
             updated_at: report.estimated_at,
         }
     }

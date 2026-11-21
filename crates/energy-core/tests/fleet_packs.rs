@@ -126,6 +126,9 @@ fn profile(id: &str, capacity_kwh: f64, round_trip: f64) -> LearningProfile {
         efficiency_confidence: 0.8,
         efficiency_applied: true,
         sessions_used: 4,
+        soc_points_covered: 120.0,
+        cycles_used: 4,
+        capacity_source: energy_battery::CapacitySource::Own,
         updated_at: DateTime::<Utc>::UNIX_EPOCH,
     }
 }

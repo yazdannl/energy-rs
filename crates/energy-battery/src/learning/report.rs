@@ -8,16 +8,18 @@ use crate::control::Direction;
 use crate::learning::bounds::CapacityBounds;
 use crate::learning::capacity::{CapacityEstimate, MIN_SESSIONS};
 use crate::learning::efficiency::EfficiencyEstimate;
+use crate::learning::pool::CapacityPool;
 use crate::learning::profile::LearningProfile;
 use crate::learning::refusal::Refusal;
+use crate::learning::sample::{CapacitySample, span_quality};
 use crate::learning::session::SessionRecord;
 use crate::learning::weight::{SessionWeight, recency_weight};
 
 /// Everything one learning pass used, produced, refused and applied.
 ///
 /// This is the object to log and to persist: it names the inputs (session count), the per-session
-/// weights and sampled capacities, the estimate with its band and confidence, the efficiency, and
-/// the decision that says whether the numbers were applied, clamped, or kept from before.
+/// weights and sampled capacities, the estimate with its band, evidence and confidence, the
+/// efficiency, and the decision that says whether the numbers were applied, clamped or kept.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LearningReport {
     /// Serial (or stable ledger id) of the pack.
@@ -39,18 +41,30 @@ pub struct LearningReport {
 }
 
 impl LearningReport {
-    /// Learn one pack's capacity and efficiency from its sessions.
+    /// Learn one pack's capacity and efficiency from its sessions, without peer evidence.
+    pub fn learn(
+        pack_id: &str,
+        sessions: &[SessionRecord],
+        bounds: &CapacityBounds,
+        previous: Option<&LearningProfile>,
+        now: DateTime<Utc>,
+    ) -> Self {
+        Self::learn_with_pool(pack_id, sessions, bounds, previous, None, now)
+    }
+
+    /// Learn one pack, using the identical-label peer pool as the capacity prior.
     ///
     /// The capacity basis is the charge side (what the pack accepts per SoC point) because a
     /// discharge drops a few more points than it gives back on a real BMS. Discharge sessions are
     /// the fallback only when fewer than [`MIN_SESSIONS`] charge sessions exist. The split
     /// efficiency from [`EfficiencyEstimate::from_sessions`] converts AC energy to SoC points; a
     /// pack with no measured cycles uses the typed default, and `applied` says so.
-    pub fn learn(
+    pub fn learn_with_pool(
         pack_id: &str,
         sessions: &[SessionRecord],
         bounds: &CapacityBounds,
         previous: Option<&LearningProfile>,
+        pool: Option<&CapacityPool>,
         now: DateTime<Utc>,
     ) -> Self {
         let previous_efficiency = previous.map(LearningProfile::efficiency_estimate);
@@ -61,21 +75,18 @@ impl LearningReport {
             now,
             previous_efficiency.as_ref(),
         );
-        let split = efficiency.split();
         let (accepted, refused) = accept(pack_id, sessions);
-        let charges = collect(&accepted, Direction::Charge, split, false);
-        let discharges = collect(&accepted, Direction::Discharge, split, true);
+        let charges = collect(&accepted, Direction::Charge, efficiency.split(), false);
+        let discharges = collect(&accepted, Direction::Discharge, efficiency.split(), true);
         let chosen = choose(charges, discharges);
-        let samples: Vec<(f64, f64)> = chosen
-            .iter()
-            .map(|sample| (sample.capacity_kwh, sample.weight))
-            .collect();
+        let samples: Vec<CapacitySample> = chosen.iter().map(|sample| sample.measurement).collect();
         let previous_capacity = previous.and_then(|profile| {
             profile
                 .effective_capacity_kwh()
                 .map(|value| (value, profile.capacity_confidence))
         });
-        let capacity = CapacityEstimate::from_samples(&samples, bounds, previous_capacity);
+        let prior = pool.and_then(|pool| pool.for_label(bounds.label_kwh));
+        let capacity = CapacityEstimate::from_evidence(&samples, bounds, previous_capacity, prior);
         let weights = chosen
             .iter()
             .zip(capacity.kept.iter().copied())
@@ -83,8 +94,10 @@ impl LearningReport {
                 started_at: sample.started_at,
                 direction: sample.direction,
                 rank: sample.rank,
-                weight: sample.weight,
-                capacity_kwh: sample.capacity_kwh,
+                weight: recency_weight(sample.rank),
+                span_quality: span_quality(sample.measurement.soc_points),
+                soc_points: sample.measurement.soc_points,
+                capacity_kwh: sample.measurement.capacity_kwh,
                 fallback: sample.fallback,
                 kept,
             })
@@ -112,8 +125,12 @@ impl LearningReport {
             .raw_kwh
             .map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"));
         format!(
-            "pack {}: capacity {capacity} (raw {raw}, band {:.3}..{:.3}, {}), efficiency {:.4} ({}), used {}/{} sessions, refused {}",
+            "pack {}: capacity {capacity} (raw {raw}, source {}, confidence {:.3}, {} points/{} cycles, band {:.3}..{:.3}, {}), efficiency {:.4} ({}), used {}/{} sessions, refused {}",
             self.pack_id,
+            self.capacity.source.slug(),
+            self.capacity.confidence,
+            self.capacity.soc_points,
+            self.capacity.cycles_used,
             self.capacity.band_low_kwh,
             self.capacity.band_high_kwh,
             self.capacity.decision.slug(),
@@ -137,8 +154,7 @@ struct Sample {
     started_at: DateTime<Utc>,
     direction: Direction,
     rank: usize,
-    capacity_kwh: f64,
-    weight: f64,
+    measurement: CapacitySample,
     fallback: bool,
 }
 
@@ -165,11 +181,7 @@ fn accept<'a>(
     (accepted, refused)
 }
 
-/// Turn one direction's sessions into recency-weighted capacity samples.
-///
-/// `C = I · x / dSOC` while charging (the pack accepts `I · x` into the cells) and
-/// `C = O / (x · dSOC)` while discharging (it delivers `C · x` at the terminals), with `dSOC` as a
-/// fraction and `x` the split efficiency both legs share.
+/// Turn one direction's sessions into recency- and span-weighted capacity samples.
 fn collect(
     sessions: &[&SessionRecord],
     direction: Direction,
@@ -184,21 +196,16 @@ fn collect(
     selected.sort_by_key(|session| std::cmp::Reverse(session.started_at));
     let mut samples = Vec::with_capacity(selected.len());
     for (rank, session) in selected.iter().enumerate() {
-        let span = session.soc_span_pct() / 100.0;
-        let capacity_kwh = match direction {
-            Direction::Charge => session.energy_ac_kwh * split / span,
-            Direction::Discharge => session.energy_ac_kwh / split / span,
+        let Some(sample) = CapacitySample::from_session(session, split, rank) else {
+            continue;
         };
-        if span > 0.0 && capacity_kwh.is_finite() && capacity_kwh > 0.0 {
-            samples.push(Sample {
-                started_at: session.started_at,
-                direction,
-                rank,
-                capacity_kwh,
-                weight: recency_weight(rank),
-                fallback,
-            });
-        }
+        samples.push(Sample {
+            started_at: session.started_at,
+            direction,
+            rank,
+            measurement: sample,
+            fallback,
+        });
     }
     samples
 }

@@ -41,6 +41,12 @@ struct LearnedDto {
     capacity_decision: &'static str,
     capacity_band_low_kwh: f64,
     capacity_band_high_kwh: f64,
+    /// `label`, `pooled`, `own` or `previous`: where the published capacity came from.
+    capacity_source: &'static str,
+    /// SoC points covered by the surviving cycles.
+    soc_points_covered: f64,
+    /// Usable cycles behind the capacity estimate.
+    cycles_used: usize,
     round_trip: f64,
     eta_charge: f64,
     eta_discharge: f64,
@@ -131,6 +137,9 @@ fn learned_dto(profile: &LearningProfile) -> LearnedDto {
         capacity_decision: profile.capacity_decision.slug(),
         capacity_band_low_kwh: profile.band_low_kwh,
         capacity_band_high_kwh: profile.band_high_kwh,
+        capacity_source: profile.capacity_source.slug(),
+        soc_points_covered: profile.soc_points_covered,
+        cycles_used: profile.cycles_used,
         round_trip: profile.round_trip,
         eta_charge: profile.eta_charge,
         eta_discharge: profile.eta_discharge,

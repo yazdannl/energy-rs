@@ -112,5 +112,8 @@ fn confidence_reaches_one_at_six_cycles() {
         at(48),
     );
     assert!((six.efficiency.confidence - 1.0).abs() < TOL);
-    assert!((six.capacity.confidence - 1.0).abs() < TOL);
+    // Six 30-point cycles cover 180 SoC points: the efficiency is certain, the capacity is not.
+    assert!(six.capacity.confidence < 0.3, "{six}");
+    assert!((six.capacity.soc_points - 180.0).abs() < TOL);
+    assert_eq!(six.capacity.cycles_used, 6);
 }

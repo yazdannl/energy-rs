@@ -2,7 +2,7 @@
 
 use energy_battery::control::Direction as BatteryDirection;
 use energy_battery::learning::{
-    CapacityBounds, LearningReport, LearningStore, SessionRecord, relearn,
+    CapacityBounds, CapacityPool, LearningReport, LearningStore, SessionRecord, relearn_with_pool,
 };
 use energy_ledger::session::Direction as LedgerDirection;
 use energy_ledger::{Ledger, Session, SessionRules, Tier};
@@ -73,7 +73,7 @@ pub(crate) fn relearn_now(
     scan(ledger, store, now, policy, only, false)
 }
 
-/// The shared pass: extract, load the window, and learn the selected packs.
+/// The shared pass: extract, pool identical labels, then learn the selected packs.
 fn scan(
     ledger: &Ledger,
     store: &dyn LearningStore,
@@ -82,8 +82,34 @@ fn scan(
     only: Option<&str>,
     completed_only: bool,
 ) -> Result<Vec<LearningReport>, WiringError> {
+    let inputs = collect_inputs(ledger, policy, now, only, completed_only)?;
+    let peers: Vec<(f64, &[SessionRecord])> = inputs
+        .iter()
+        .map(|input| (input.2.label_kwh, input.3.as_slice()))
+        .collect();
+    let pool = CapacityPool::from_sessions(&peers, instant(now));
+    let mut reports = Vec::with_capacity(inputs.len());
+    for (sn, id, bounds, records) in inputs {
+        let report = relearn_with_pool(store, &sn, &records, &bounds, Some(&pool), instant(now))?;
+        store_row(ledger, id, &report, now)?;
+        reports.push(report);
+    }
+    Ok(reports)
+}
+
+/// One pack's inputs: serial, row id, bounds and the window's session records.
+type PackInput = (String, i64, CapacityBounds, Vec<SessionRecord>);
+
+/// Extract and load the window for every selected pack before any pack is learned.
+fn collect_inputs(
+    ledger: &Ledger,
+    policy: &SessionPolicy,
+    now: i64,
+    only: Option<&str>,
+    completed_only: bool,
+) -> Result<Vec<PackInput>, WiringError> {
     let packs = ledger.packs()?.all()?;
-    let mut reports = Vec::new();
+    let mut inputs = Vec::new();
     for pack in &packs {
         if only.is_some_and(|sn| sn != pack.sn) {
             continue;
@@ -117,11 +143,9 @@ fn scan(
             continue;
         }
         let bounds = CapacityBounds::new(pack.label_capacity_kwh, pack.reported_capacity_kwh);
-        let report = relearn(store, &pack.sn, &records, &bounds, instant(now))?;
-        store_row(ledger, pack.id, &report, now)?;
-        reports.push(report);
+        inputs.push((pack.sn.clone(), pack.id, bounds, records));
     }
-    Ok(reports)
+    Ok(inputs)
 }
 
 /// Publish the learned numbers on the pack row, so `/api/v1/packs` and the planner agree.
