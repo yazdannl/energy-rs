@@ -22,6 +22,12 @@ pub struct PackReading {
     pub power_w: f64,
     /// Lowest cell voltage the device reported, V.
     pub min_cell_v: Option<f64>,
+    /// Highest cell voltage the device reported, V.
+    pub max_cell_v: Option<f64>,
+    /// Total pack voltage the device reported, V.
+    pub total_voltage_v: Option<f64>,
+    /// Highest reported pack temperature, °C.
+    pub max_temp_c: Option<f64>,
     /// When the report was taken, UTC epoch seconds.
     pub observed_at: i64,
     /// Whether the device answered.

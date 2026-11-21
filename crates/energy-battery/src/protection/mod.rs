@@ -21,7 +21,7 @@ pub mod full_charge;
 pub mod latch_reason;
 pub mod latch_store;
 
-pub use cell_config::CellConfig;
+pub use cell_config::{CELL_CUTOFF_V, CELL_RESUME_V, CellConfig};
 pub use cell_decision::CellDecision;
 pub use cell_guard::CellVoltageGuard;
 pub use cell_latch::CellLatch;

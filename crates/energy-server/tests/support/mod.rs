@@ -28,8 +28,8 @@ use tower::ServiceExt;
 use energy_battery::{CellLatch, LearningProfile};
 use energy_core::safety::Authority;
 use energy_core::stream::{
-    EngineSnapshot, FaultSnapshot, ForecastSnapshot, MeterSnapshot, PackSnapshot, PlanSnapshot,
-    SiteSnapshot, SiteSource,
+    CellVoltages, EngineSnapshot, FaultSnapshot, ForecastSnapshot, MeterSnapshot, PackSnapshot,
+    PlanSnapshot, SiteSnapshot, SiteSource,
 };
 use energy_ledger::{
     DispatchEntry, Ledger, LedgerConfig, Pack, Plan, PlanSlot, Sample, SavingsDaily,
@@ -103,6 +103,17 @@ impl Fixture {
     pub fn publish_snapshot(&self) {
         self.handles
             .publish(standard_snapshot(self.base, self.plan_id, &self.pack_sn));
+    }
+
+    /// Publish both ledger packs with the given cell readings, one per serial.
+    pub fn publish_cells(&self, reported: CellVoltages, empty: CellVoltages) {
+        let mut snapshot = standard_snapshot(self.base, self.plan_id, &self.pack_sn);
+        snapshot.packs[0].cells = reported;
+        let mut second = snapshot.packs[0].clone();
+        "AB2000-TWO".clone_into(&mut second.sn);
+        second.cells = empty;
+        snapshot.packs.push(second);
+        self.handles.publish(snapshot);
     }
 
     /// The router with the shared service.
@@ -344,6 +355,7 @@ fn pack_snapshot(sn: &str, base: i64) -> PackSnapshot {
         sn: sn.to_owned(),
         soc_pct: Some(60.0),
         power_w: Some(120.0),
+        cells: CellVoltages::default(),
         sampled_at: Some(base),
         stale: false,
         max_charge_w: Some(800.0),

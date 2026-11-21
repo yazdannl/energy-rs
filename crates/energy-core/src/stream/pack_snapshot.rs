@@ -3,7 +3,7 @@
 use energy_battery::{CellLatch, LearningProfile};
 
 use crate::dispatch::ManualOverride;
-use crate::stream::MaintenanceSnapshot;
+use crate::stream::{CellVoltages, MaintenanceSnapshot};
 
 /// Everything the Batteries screen and the safety ladder need to know about one pack.
 ///
@@ -18,6 +18,8 @@ pub struct PackSnapshot {
     pub soc_pct: Option<f64>,
     /// Signed AC power, W; positive charges the pack.
     pub power_w: Option<f64>,
+    /// Cell voltages and pack context from the device's `packData`, when it reported any.
+    pub cells: CellVoltages,
     /// When the reading was taken, UTC epoch seconds.
     pub sampled_at: Option<i64>,
     /// Whether the engine considers the reading stale.

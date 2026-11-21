@@ -243,6 +243,14 @@ export function makePacks(now: Date): PacksResponse {
         powerW: 412,
         sampledAt: iso(new Date(now.getTime() - 4_000)),
         stale: false,
+        cells: {
+          minCellV: 3.32,
+          maxCellV: 3.35,
+          spreadMv: 30,
+          packVoltageV: 49.7,
+          maxTempC: 29.1,
+          level: 'ok',
+        },
       },
       learned: {
         capacityKwh: 1.85,
@@ -292,6 +300,15 @@ export function makePacks(now: Date): PacksResponse {
         powerW: -120,
         sampledAt: iso(new Date(now.getTime() - 62_000)),
         stale: true,
+        // Full pack with an empty packData: the UI must show em dashes, not NaN.
+        cells: {
+          minCellV: null,
+          maxCellV: null,
+          spreadMv: null,
+          packVoltageV: null,
+          maxTempC: null,
+          level: null,
+        },
       },
       learned: {
         capacityKwh: 1.91,

@@ -1,5 +1,10 @@
 //! Per-pack cell-voltage thresholds and the power an emergency charge may use.
 
+/// Below this cell voltage the pack must not discharge and must be charged, V.
+pub const CELL_CUTOFF_V: f64 = 3.00;
+/// At or above this cell voltage the low-cell latch clears, V.
+pub const CELL_RESUME_V: f64 = 3.18;
+
 /// The guard's configuration for one pack.
 ///
 /// The thresholds are per chemistry; the power limits are per pack, which is why the guard carries
@@ -54,8 +59,8 @@ impl CellConfig {
 impl Default for CellConfig {
     fn default() -> Self {
         Self {
-            cutoff_v: 3.00,
-            resume_v: 3.18,
+            cutoff_v: CELL_CUTOFF_V,
+            resume_v: CELL_RESUME_V,
             stale_after_s: 180.0,
             max_charge_w: 1000,
             emergency_power_w: 800,

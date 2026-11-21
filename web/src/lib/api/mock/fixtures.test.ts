@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { makeSavings } from './fixtures';
+import { makePacks, makeSavings } from './fixtures';
+
+describe('pack fixtures', () => {
+  it('gives one mock pack cells data and the other an empty packData', () => {
+    const packs = makePacks(new Date('2026-06-01T12:00:00Z')).packs;
+
+    expect(packs[0]?.state?.cells).toMatchObject({
+      minCellV: 3.32,
+      maxCellV: 3.35,
+      spreadMv: 30,
+      packVoltageV: 49.7,
+      maxTempC: 29.1,
+      level: 'ok',
+    });
+    expect(packs[1]?.state?.cells?.minCellV).toBeNull();
+    expect(packs[1]?.state?.cells?.level).toBeNull();
+  });
+});
 
 describe('savings fixtures', () => {
   it('splits a measured day into four components that sum to the saving', () => {

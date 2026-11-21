@@ -59,11 +59,26 @@ export interface PackLimits {
   maxDischargeW: number | null;
 }
 
+/** The guard bands the API uses to label the lowest cell. */
+export type CellLevel = 'ok' | 'below_resume' | 'below_cutoff';
+
+/** Highest/lowest cell of one pack, their spread and the pack context; all null with no packData. */
+export interface PackCells {
+  minCellV: number | null;
+  maxCellV: number | null;
+  spreadMv: number | null;
+  packVoltageV: number | null;
+  maxTempC: number | null;
+  level: CellLevel | null;
+}
+
 export interface PackState {
   socPct: number | null;
   powerW: number | null;
   sampledAt: Instant | null;
   stale: boolean;
+  /** Absent on an older server or before the first live snapshot. */
+  cells?: PackCells | null;
 }
 
 export interface PackLearned {

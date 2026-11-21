@@ -18,6 +18,7 @@
 //!
 //! Timestamps are UTC epoch seconds; the HTTP layer formats them as RFC3339.
 
+pub mod cell_voltages;
 pub mod command;
 pub mod fault_snapshot;
 pub mod forecast_snapshot;
@@ -33,6 +34,7 @@ pub mod site_source;
 pub mod snapshot;
 pub mod watch_publisher;
 
+pub use cell_voltages::CellVoltages;
 pub use command::EngineCommand;
 pub use fault_snapshot::FaultSnapshot;
 pub use forecast_snapshot::ForecastSnapshot;

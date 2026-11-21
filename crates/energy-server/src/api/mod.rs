@@ -6,6 +6,7 @@
 //! shell.
 
 mod blocking;
+mod cells_dto;
 mod dispatch;
 pub(crate) mod dto;
 mod error;
@@ -28,6 +29,7 @@ mod replan;
 mod savings;
 mod settings;
 mod site;
+mod state_dto;
 mod stream;
 
 use std::sync::Arc;

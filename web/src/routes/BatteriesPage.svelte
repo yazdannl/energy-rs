@@ -27,6 +27,19 @@
     void dispatch.load();
   };
 
+  const packCount = $derived(packs.data?.packs.length ?? 0);
+  const withCells = $derived(
+    (packs.data?.packs ?? []).filter((pack) => {
+      const cells = pack.state?.cells;
+      return (
+        cells?.minCellV != null ||
+        cells?.maxCellV != null ||
+        cells?.packVoltageV != null ||
+        cells?.maxTempC != null
+      );
+    }).length,
+  );
+
   onMount(() => {
     void packs.load();
     void site.load();
@@ -53,6 +66,9 @@
       <Badge tone={site.data.configured ? 'good' : 'warn'}>
         {site.data.configured ? 'energy dashboard found' : 'no energy dashboard'}
       </Badge>
+    {/if}
+    {#if packs.data}
+      <Badge tone="neutral">{withCells}/{packCount} with cell data</Badge>
     {/if}
     <Button onclick={reloadPacks} title="Reload packs and dispatch log">
       {#snippet icon()}<RefreshCw class="size-3.5" />{/snippet}
@@ -158,5 +174,6 @@
 
 <p class="mt-2 text-[10px] leading-relaxed text-faint">
   Pack addresses are not part of the v1 contract; the serial is the only identity the API exposes. A
-  stale sample is shown as stale, never as a fresh measurement.
+  stale sample is shown as stale, never as a fresh measurement. Cell badges follow the engine's
+  low-cell guard; a pack with no packData shows an em dash instead of a number.
 </p>

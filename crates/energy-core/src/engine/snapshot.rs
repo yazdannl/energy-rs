@@ -15,8 +15,8 @@ use crate::engine::control::Engine;
 use crate::engine::faults;
 use crate::plan::Plan;
 use crate::stream::{
-    EngineSnapshot, ForecastSnapshot, MaintenanceSnapshot, MeterSnapshot, PackSnapshot,
-    PlanSnapshot, RuntimeView, SnapshotPublisher,
+    CellVoltages, EngineSnapshot, ForecastSnapshot, MaintenanceSnapshot, MeterSnapshot,
+    PackSnapshot, PlanSnapshot, RuntimeView, SnapshotPublisher,
 };
 
 /// Forecast energy in one 15-minute slot, Wh (1 kW for 900 s).
@@ -162,6 +162,7 @@ impl Engine {
                     sn: sn.to_owned(),
                     soc_pct: pack.soc_pct,
                     power_w: Some(pack.power_w),
+                    cells: CellVoltages::from_reading(pack),
                     sampled_at: Some(pack.observed_at),
                     stale: pack.stale || !pack.available,
                     max_charge_w: Some(pack.spec.max_charge_w),

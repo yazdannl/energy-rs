@@ -4,32 +4,19 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
-use chrono::Utc;
 use serde::Serialize;
 
 use crate::api::blocking::with_ledger;
 use crate::api::dto::Timestamp;
 use crate::api::dto::units::watts;
 use crate::api::error::ApiError;
+use crate::api::state_dto::{StateDto, state_dto};
 use crate::service::Service;
 
 use energy_battery::{CellLatch, LearningProfile};
 use energy_core::dispatch::{ManualOverride, OverrideAction};
 use energy_core::stream::PackSnapshot;
 use energy_ledger::PackState;
-
-/// A reading older than this is stale (five 1-minute samples).
-const STALE_AFTER_S: i64 = 300;
-
-/// Live state of one pack.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StateDto {
-    soc_pct: Option<f64>,
-    power_w: Option<f64>,
-    sampled_at: Option<Timestamp>,
-    stale: bool,
-}
 
 /// The applied learning result, including its provenance.
 #[derive(Debug, Serialize)]
@@ -178,26 +165,6 @@ fn override_dto(state: &ManualOverride) -> Result<OverrideDto, ApiError> {
         power_w,
         expires_at: Timestamp::from_epoch(state.until)?,
     })
-}
-
-fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> StateDto {
-    let now = Utc::now().timestamp();
-    if let Some(live) = live {
-        return StateDto {
-            soc_pct: live.soc_pct,
-            power_w: live.power_w.map(watts),
-            sampled_at: Timestamp::lenient(live.sampled_at),
-            stale: live.stale,
-        };
-    }
-    let last = stored.last.as_ref();
-    let sampled_at = last.map(|sample| sample.ts);
-    StateDto {
-        soc_pct: last.and_then(|sample| sample.soc_pct),
-        power_w: last.and_then(|sample| sample.power_w).map(watts),
-        sampled_at: Timestamp::lenient(sampled_at),
-        stale: sampled_at.is_none_or(|at| now - at > STALE_AFTER_S),
-    }
 }
 
 fn maintenance_dto(

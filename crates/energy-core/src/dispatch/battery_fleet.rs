@@ -86,6 +86,9 @@ impl<T: DeviceIo> BatteryFleet<T> {
             energy_kwh: (capacity_kwh > 0.0).then(|| capacity_kwh * soc_pct / 100.0),
             power_w: -(report.ac_power_w() as f64),
             min_cell_v: min_cell_v(report),
+            max_cell_v: max_cell_v(report),
+            total_voltage_v: total_voltage_v(report),
+            max_temp_c: max_temp_c(report),
             observed_at,
             available: device.error.is_none(),
             stale: age_s > self.stale_after_s,
@@ -104,6 +107,9 @@ impl<T: DeviceIo> BatteryFleet<T> {
             energy_kwh: None,
             power_w: 0.0,
             min_cell_v: None,
+            max_cell_v: None,
+            total_voltage_v: None,
+            max_temp_c: None,
             observed_at: now,
             available: false,
             stale: true,
@@ -159,6 +165,8 @@ fn limit(reported: u32) -> f64 {
 }
 
 /// The lowest cell voltage any pack reported, or `None` when none did.
+///
+/// The cell guard reads exactly this number, so its aggregation is deliberately unchanged.
 fn min_cell_v(report: &Report) -> Option<f64> {
     report
         .packs
@@ -167,5 +175,40 @@ fn min_cell_v(report: &Report) -> Option<f64> {
         .filter(|volt| volt.is_finite() && *volt > 0.0)
         .fold(None, |lowest, volt| {
             Some(lowest.map_or(volt, |low: f64| low.min(volt)))
+        })
+}
+
+/// The highest cell voltage any pack reported, or `None` when none did.
+fn max_cell_v(report: &Report) -> Option<f64> {
+    report
+        .packs
+        .iter()
+        .map(|pack| pack.max_cell_v)
+        .filter(|volt| volt.is_finite() && *volt > 0.0)
+        .fold(None, |highest, volt| {
+            Some(highest.map_or(volt, |high: f64| high.max(volt)))
+        })
+}
+
+/// The sum of the reported pack voltages, or `None` when no pack reported one.
+fn total_voltage_v(report: &Report) -> Option<f64> {
+    let volts: Vec<f64> = report
+        .packs
+        .iter()
+        .map(|pack| pack.total_voltage_v)
+        .filter(|volt| volt.is_finite() && *volt > 0.0)
+        .collect();
+    (!volts.is_empty()).then(|| volts.iter().sum())
+}
+
+/// The hottest pack, or `None` when no pack reported a temperature.
+fn max_temp_c(report: &Report) -> Option<f64> {
+    report
+        .packs
+        .iter()
+        .map(|pack| pack.max_temp_c)
+        .filter(|temp| temp.is_finite())
+        .fold(None, |hottest, temp| {
+            Some(hottest.map_or(temp, |high: f64| high.max(temp)))
         })
 }

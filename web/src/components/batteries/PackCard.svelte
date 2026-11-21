@@ -1,9 +1,11 @@
 <script lang="ts">
+  import Activity from '@lucide/svelte/icons/activity';
   import BatteryMedium from '@lucide/svelte/icons/battery-medium';
   import HeartPulse from '@lucide/svelte/icons/heart-pulse';
   import Zap from '@lucide/svelte/icons/zap';
 
   import type { Pack } from '../../lib/api/types';
+  import { cellBadge, formatCells } from '../../lib/format/cells';
   import { fmtKwh, fmtW } from '../../lib/format/energy';
   import { packLabel } from '../../lib/format/pack';
   import { ago } from '../../lib/format/time';
@@ -23,6 +25,8 @@
   let { pack, onchanged }: Props = $props();
 
   const flow = $derived(batteryFlow(pack.state?.powerW ?? null));
+  const cellText = $derived(formatCells(pack.state?.cells));
+  const cellsBadge = $derived(cellBadge(pack.state?.cells?.level));
 </script>
 
 <article class="card p-3.5">
@@ -58,6 +62,13 @@
       <p class="flex items-center gap-1 text-[10px] text-faint">
         <HeartPulse class="size-3" aria-hidden="true" />
         sampled {ago(pack.state?.sampledAt ?? null)} · seen {ago(pack.lastSeenAt)}
+      </p>
+      <p class="flex min-w-0 items-center gap-1 text-[10px] text-faint" title={cellText}>
+        <Activity class="size-3 shrink-0" aria-hidden="true" />
+        <span class="num min-w-0 flex-1 truncate">cells {cellText}</span>
+        {#if cellsBadge}
+          <Badge tone={cellsBadge.tone}>{cellsBadge.label}</Badge>
+        {/if}
       </p>
     </div>
   </div>
