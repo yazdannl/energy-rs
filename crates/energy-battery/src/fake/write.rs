@@ -105,7 +105,7 @@ impl FakeState {
             self.output_home_w = i64::from(self.output_limit_w);
             self.grid_input_w = 0;
             self.ac_status = 1;
-            self.dc_status = 1;
+            self.dc_status = 2;
         } else if self.input_limit_w == 0 && self.output_limit_w == 0 {
             self.grid_input_w = 0;
             self.output_home_w = 0;

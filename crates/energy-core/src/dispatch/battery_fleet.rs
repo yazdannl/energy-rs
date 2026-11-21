@@ -30,7 +30,7 @@ pub struct BatteryFleet<T: DeviceIo> {
     client: Arc<FleetClient<T>>,
     catalog: Arc<PackCatalog>,
     stale_after_s: f64,
-    /// Consecutive reports with discharge power but a contradictory status mapping.
+    /// Consecutive reports with discharge power but an active charging status.
     flow_alarm_streaks: Mutex<BTreeMap<String, u8>>,
 }
 

@@ -151,7 +151,7 @@ pub fn report_at(sn: &str, message_id: u32, timestamp: i64, overrides: Value) ->
             properties.insert("acStatus".to_owned(), json!(1));
         }
         if !override_keys.contains_key("dcStatus") {
-            properties.insert("dcStatus".to_owned(), json!(1));
+            properties.insert("dcStatus".to_owned(), json!(2));
         }
         if !override_keys.contains_key("outputHomePower") {
             properties.insert("outputHomePower".to_owned(), json!(output));

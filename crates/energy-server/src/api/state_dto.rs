@@ -24,7 +24,7 @@ pub(crate) struct StateDto {
     stale: bool,
     /// Active control fault (a messageId reset or a pack that never drew power).
     control_fault: Option<String>,
-    /// Historical control fault; sustained discharge power with a contradictory status.
+    /// Historical control fault, kept after the pack recovers or goes idle.
     last_control_fault: Option<String>,
     /// A sustained power/status contradiction worth showing even though control continues.
     flow_alarm: Option<String>,

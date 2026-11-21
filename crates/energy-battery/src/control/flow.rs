@@ -2,11 +2,17 @@
 //!
 //! A 200 OK and a matching `inputLimit`/`outputLimit` only say the RAM register changed. On the
 //! 800 Plus the AC relay can stay open while those registers read back perfectly (incident
-//! 2026-11-21: `acStatus 0`, `dcStatus 0`, `gridInputPower 0` for minutes). Grid charging is proved
-//! by `gridInputPower` (or `outputPackPower`) rising with the verified `acStatus 2`/`dcStatus 1`
-//! mapping. Discharge is proved by `outputHomePower` alone: this fleet has never discharged, so
-//! treating a guessed status mapping as mandatory could latch every pack out and remove the grid
-//! import ceiling. Statuses are corroboration and an alarm there, never a discharge gate.
+//! 2026-11-21: `acStatus 0`, `dcStatus 0`, `gridInputPower 0` for minutes). Power is the proof.
+//!
+//! Hardware-verified status pairs (see [`status_direction`]):
+//! * charge `acStatus 2`/`dcStatus 1`: 299 W grid input measured directly;
+//! * discharge `acStatus 1`/`dcStatus 2`: two packs in add-on 0.15.7 each sent 799 W to the
+//!   house with `outputLimit 800` (EOC1NLN9N465846, EOC1NLNAN528963). dcStatus 2 is the normal
+//!   output state, not a mismatch.
+//!
+//! Idle is `(0, 0)`; missing, idle or mixed statuses are no evidence, not a contradiction. Charge
+//! keeps its status gate. Discharge stays power-authoritative: an active status that names another
+//! direction is alarmed by energy-core's `PackFlow`, never used to block real output power.
 
 use std::time::Duration;
 
@@ -24,6 +30,27 @@ const COMMAND_FRACTION_PCT: i64 = 10;
 /// A single flowing report can be a transient. Require consecutive fresh reports with flow;
 /// the device reports about once a second, so two samples are a real (short) time window.
 pub const FLOW_SAMPLES: u8 = 2;
+
+/// Hardware-verified status pair for grid charging (`gridInputPower 299 W`).
+pub const CHARGE_AC_STATUS: i32 = 2;
+/// Hardware-verified status pair for grid charging (`gridInputPower 299 W`).
+pub const CHARGE_DC_STATUS: i32 = 1;
+/// Hardware-verified status pair for home discharge (`outputHomePower 799 W`).
+pub const DISCHARGE_AC_STATUS: i32 = 1;
+/// Hardware-verified status pair for home discharge (`outputHomePower 799 W`).
+pub const DISCHARGE_DC_STATUS: i32 = 2;
+
+/// The active direction named by a report's status pair, if it names one.
+///
+/// Idle `(0, 0)`, unknown and partially reported pairs carry no direction.
+#[must_use]
+pub const fn status_direction(ac_status: Option<i32>, dc_status: Option<i32>) -> Option<Direction> {
+    match (ac_status, dc_status) {
+        (Some(CHARGE_AC_STATUS), Some(CHARGE_DC_STATUS)) => Some(Direction::Charge),
+        (Some(DISCHARGE_AC_STATUS), Some(DISCHARGE_DC_STATUS)) => Some(Direction::Discharge),
+        _ => None,
+    }
+}
 
 /// The AC relay takes 20-36 s to come up on a cold pack; an 8 s echo window declares success
 /// before any power can appear. Direction changes get a window that covers the whole ramp.
@@ -89,10 +116,11 @@ pub fn assess(command: &Command, report: &Report) -> FlowEvidence {
         // 1-4 W is idle noise, not a start: never turn it into a partial confirmation.
         return FlowEvidence::Absent;
     }
-    // Charge's status mapping was verified on hardware (acStatus 2, dcStatus 1, 299 W). Keep it
-    // strict; discharge has no hardware evidence and must not be gated on an assumed mapping.
+    // Charge's pair is hardware-verified (2/1, 299 W) and stays strict. Discharge's verified
+    // pair is 1/2; power remains authoritative and a contradictory status is alarmed downstream.
     if direction == Direction::Charge
-        && (report.properties.ac_status != Some(2) || report.properties.dc_status != Some(1))
+        && status_direction(report.properties.ac_status, report.properties.dc_status)
+            != Some(Direction::Charge)
     {
         return FlowEvidence::Absent;
     }

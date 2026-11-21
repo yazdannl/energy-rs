@@ -209,18 +209,75 @@ async fn fresh_compliant_flow_clears_the_streak_without_a_new_write() {
 }
 
 #[tokio::test]
-async fn a_status_only_discharge_disagreement_is_visible_without_faulting() {
+async fn a_healthy_discharge_status_confirms_without_an_alarm() {
     let mut reading = pack("SN-A", 50.0);
     reading.flow = Some(PackFlow {
         grid_input_w: 0,
         output_pack_w: 0,
-        output_home_w: 300,
-        ac_status: Some(2),
-        dc_status: Some(0),
+        output_home_w: 799,
+        ac_status: Some(1),
+        dc_status: Some(2),
     });
     reading.flow_alarm = reading.flow.and_then(|flow| flow.discharge_status_alarm());
-    assert!(reading.flow_alarm.is_some());
-    assert!(!reading.flow.is_some_and(|flow| flow.failed_start(-300.0)));
+    assert!(reading.flow.is_some_and(|flow| flow.follows(-800.0, 250.0)));
+    assert!(reading.flow_alarm.is_none());
+
+    let h = harness::build(Authority::Auto, vec![reading.clone()], plan(NOW, 1.0, 0.96));
+    h.engine.boot(NOW).await.expect("boot");
+    let snapshot = h.engine.snapshot(
+        NOW + 1,
+        &FleetView::new(vec![reading]),
+        &MeterReading::default(),
+    );
+    assert!(snapshot.packs[0].flow_alarm.is_none());
+    assert!(snapshot.packs[0].control_fault.is_none());
+}
+
+#[tokio::test]
+async fn a_healthy_charge_status_confirms_without_an_alarm() {
+    let mut reading = pack("SN-A", 50.0);
+    reading.flow = Some(PackFlow {
+        grid_input_w: 299,
+        output_pack_w: 299,
+        output_home_w: 0,
+        ac_status: Some(2),
+        dc_status: Some(1),
+    });
+    reading.flow_alarm = reading.flow.and_then(|flow| flow.discharge_status_alarm());
+    assert!(reading.flow.is_some_and(|flow| flow.follows(300.0, 250.0)));
+    assert!(reading.flow_alarm.is_none());
+
+    let h = harness::build(Authority::Auto, vec![reading.clone()], plan(NOW, 1.0, 0.96));
+    h.engine.boot(NOW).await.expect("boot");
+    let snapshot = h.engine.snapshot(
+        NOW + 1,
+        &FleetView::new(vec![reading]),
+        &MeterReading::default(),
+    );
+    assert!(snapshot.packs[0].flow_alarm.is_none());
+    assert!(snapshot.packs[0].control_fault.is_none());
+}
+
+#[tokio::test]
+async fn an_active_charge_status_during_discharge_is_visible_without_faulting() {
+    let mut reading = pack("SN-A", 50.0);
+    reading.flow = Some(PackFlow {
+        grid_input_w: 0,
+        output_pack_w: 0,
+        output_home_w: 799,
+        ac_status: Some(2),
+        dc_status: Some(1),
+    });
+    reading.flow_alarm = reading.flow.and_then(|flow| flow.discharge_status_alarm());
+    let alarm = reading
+        .flow_alarm
+        .as_deref()
+        .expect("charging status contradicts measured discharge");
+    assert!(
+        alarm.contains("799 W") && alarm.contains("Some(2)") && alarm.contains("Some(1)"),
+        "the alarm must include the observed values: {alarm}"
+    );
+    assert!(!reading.flow.is_some_and(|flow| flow.failed_start(-800.0)));
 
     let h = harness::build(Authority::Auto, vec![reading.clone()], plan(NOW, 1.0, 0.96));
     h.engine.boot(NOW).await.expect("boot");
@@ -235,6 +292,30 @@ async fn a_status_only_discharge_disagreement_is_visible_without_faulting() {
             .as_deref()
             .is_some_and(|alarm| alarm.contains("status mapping"))
     );
+    assert!(snapshot.packs[0].control_fault.is_none());
+}
+
+#[tokio::test]
+async fn idle_status_with_zero_power_is_not_a_flow_fault() {
+    let mut reading = pack("SN-A", 50.0);
+    reading.flow = Some(PackFlow {
+        grid_input_w: 0,
+        output_pack_w: 0,
+        output_home_w: 0,
+        ac_status: Some(0),
+        dc_status: Some(0),
+    });
+    reading.flow_alarm = reading.flow.and_then(|flow| flow.discharge_status_alarm());
+    assert!(reading.flow_alarm.is_none());
+
+    let h = harness::build(Authority::Auto, vec![reading.clone()], plan(NOW, 1.0, 0.96));
+    h.engine.boot(NOW).await.expect("boot");
+    let snapshot = h.engine.snapshot(
+        NOW + 1,
+        &FleetView::new(vec![reading]),
+        &MeterReading::default(),
+    );
+    assert!(snapshot.packs[0].flow_alarm.is_none());
     assert!(snapshot.packs[0].control_fault.is_none());
 }
 

@@ -1,6 +1,7 @@
 //! Direction-specific flow evidence from a pack report.
 
-use energy_battery::control::flow::FLOW_THRESHOLD_W;
+use energy_battery::Direction;
+use energy_battery::control::flow::{FLOW_THRESHOLD_W, status_direction};
 
 /// The AC/DC fields that distinguish an echoed limit from power actually moving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,9 +12,9 @@ pub struct PackFlow {
     pub output_pack_w: i64,
     /// Home output: positive while discharging to AC.
     pub output_home_w: i64,
-    /// `acStatus` (2 = AC input, 1 = AC output) when the firmware reports it.
+    /// `acStatus` (2 = AC input/charge, 1 = AC output/discharge) when reported.
     pub ac_status: Option<i32>,
-    /// `dcStatus` (1 = DC/DC running) when the firmware reports it.
+    /// `dcStatus` (1 = charge, 2 = discharge) when reported. See [`status_direction`].
     pub dc_status: Option<i32>,
 }
 
@@ -26,8 +27,8 @@ impl PackFlow {
 
     /// Whether this report proves the commanded direction is flowing at the expected magnitude.
     ///
-    /// Charge keeps the hardware-verified status gate. Discharge is power-authoritative: this
-    /// fleet has never discharged, so an unverified status value must not stop the import ceiling.
+    /// Charge keeps the hardware-verified status gate (2/1). Discharge is power-authoritative:
+    /// its verified status pair (1/2) corroborates, but never gates, real output power.
     #[must_use]
     pub fn follows(&self, commanded_w: f64, tolerance_w: f64) -> bool {
         if commanded_w.abs() < f64::EPSILON {
@@ -42,7 +43,9 @@ impl PackFlow {
         if measured <= 0 {
             return false;
         }
-        if commanded_w > 0.0 && (self.ac_status != Some(2) || self.dc_status != Some(1)) {
+        if commanded_w > 0.0
+            && status_direction(self.ac_status, self.dc_status) != Some(Direction::Charge)
+        {
             return false;
         }
         let magnitude = commanded_w.abs();
@@ -66,22 +69,24 @@ impl PackFlow {
             self.charge_w()
         };
         measured <= FLOW_THRESHOLD_W
-            || (commanded_w > 0.0 && (self.ac_status != Some(2) || self.dc_status != Some(1)))
+            || (commanded_w > 0.0
+                && status_direction(self.ac_status, self.dc_status) != Some(Direction::Charge))
     }
 
-    /// A status value contradicting sustained discharge power: the mapping is wrong, not the pack.
+    /// An active charging status contradicting sustained discharge power: mapping, not pack, fault.
+    ///
+    /// The caller requires consecutive reports, so this is a sustained contradiction. Idle, missing
+    /// and mixed statuses are no evidence; the correct discharge pair (1/2) is confirmation.
     #[must_use]
     pub fn discharge_status_alarm(&self) -> Option<String> {
         if self.output_home_w <= FLOW_THRESHOLD_W {
             return None;
         }
-        if self.ac_status.is_none_or(|status| status == 1)
-            && self.dc_status.is_none_or(|status| status == 1)
-        {
+        if status_direction(self.ac_status, self.dc_status) != Some(Direction::Charge) {
             return None;
         }
         Some(format!(
-            "discharge is moving {} W to home but acStatus {:?}/dcStatus {:?} disagrees; status mapping needs review",
+            "discharge is moving {} W to home but acStatus {:?}/dcStatus {:?} reports charging; status mapping needs review",
             self.output_home_w, self.ac_status, self.dc_status
         ))
     }
@@ -106,17 +111,61 @@ mod tests {
             grid_input_w: 0,
             output_pack_w: 0,
             output_home_w: home_w,
-            ac_status: Some(2),
-            dc_status: Some(0),
+            ac_status: Some(1),
+            dc_status: Some(2),
         }
     }
 
     #[test]
-    fn discharge_power_is_authoritative_over_an_unverified_status_mapping() {
-        let flow = discharging(300);
-        assert!(flow.follows(-300.0, 250.0));
-        assert!(!flow.failed_start(-300.0));
-        assert!(flow.discharge_status_alarm().is_some());
+    fn a_healthy_discharge_confirms_without_an_alarm() {
+        let flow = discharging(799);
+        assert!(flow.follows(-800.0, 250.0));
+        assert!(!flow.failed_start(-800.0));
+        assert!(flow.discharge_status_alarm().is_none());
+    }
+
+    #[test]
+    fn a_healthy_charge_confirms_without_an_alarm() {
+        let flow = charge_at(299);
+        assert!(flow.follows(300.0, 250.0));
+        assert!(!flow.failed_start(300.0));
+        assert!(flow.discharge_status_alarm().is_none());
+    }
+
+    #[test]
+    fn discharge_power_is_authoritative_when_status_says_charging() {
+        let flow = PackFlow {
+            ac_status: Some(2),
+            dc_status: Some(1),
+            ..discharging(799)
+        };
+        assert!(flow.follows(-800.0, 250.0));
+        assert!(!flow.failed_start(-800.0));
+        let alarm = flow.discharge_status_alarm().unwrap_or_default();
+        assert!(
+            alarm.contains("799 W") && alarm.contains("Some(2)") && alarm.contains("Some(1)"),
+            "the alarm must include the observed values: {alarm}"
+        );
+    }
+
+    #[test]
+    fn idle_or_unknown_status_is_no_contradiction() {
+        let idle = PackFlow {
+            grid_input_w: 0,
+            output_pack_w: 0,
+            output_home_w: 0,
+            ac_status: Some(0),
+            dc_status: Some(0),
+        };
+        assert!(idle.follows(0.0, 50.0));
+        assert!(!idle.failed_start(0.0));
+        assert!(idle.discharge_status_alarm().is_none());
+        let unknown = PackFlow {
+            ac_status: None,
+            dc_status: None,
+            ..discharging(799)
+        };
+        assert!(unknown.discharge_status_alarm().is_none());
     }
 
     #[test]

@@ -131,21 +131,21 @@ async fn a_discharge_with_measured_home_flow_is_verified() {
     let properties = observation.report.properties;
     assert!(properties.output_home_w > 0);
     assert_eq!(properties.ac_status, Some(1));
-    assert_eq!(properties.dc_status, Some(1));
+    assert_eq!(properties.dc_status, Some(2));
 }
 
 #[tokio::test]
-async fn a_discharge_confirms_on_measured_power_even_if_the_status_mapping_is_wrong() {
+async fn a_discharge_confirms_on_measured_power_even_if_status_says_charging() {
     let (fake, controller) = device(FakeBehaviour::default()).await;
     controller
         .apply(Command::Discharge { watts: 300 })
         .await
         .unwrap();
-    // This fleet has never discharged: emulate a firmware whose output statuses do not use the
-    // assumed 1/1 mapping. Power is flowing, so discharge must still verify.
+    // Power is authoritative: even a status actively reporting the other direction cannot block
+    // a verified discharge. energy-core raises the mapping alarm for this contradiction.
     fake.with_state(|state| {
         state.ac_status = 2;
-        state.dc_status = 0;
+        state.dc_status = 1;
     })
     .unwrap();
     let observation = controller
@@ -158,6 +158,8 @@ async fn a_discharge_confirms_on_measured_power_even_if_the_status_mapping_is_wr
     );
     assert!(observation.fault.is_none());
     assert!(observation.report.properties.output_home_w > 0);
+    assert_eq!(observation.report.properties.ac_status, Some(2));
+    assert_eq!(observation.report.properties.dc_status, Some(1));
 }
 
 #[tokio::test]

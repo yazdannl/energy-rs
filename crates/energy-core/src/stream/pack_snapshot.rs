@@ -28,7 +28,7 @@ pub struct PackSnapshot {
     pub control_fault: Option<String>,
     /// Historical device fault, kept after idle telemetry looks healthy again.
     pub last_control_fault: Option<String>,
-    /// Sustained discharge power contradicted by a status value: mapping alarm, not a fault.
+    /// Sustained discharge power with an active charging status: mapping alarm, not a fault.
     pub flow_alarm: Option<String>,
     /// Effective charge limit after config and device clamping, W.
     pub max_charge_w: Option<f64>,

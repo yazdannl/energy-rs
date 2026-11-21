@@ -18,7 +18,7 @@ pub struct Properties {
     pub ac_mode: i32,
     /// `acStatus`: 2 = AC input (grid charge), 1 = AC output (home discharge), 0 = idle.
     pub ac_status: Option<i32>,
-    /// `dcStatus`: 1 = the DC/DC path is running.
+    /// `dcStatus`: 1 = charging, 2 = discharging (hardware-verified output pair 1/2).
     pub dc_status: Option<i32>,
     pub input_limit_w: u32,
     pub output_limit_w: u32,

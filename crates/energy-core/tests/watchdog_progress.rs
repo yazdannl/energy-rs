@@ -369,7 +369,7 @@ fn report_at(message_id: u32, output_limit: u32) -> energy_battery::Report {
                 "inputLimit": 0,
                 "outputLimit": output_limit,
                 "acStatus": i32::from(output_limit > 0),
-                "dcStatus": i32::from(output_limit > 0),
+                "dcStatus": i32::from(output_limit > 0) * 2,
                 "outputHomePower": output_limit,
                 "smartMode": 1,
                 "minSoc": 5,

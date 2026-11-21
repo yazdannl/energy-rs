@@ -18,7 +18,7 @@ pub struct FakeState {
     pub ac_mode: i32,
     /// `acStatus` in the report: 2 = grid charging, 1 = AC output, 0 = idle.
     pub ac_status: i32,
-    /// `dcStatus` in the report: 1 = the DC/DC path is running.
+    /// `dcStatus` in the report: 1 = charging, 2 = discharging.
     pub dc_status: i32,
     pub input_limit_w: u32,
     pub output_limit_w: u32,
