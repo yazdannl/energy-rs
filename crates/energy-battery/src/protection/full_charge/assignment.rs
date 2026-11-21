@@ -19,4 +19,21 @@ pub struct FullChargeAssignment {
     pub dwell_until: i64,
     /// Expected import cost of the chosen slots, EUR.
     pub expected_cost_eur: f64,
+    /// AC kWh the cheap band could not cover (full quarter-hours, not seconds left in the
+    /// current slot); zero means a complete charge.
+    pub missing_kwh: f64,
+    /// Cause of a partial charge: `not_enough_eligible_slots` or `insufficient_capacity`.
+    pub partial_reason: Option<&'static str>,
+    /// Cheap-band price ceiling used for this plan, EUR/kWh. Carried forward so a later replan
+    /// cannot demote a slot that was already booked just because the remaining-window median fell.
+    pub band_ceil_eur_per_kwh: f64,
+}
+
+impl FullChargeAssignment {
+    /// Whether this assignment reaches the whole remaining requirement.
+    ///
+    /// Only complete assignments may start a balancing dwell or stamp history.
+    pub fn is_complete(&self) -> bool {
+        self.missing_kwh <= 1e-6
+    }
 }

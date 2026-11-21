@@ -32,37 +32,7 @@ impl Engine {
         unassigned: &[UnassignedPack],
     ) -> Result<(), EngineError> {
         for assignment in assignments {
-            let slots: Vec<serde_json::Value> = assignment
-                .slots
-                .iter()
-                .map(|slot| {
-                    json!({
-                        "tStart": slot.t_start,
-                        "priceEurPerKwh": slot.price_eur_per_kwh,
-                        "chargeW": slot.charge_w,
-                    })
-                })
-                .collect();
-            self.event_data(
-                at,
-                EventLevel::Info,
-                "maintenance.planned",
-                format!(
-                    "{}: {} full charge to 100 % in {} cheap slots, expected {:.3} EUR",
-                    assignment.pack_id,
-                    assignment.reason,
-                    assignment.slots.len(),
-                    assignment.expected_cost_eur
-                ),
-                &json!({
-                    "pack": assignment.pack_id,
-                    "reason": assignment.reason,
-                    "targetSocPct": assignment.target_soc_pct,
-                    "slots": slots,
-                    "expectedCostEur": assignment.expected_cost_eur,
-                    "dwellUntil": assignment.dwell_until,
-                }),
-            )?;
+            self.journal_assignment(at, assignment)?;
         }
         for pack in unassigned {
             self.event_data(
@@ -84,6 +54,59 @@ impl Engine {
             )?;
         }
         Ok(())
+    }
+
+    /// One `maintenance.planned` event, marked partial when the band could not finish the pack.
+    fn journal_assignment(
+        &self,
+        at: i64,
+        assignment: &FullChargeAssignment,
+    ) -> Result<(), EngineError> {
+        let slots: Vec<serde_json::Value> = assignment
+            .slots
+            .iter()
+            .map(|slot| {
+                json!({
+                    "tStart": slot.t_start,
+                    "priceEurPerKwh": slot.price_eur_per_kwh,
+                    "chargeW": slot.charge_w,
+                })
+            })
+            .collect();
+        let message = if assignment.is_complete() {
+            format!(
+                "{}: {} full charge to 100 % in {} cheap slots, expected {:.3} EUR",
+                assignment.pack_id,
+                assignment.reason,
+                assignment.slots.len(),
+                assignment.expected_cost_eur
+            )
+        } else {
+            format!(
+                "{}: {} partial charge in {} cheap slots, {:.3} kWh still missing ({})",
+                assignment.pack_id,
+                assignment.reason,
+                assignment.slots.len(),
+                assignment.missing_kwh,
+                assignment.partial_reason.unwrap_or("partial")
+            )
+        };
+        self.event_data(
+            at,
+            EventLevel::Info,
+            "maintenance.planned",
+            message,
+            &json!({
+                "pack": assignment.pack_id,
+                "reason": assignment.reason,
+                "targetSocPct": assignment.target_soc_pct,
+                "slots": slots,
+                "expectedCostEur": assignment.expected_cost_eur,
+                "dwellUntil": assignment.dwell_until,
+                "missingKwh": assignment.missing_kwh,
+                "partialReason": assignment.partial_reason,
+            }),
+        )
     }
 
     /// One event for each completed or abandoned balancing dwell.

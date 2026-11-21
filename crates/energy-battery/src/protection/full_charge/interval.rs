@@ -12,13 +12,20 @@
 //! all-in price): with a full multi-day publication tomorrow's slots are outside the window, and
 //! when only today's prices are published the band simply uses the published part of tonight.
 //! Within the band, slots are tried by earliest start (price breaks ties), and the first window
-//! that can deliver the whole charge before the deadline wins. A pack that cannot be completed is
-//! always reported as unassigned with its missing kWh and a cause, never as a partial success.
+//! that can deliver the whole charge before the deadline wins. When no window can complete a pack,
+//! the planner still books every watt the band has left: a partial charge, reported as such with
+//! its missing kWh and cause. A pack with no bookable energy stays unassigned with its cause, and
+//! is never reported as complete. Missing kWh is measured against each plan slot's published
+//! quarter-hour, not the seconds left in the current slot: a replan inside a slot cannot invent a
+//! new shortfall merely by waiting. The band ceiling is carried from the previous plan, so a
+//! shrinking remaining-window median cannot demote an already-booked slot or open a hole in front
+//! of it; the earliest eligible run always wins over later, marginally cheaper slots.
 
 use chrono::{DateTime, LocalResult, TimeZone, Timelike};
 use chrono_tz::Europe::Amsterdam;
 
 use crate::protection::full_charge::unassigned_pack::{ceiling_refusal, shortfall, unassigned_all};
+use crate::protection::full_charge::window::{fill, nominal_available, shortfall_reason};
 use crate::protection::full_charge::{
     ChargeCandidate, ChargeSlot, DuePack, FullChargeAssignment, FullChargeSettings, IntervalPlan,
     TOLERANCE_PCT,
@@ -41,6 +48,23 @@ pub fn plan(
     packs: &[DuePack],
     budget_w: f64,
 ) -> IntervalPlan {
+    plan_after(now, settings, candidates, packs, budget_w, &[])
+}
+
+/// The same plan, with the previous plan's band ceiling as a floor.
+///
+/// Once a slot was cheap enough to be booked, a replan that only moves `now` forward may not
+/// demote it: the ceiling is carried forward so the charge keeps its original slots and the band
+/// never opens a hole ahead of it. Cheaper later slots may still be added, but never displace the
+/// earliest run.
+pub fn plan_after(
+    now: i64,
+    settings: &FullChargeSettings,
+    candidates: &[ChargeCandidate],
+    packs: &[DuePack],
+    budget_w: f64,
+    previous: &[FullChargeAssignment],
+) -> IntervalPlan {
     let deadline = deadline_after(now);
     let due = due_packs(now, settings, packs);
     if !settings.enabled {
@@ -52,8 +76,12 @@ pub fn plan(
     if !budget_w.is_finite() || budget_w <= 0.0 {
         return unassigned_all(due, deadline, 1, "no_headroom");
     }
-    let Some((eligible, mut remaining, priced_without_headroom)) =
-        cheap_slots(now, deadline, candidates, budget_w)
+    let band_floor = previous
+        .iter()
+        .map(|entry| entry.band_ceil_eur_per_kwh)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let Some((eligible, mut remaining, priced_without_headroom, band_ceil)) =
+        cheap_slots(now, deadline, candidates, budget_w, band_floor)
     else {
         return unassigned_all(due, deadline, 0, "horizon_too_short");
     };
@@ -63,7 +91,8 @@ pub fn plan(
             answer.unassigned.push(ceiling_refusal(pack, deadline));
             continue;
         }
-        if let Some(assignment) = assign(pack, &eligible, &mut remaining, settings, now) {
+        if let Some(assignment) = assign(pack, &eligible, &mut remaining, settings, now, band_ceil)
+        {
             answer.assignments.push(assignment);
         } else {
             answer.unassigned.push(shortfall(
@@ -98,7 +127,8 @@ fn cheap_slots(
     deadline: i64,
     candidates: &[ChargeCandidate],
     budget_w: f64,
-) -> Option<(Vec<ChargeCandidate>, Vec<f64>, bool)> {
+    band_floor: f64,
+) -> Option<(Vec<ChargeCandidate>, Vec<f64>, bool, f64)> {
     let in_window: Vec<ChargeCandidate> = candidates
         .iter()
         .copied()
@@ -109,7 +139,8 @@ fn cheap_slots(
         })
         .filter(|slot| slot.t_end > slot.t_start)
         .collect();
-    let threshold = price_threshold(&in_window)?;
+    // A carried ceiling is only a floor: a genuinely cheaper publication can still lower it.
+    let threshold = price_threshold(&in_window)?.max(band_floor);
     let priced_without_headroom = in_window
         .iter()
         .any(|slot| slot.price_eur_per_kwh <= threshold && slot.available_w <= 0.0);
@@ -126,7 +157,7 @@ fn cheap_slots(
         .iter()
         .map(|slot| slot.available_w.min(budget_w).max(0.0))
         .collect();
-    Some((eligible, remaining, priced_without_headroom))
+    Some((eligible, remaining, priced_without_headroom, threshold))
 }
 
 /// A cheap slot is in the lower half of the overnight window *and* below its mean price.
@@ -149,86 +180,45 @@ fn price_threshold(candidates: &[ChargeCandidate]) -> Option<f64> {
     Some(median.min(mean))
 }
 
-/// Fill one pack in the earliest eligible window that can complete before the deadline.
+/// Complete the pack from the earliest run, or book the largest partial run available.
 fn assign(
     pack: &DuePack,
     eligible: &[ChargeCandidate],
     remaining: &mut [f64],
     settings: &FullChargeSettings,
     now: i64,
+    band_ceil: f64,
 ) -> Option<FullChargeAssignment> {
     let needed = pack.ac_energy_needed_kwh();
     if needed <= ENERGY_EPS_KWH {
-        return Some(assignment(pack, settings, Vec::new(), 0.0, now));
+        return Some(assignment(pack, settings, Vec::new(), 0.0, now, band_ceil));
     }
     if !pack.max_charge_w.is_finite() || pack.max_charge_w <= 0.0 {
         return None;
     }
-    for start in 0..eligible.len() {
-        if let Some((reserved, cost, charge_end)) = window(pack, eligible, remaining, start, needed)
-        {
-            // Charge by slot index, not by vector offset: windows skip exhausted slots, and a
-            // shifted index would hand the same headroom to the next pack twice.
-            for (index, slot) in &reserved {
-                remaining[*index] -= slot.charge_w;
-            }
-            let slots = reserved.into_iter().map(|(_, slot)| slot).collect();
-            return Some(assignment(pack, settings, slots, cost, charge_end));
-        }
+    // Starting at the earliest slot both finds the earliest complete window and, when none can
+    // complete, gathers the most energy the remaining cheap band can still deliver.
+    let (reserved, cost, delivered, complete) = fill(pack, eligible, remaining, 0, needed);
+    if delivered <= ENERGY_EPS_KWH {
+        return None;
     }
-    None
-}
-
-/// A window that can deliver a pack's charge: the reserved slots (by eligible index), their
-/// cost, and the instant the charge finishes.
-type ReservedWindow = (Vec<(usize, ChargeSlot)>, f64, i64);
-
-/// Try one contiguous window of eligible slots; never mutate the caller's capacities on failure.
-fn window(
-    pack: &DuePack,
-    eligible: &[ChargeCandidate],
-    remaining: &[f64],
-    start: usize,
-    needed: f64,
-) -> Option<ReservedWindow> {
-    let mut reserved = remaining.to_vec();
-    let mut needed = needed;
-    let mut slots = Vec::new();
-    let mut cost = 0.0;
-    for index in start..eligible.len() {
-        let candidate = eligible[index];
-        let seconds = candidate.t_end - candidate.t_start;
-        if seconds <= 0 {
-            continue;
-        }
-        let watts = reserved[index]
-            .min(pack.max_charge_w)
-            .min(needed * 3_600_000.0 / seconds as f64)
-            .max(0.0);
-        if watts <= 0.0 {
-            continue;
-        }
-        let energy = watts * seconds as f64 / 3_600_000.0;
-        needed -= energy;
-        cost += energy * candidate.price_eur_per_kwh;
-        slots.push((
-            index,
-            ChargeSlot {
-                slot_start: candidate.slot_start,
-                t_start: candidate.t_start,
-                t_end: candidate.t_end,
-                duration_s: seconds,
-                price_eur_per_kwh: candidate.price_eur_per_kwh,
-                charge_w: watts,
-            },
-        ));
-        reserved[index] -= watts;
-        if needed <= ENERGY_EPS_KWH {
-            let end = slots.last().map_or(0, |(_, slot)| slot.t_end);
-            return Some((slots, cost, end));
-        }
+    let band_kwh = nominal_available(pack, eligible, remaining);
+    let partial_reason = (!complete).then(|| shortfall_reason(band_kwh, needed));
+    // Charge by slot index, not by vector offset: windows skip exhausted slots, and a shifted
+    // index would hand the same headroom to the next pack twice.
+    for (index, slot) in &reserved {
+        remaining[*index] -= slot.charge_w;
     }
-    None
+    let charge_end = reserved.last().map_or(now, |(_, slot)| slot.t_end);
+    let slots = reserved.into_iter().map(|(_, slot)| slot).collect();
+    let mut result = assignment(pack, settings, slots, cost, charge_end, band_ceil);
+    if let Some(reason) = partial_reason {
+        // The shortfall is against the band's full-quarter-hour capacity, not the seconds left
+        // in the current slot: elapsed time is not energy that became unplannable.
+        result.missing_kwh = (needed - band_kwh).max(0.0);
+        result.partial_reason = Some(reason);
+    }
+    Some(result)
 }
 
 /// The assignment's bookkeeping fields, shared by the zero-charge and charged paths.
@@ -238,6 +228,7 @@ fn assignment(
     slots: Vec<ChargeSlot>,
     cost: f64,
     charge_end: i64,
+    band_ceil: f64,
 ) -> FullChargeAssignment {
     FullChargeAssignment {
         pack_id: pack.pack_id.clone(),
@@ -251,6 +242,9 @@ fn assignment(
         charge_end,
         dwell_until: charge_end + i64::from(settings.dwell_minutes()) * 60,
         expected_cost_eur: cost,
+        missing_kwh: 0.0,
+        partial_reason: None,
+        band_ceil_eur_per_kwh: band_ceil,
     }
 }
 

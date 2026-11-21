@@ -98,9 +98,11 @@ export interface PackLatch {
 export interface PackMaintenance {
   lastFullCharge: Instant | null;
   nextDue: Instant | null;
-  dwellState: 'due' | 'charging' | 'dwell' | 'idle';
+  dwellState: 'due' | 'charging' | 'dwell' | 'charging_partial' | 'idle' | `unassigned_${string}`;
   dwellStartedAt: Instant | null;
   targetSocPct: number | null;
+  unassignedReason?: string | null;
+  missingKwh?: number | null;
 }
 
 export interface PackOverride {
