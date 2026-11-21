@@ -136,12 +136,23 @@ override.
 `learned`, `latch` and `override` are `null` when the engine has no value for them.
 `maintenance.lastFullCharge` stamps the end of a completed 100 % balancing dwell, never the moment
 a pack passed 99 %; a pack with no stamp is due now. `nextDue` adds `full_charge_interval_days`.
-`dwellState` is `due`, `charging`, `dwell`, `idle`, or `unassigned_*` (the pack is due but no
-eligible cheap window could cover it). The exact `unassignedReason` is `horizon_too_short`,
-`no_cheap_slots`, `not_enough_eligible_slots`, `no_headroom`, `insufficient_capacity` or
-`soc_ceiling_below_target`; `missingKwh` is the AC energy still needed. Every such pack is also
-journalled as `maintenance.unassigned` with the same reason, required/available/missing kWh and the
-07:00 Europe/Amsterdam deadline.
+`dwellState` is `due`, `charging`, `dwell`, `charging_partial` (a cheap band that cannot finish
+the pack was still charged as far as it allowed), `idle`, or `unassigned_*` (the pack is due but no
+slot could be booked at all). `unassignedReason` carries `horizon_too_short`, `no_cheap_slots`,
+`not_enough_eligible_slots`, `no_headroom`, `insufficient_capacity` or
+`soc_ceiling_below_target` for refusals, and `not_enough_eligible_slots` or `insufficient_capacity`
+for partial charges. `missingKwh` is the AC energy still unplannable, measured against each plan
+slot's full quarter-hour so a replan later in the same slot does not inflate it. Charges use the
+largest contiguous eligible run (expensive or exhausted quarters end a run), and the cheap-band
+price ceiling carries over only within the same overnight window and unchanged price publication:
+a replan cannot move an already-booked charge to later slots or open holes ahead of it, while a
+07:00-local deadline rollover or a revised slot price drops the anchor so a cheaper band can win.
+When packs compete, an earlier pack's partial fill can shorten the run left to a later pack; that
+shortfall is reported rather than silently spread across disconnected slots. A partial
+charge never starts a dwell or stamps `lastFullCharge`. Every refused pack is also journalled as
+`maintenance.unassigned` with the same reason, required/available/missing kWh and the 07:00
+Europe/Amsterdam deadline; partial charges are journalled as `maintenance.planned` with their
+`missingKwh` and `partialReason`.
 `capacityDecision` is the learner's provenance slug (`capacity_learned*`); `latch.reason` is the
 protection slug (`cell_*`).
 

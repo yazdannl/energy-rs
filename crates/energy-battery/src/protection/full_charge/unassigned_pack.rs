@@ -1,5 +1,6 @@
 //! A due pack that could not be scheduled in this plan, and the reason why.
 
+use crate::protection::full_charge::window::{nominal_available, nominal_kwh};
 use crate::protection::full_charge::{ChargeCandidate, DuePack, IntervalPlan};
 
 /// Tolerance for treating a pack's missing energy as zero.
@@ -17,7 +18,10 @@ pub struct UnassignedPack {
     pub required_kwh: f64,
     /// AC kWh this plan could have delivered inside the cheap band.
     pub available_kwh: f64,
-    /// AC kWh still missing.
+    /// AC kWh still unplannable in this plan.
+    ///
+    /// Measured against each slot's full published quarter-hour, not the seconds left in the
+    /// current slot, so a replan inside a slot cannot make the pack look worse just by waiting.
     pub missing_kwh: f64,
     /// Local 07:00 completion deadline, UTC epoch seconds.
     pub deadline: i64,
@@ -72,18 +76,11 @@ pub(crate) fn shortfall(
     deadline: i64,
 ) -> UnassignedPack {
     let required = pack.ac_energy_needed_kwh();
-    let available: f64 = eligible
-        .iter()
-        .zip(remaining.iter())
-        .map(|(slot, watts)| {
-            let seconds = (slot.t_end - slot.t_start).max(0) as f64;
-            watts.max(0.0).min(pack.max_charge_w) * seconds / 3_600_000.0
-        })
-        .sum();
+    let available = nominal_available(pack, eligible, remaining);
     // Physical energy of the eligible window before other packs consume its headroom.
     let window_kwh: f64 = eligible
         .iter()
-        .map(|slot| pack.max_charge_w * (slot.t_end - slot.t_start).max(0) as f64 / 3_600_000.0)
+        .map(|slot| nominal_kwh(slot, slot.available_w, pack.max_charge_w))
         .sum();
     let reason = if eligible.is_empty() && priced_without_headroom {
         "no_headroom"

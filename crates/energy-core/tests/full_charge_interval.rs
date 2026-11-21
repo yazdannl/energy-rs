@@ -117,9 +117,9 @@ fn a_pack_inside_the_interval_is_not_planned() {
 }
 
 #[test]
-fn a_short_cheap_window_waits_for_the_next_replan() {
-    // Only five cheap slots (1 kWh) cannot cover the 2 kWh a nearly empty pack needs: no partial
-    // maintenance charge, and the pack keeps its cheap chance on the next plan.
+fn a_short_cheap_window_books_what_it_can_and_reports_the_rest() {
+    // Five cheap slots at 800 W deliver 1 kWh; the nearly empty pack needs 1.92 kWh AC. Book the
+    // whole band as a partial charge instead of dropping the pack, and report the 0.92 kWh short.
     let candidates = slots(&prices(5, 40), 800.0);
     let assignments = energy_battery::protection::full_charge::interval::plan(
         NOW,
@@ -128,7 +128,18 @@ fn a_short_cheap_window_waits_for_the_next_replan() {
         &[due_pack("ONE", 5.0, None, false)],
         7_300.0,
     );
-    assert!(assignments.assignments.is_empty());
+    assert_eq!(assignments.assignments.len(), 1);
+    assert!(assignments.unassigned.is_empty());
+    let partial = &assignments.assignments[0];
+    assert!(!partial.is_complete());
+    assert_eq!(partial.partial_reason, Some("not_enough_eligible_slots"));
+    assert!((partial.missing_kwh - 0.92).abs() < 0.01);
+    let charged: f64 = partial
+        .slots
+        .iter()
+        .map(|slot| slot.charge_w * slot.duration_s as f64 / 3_600_000.0)
+        .sum();
+    assert!((charged - 1.0).abs() < 1e-6);
 }
 
 #[test]
@@ -301,7 +312,7 @@ async fn a_dry_run_journals_the_intent_without_writing() {
 }
 
 #[test]
-fn a_short_window_reports_the_missing_kwh_instead_of_silently_skipping() {
+fn a_short_window_reports_the_missing_kwh_on_the_partial_charge() {
     let result = energy_battery::protection::full_charge::interval::plan(
         NOW,
         &settings(),
@@ -309,12 +320,18 @@ fn a_short_window_reports_the_missing_kwh_instead_of_silently_skipping() {
         &[due_pack("ONE", 5.0, None, false)],
         7_300.0,
     );
-    assert!(result.assignments.is_empty());
-    assert_eq!(result.unassigned.len(), 1);
-    let pack = &result.unassigned[0];
-    assert_eq!(pack.reason, "not_enough_eligible_slots");
-    assert!(pack.missing_kwh > 0.9);
-    assert!(pack.required_kwh > pack.available_kwh);
+    assert_eq!(result.assignments.len(), 1);
+    assert!(result.unassigned.is_empty());
+    let pack = &result.assignments[0];
+    assert!(!pack.is_complete());
+    assert_eq!(pack.partial_reason, Some("not_enough_eligible_slots"));
+    assert!(pack.missing_kwh > 0.9 && pack.missing_kwh < 1.0);
+    let charged: f64 = pack
+        .slots
+        .iter()
+        .map(|slot| slot.charge_w * slot.duration_s as f64 / 3_600_000.0)
+        .sum();
+    assert!((charged + pack.missing_kwh - 1.92).abs() < 1e-6);
 }
 
 #[test]
@@ -397,6 +414,10 @@ fn the_fold_replaces_a_conflicting_discharge_and_scales_a_clipped_slot() {
             charge_end: NOW + 120,
             dwell_until: NOW + 3_720,
             expected_cost_eur: 0.003,
+            missing_kwh: 0.0,
+            partial_reason: None,
+            band_deadline: NOW,
+            band_ceil_eur_per_kwh: 0.08,
         }],
         1.92,
         0.95,
@@ -427,5 +448,9 @@ fn assignment(pack_id: &str, charge_end: i64, dwell_until: i64) -> FullChargeAss
         charge_end,
         dwell_until,
         expected_cost_eur: 0.0,
+        missing_kwh: 0.0,
+        partial_reason: None,
+        band_deadline: charge_end,
+        band_ceil_eur_per_kwh: 0.08,
     }
 }

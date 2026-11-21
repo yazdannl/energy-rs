@@ -13,6 +13,7 @@ pub mod interval_plan;
 pub mod scheduler;
 pub mod settings;
 pub mod unassigned_pack;
+mod window;
 
 pub use action::FullChargeAction;
 pub use assignment::FullChargeAssignment;

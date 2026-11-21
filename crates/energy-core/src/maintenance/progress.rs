@@ -29,14 +29,18 @@ pub fn progress(
     view: &FleetView,
     now: i64,
 ) -> Vec<DwellOutcome> {
-    let mut outcomes: Vec<DwellOutcome> = plan
+    // A partial charge never reaches the target, so it cannot start or carry a dwell.
+    let complete: Vec<&FullChargeAssignment> = plan
         .maintenance
+        .iter()
+        .filter(|assignment| assignment.is_complete())
+        .collect();
+    let mut outcomes: Vec<DwellOutcome> = complete
         .iter()
         .filter(|assignment| now >= assignment.charge_end)
         .filter_map(|assignment| observe(port, assignment, view, now))
         .collect();
-    let assigned: HashSet<&str> = plan
-        .maintenance
+    let assigned: HashSet<&str> = complete
         .iter()
         .map(|assignment| assignment.pack_id.as_str())
         .collect();

@@ -5,7 +5,8 @@ use energy_battery::protection::full_charge::{FullChargeAssignment, UnassignedPa
 /// The maintenance phase the engine assigned to one pack in the current plan.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaintenanceSnapshot {
-    /// `charging` before the last cheap slot, `dwell` while balancing at 100 %.
+    /// `charging` before the last cheap slot, `dwell` while balancing at 100 %, or
+    /// `charging_partial` for a charge that cannot reach 100 % in this plan.
     pub state: &'static str,
     /// The balancing target, 100 %.
     pub target_soc_pct: f64,
@@ -13,17 +14,20 @@ pub struct MaintenanceSnapshot {
     pub charge_end: i64,
     /// Earliest instant the dwell may complete, UTC epoch seconds.
     pub dwell_until: i64,
-    /// Failure cause when the pack is due but could not be scheduled.
+    /// Cause when the pack is due but not fully scheduled (unassigned or partial).
     pub unassigned_reason: Option<&'static str>,
-    /// AC kWh still missing when the pack is unassigned.
+    /// AC kWh still missing when the pack is unassigned or only partially charged.
     pub missing_kwh: Option<f64>,
 }
 
 impl MaintenanceSnapshot {
-    /// A pack with a full charge in the current plan.
+    /// A pack with a full or partial charge in the current plan.
     pub fn assigned(entry: &FullChargeAssignment, now: i64) -> Self {
+        let complete = entry.is_complete();
         Self {
-            state: if now < entry.charge_end {
+            state: if !complete {
+                "charging_partial"
+            } else if now < entry.charge_end {
                 "charging"
             } else {
                 "dwell"
@@ -31,8 +35,8 @@ impl MaintenanceSnapshot {
             target_soc_pct: entry.target_soc_pct,
             charge_end: entry.charge_end,
             dwell_until: entry.dwell_until,
-            unassigned_reason: None,
-            missing_kwh: None,
+            unassigned_reason: entry.partial_reason,
+            missing_kwh: (!complete).then_some(entry.missing_kwh),
         }
     }
 
