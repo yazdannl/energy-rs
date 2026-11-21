@@ -560,6 +560,8 @@ export function makeDispatch(now: Date): DispatchResponse {
       reason: index === 4 ? 'stale_input' : index === 5 ? 'hold' : 'dispatch',
       mode: MOCK_MODE,
       verified: index !== 4,
+      written: index !== 4,
+      flowMeasured: index !== 4,
       error: index === 4 ? 'input stale by 212 s' : null,
     };
   });

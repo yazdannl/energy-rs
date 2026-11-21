@@ -7,8 +7,11 @@ use crate::safety::Reason;
 /// `requested_w` is the pack's share after allocation (or its override), `intended_w` what the
 /// safety ladder would allow, and `applied_w` only what the pack measured flowing. In `advisory`/`dry_run`
 /// `intended_w` is the shadow ladder's answer while `written`/`applied_w` stay false/zero: the log
-/// says exactly what *would* have happened, and nothing reached the hardware.
+/// says exactly what *would* have happened, and nothing reached the hardware. A suppressed tick
+/// can carry measured flow: `written` says nothing reached the device this tick, `verified` says no
+/// echo was seen, and `flow_measured` says whether `applied_w` is a real reading at all.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // written, verified and flow_measured are different facts
 pub struct PackReport {
     /// The pack this row belongs to.
     pub pack_id: String,
@@ -18,8 +21,10 @@ pub struct PackReport {
     pub requested_w: f64,
     /// What the ladder allows, W (the shadow value outside `auto`).
     pub intended_w: f64,
-    /// What the pack measured flowing, W; `0.0` when nothing was verified.
+    /// What the pack measured flowing, W; meaningful only when `flow_measured` is true.
     pub applied_w: f64,
+    /// Whether `applied_w` came from a fresh reading; false means unknown, not zero delivery.
+    pub flow_measured: bool,
     /// The binding reason for what happened.
     pub reason: Reason,
     /// The ladder's own reason for `intended_w`.

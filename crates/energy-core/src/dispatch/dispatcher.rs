@@ -7,8 +7,9 @@ use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
 use crate::dispatch::pack_context::{cell_safety, measured, reason_for, requested_watts};
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading, PackReport, Planned,
-    TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp, slot_power,
+    CommandSink, FaultGuard, HOLD_DEADBAND_W, OverrideAction, OverrideSource, PackReading,
+    PackReport, Planned, TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp,
+    slot_power,
 };
 use crate::safety::Reason;
 use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
@@ -190,6 +191,7 @@ impl Dispatcher {
             pack_id: pack_id.to_owned(),
             ledger_id: reading.ledger_id,
             measured_w: reading.power_w,
+            measured_flow_w: (reading.available && !reading.stale).then_some(reading.power_w),
             requested_w: requested,
             command_w: if context.mode.may_write() {
                 decision.allowed_w
@@ -237,7 +239,12 @@ impl Dispatcher {
             Sent::none()
         };
         if let Some(cause) = &plan.backoff_cause {
-            sent.error = Some(format!("not sent; backing off after {cause}"));
+            let (flow_w, detail) = backoff_flow(&plan);
+            if let Some(flow_w) = flow_w {
+                sent.applied_w = flow_w;
+                sent.flow_measured = true;
+            }
+            sent.error = Some(format!("not sent; backing off after {cause}{detail}"));
         }
         PackReport {
             pack_id: plan.pack_id,
@@ -245,6 +252,7 @@ impl Dispatcher {
             requested_w: plan.requested_w,
             intended_w: plan.command_w,
             applied_w: sent.applied_w,
+            flow_measured: sent.flow_measured,
             reason: plan.reason,
             intended_reason: plan.intended_reason,
             written: sent.written,
@@ -253,6 +261,26 @@ impl Dispatcher {
             superseded: sent.superseded,
             error: sent.error,
             note: plan.note,
+        }
+    }
+}
+
+/// A suppressed write still has a live measurement when the pack was read this tick.
+///
+/// With no fresh read the flow is unknown, not zero, even if the ladder clamped the pack to 0 W.
+fn backoff_flow(plan: &Planned) -> (Option<f64>, String) {
+    let standing =
+        plan.requested_w.abs() > HOLD_DEADBAND_W || plan.command_w.abs() > HOLD_DEADBAND_W;
+    match plan.measured_flow_w {
+        None => (None, "; no fresh reading, flow unknown".to_owned()),
+        Some(_) if !standing => (None, String::new()),
+        Some(flow_w) => {
+            let detail = if flow_w.abs() <= energy_battery::FLOW_THRESHOLD_W as f64 {
+                "; previous command still standing; no flow measured".to_owned()
+            } else {
+                format!("; previous command still standing; measured {flow_w:.0} W")
+            };
+            (Some(flow_w), detail)
         }
     }
 }

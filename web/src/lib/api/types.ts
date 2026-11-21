@@ -250,6 +250,10 @@ export interface DispatchEntry {
   reason: string;
   mode: Mode;
   verified: boolean;
+  /** Whether a command reached the device this tick; null on older ledger rows. */
+  written: boolean | null;
+  /** When false, appliedW is not a measurement (do not read it as zero delivery). */
+  flowMeasured: boolean;
   error: string | null;
 }
 

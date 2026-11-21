@@ -2,9 +2,12 @@
 
 /// What one send attempt produced.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)] // written, verified and flow_measured are different facts
 pub(crate) struct Sent {
     pub(crate) written: bool,
     pub(crate) verified: bool,
+    /// Whether `applied_w` came from a fresh measurement rather than being unknown.
+    pub(crate) flow_measured: bool,
     pub(crate) applied_w: f64,
     pub(crate) fail_safe: bool,
     /// Why a safety hold took over this attempt; ownership stays with that hold.
@@ -18,6 +21,7 @@ impl Sent {
         Self {
             written: false,
             verified: false,
+            flow_measured: false,
             applied_w: 0.0,
             fail_safe: false,
             superseded: None,

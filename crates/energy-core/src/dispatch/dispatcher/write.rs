@@ -36,9 +36,10 @@ impl Dispatcher {
             },
             // Real but low flow is a completed episode, not a fault: keep ownership, make no hold,
             // and pause ordinary writes so a current-limited pack is not re-commanded every tick.
-            Ok(receipt) if receipt.partial => {
-                self.curtailed(progress, pack_id, receipt.applied_w, context.now)
-            }
+            Ok(receipt) if receipt.partial => Sent {
+                flow_measured: true,
+                ..self.curtailed(progress, pack_id, receipt.applied_w, context.now)
+            },
             Ok(receipt) => {
                 // Progress means work happened: a failed write is the watchdog's business, not a
                 // heartbeat.
@@ -49,6 +50,7 @@ impl Dispatcher {
                 Sent {
                     written: true,
                     verified: receipt.verified,
+                    flow_measured: receipt.verified,
                     applied_w: receipt.applied_w,
                     ..Sent::none()
                 }
@@ -140,6 +142,7 @@ impl Dispatcher {
                 Sent {
                     written: true,
                     verified: receipt.verified,
+                    flow_measured: false,
                     applied_w: receipt.applied_w,
                     fail_safe: true,
                     superseded: receipt.superseded.then(|| "safety hold".to_owned()),

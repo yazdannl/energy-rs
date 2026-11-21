@@ -157,14 +157,20 @@ async fn dispatch_lists_newest_first_with_pack_serial() {
     let fixture = Fixture::new();
     let (status, body) = get(&fixture.router(), "/api/v1/dispatch?limit=10").await;
     assert_eq!(status, 200);
-    assert_eq!(body["count"], 2);
+    assert_eq!(body["count"], 3);
     let entries = body["entries"].as_array().unwrap();
-    assert_eq!(entries[0]["packSn"], "AB2000-ONE");
-    assert_eq!(entries[0]["requestedW"], -400.0);
-    assert_eq!(entries[0]["appliedW"], -395.0);
-    assert_eq!(entries[0]["verified"], true);
-    assert_eq!(entries[1]["verified"], false);
-    assert_eq!(entries[1]["mode"], "dry_run");
+    assert_eq!(entries[0]["reason"], "fault_backoff");
+    assert_eq!(entries[0]["appliedW"], -799.0);
+    assert_eq!(entries[0]["written"], false);
+    assert_eq!(entries[0]["flowMeasured"], true);
+    assert_eq!(entries[0]["verified"], false);
+    assert!(entries[0]["error"].as_str().unwrap().contains("not sent"));
+    assert_eq!(entries[1]["packSn"], "AB2000-ONE");
+    assert_eq!(entries[1]["requestedW"], -400.0);
+    assert_eq!(entries[1]["appliedW"], -395.0);
+    assert_eq!(entries[1]["verified"], true);
+    assert_eq!(entries[2]["verified"], false);
+    assert_eq!(entries[2]["mode"], "dry_run");
 }
 
 #[tokio::test]

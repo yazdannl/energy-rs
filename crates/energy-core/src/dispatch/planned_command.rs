@@ -14,6 +14,8 @@ pub(crate) struct Planned {
     pub(crate) pack_id: String,
     pub(crate) ledger_id: Option<i64>,
     pub(crate) measured_w: f64,
+    /// Signed pack power from a fresh reading; `None` when stale or unavailable.
+    pub(crate) measured_flow_w: Option<f64>,
     pub(crate) requested_w: f64,
     pub(crate) command_w: f64,
     pub(crate) reason: Reason,

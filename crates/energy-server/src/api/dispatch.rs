@@ -44,6 +44,10 @@ struct EntryDto {
     reason: String,
     mode: String,
     verified: bool,
+    /// Whether a command reached the device this tick; absent on pre-v10 ledger rows.
+    written: Option<bool>,
+    /// Whether `applied_w` is a fresh measurement; false means the watts are unknown.
+    flow_measured: bool,
     error: Option<String>,
 }
 
@@ -65,6 +69,8 @@ fn entry_dto(entry: &DispatchEntry, serials: &BTreeMap<i64, String>) -> Result<E
         reason: entry.reason.clone(),
         mode: entry.mode.clone(),
         verified: entry.verified,
+        written: entry.written,
+        flow_measured: entry.flow_measured,
         error: entry.error.clone(),
     })
 }

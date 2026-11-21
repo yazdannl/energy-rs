@@ -155,10 +155,16 @@
               <tr class="border-t border-line/60">
                 <td class="py-1 text-muted" title={entry.at}>{ago(entry.at)}</td>
                 <td class="py-1 font-mono text-[10px] text-ink">{entry.packSn}</td>
-                <td class="num py-1 text-right text-ink">
-                  {fmtW(entry.requestedW)} / {fmtW(entry.appliedW)}
+                <td
+                  class="num py-1 text-right text-ink"
+                  title={entry.flowMeasured ? '' : 'No fresh pack reading; applied power unknown'}
+                >
+                  {fmtW(entry.requestedW)} / {entry.flowMeasured ? fmtW(entry.appliedW) : '—'}
                 </td>
                 <td class="py-1 text-right">
+                  {#if entry.written === false}
+                    <Badge tone="warn">not sent</Badge>
+                  {/if}
                   {#if entry.error}
                     <Badge tone="bad">{entry.reason}</Badge>
                   {:else if entry.verified}

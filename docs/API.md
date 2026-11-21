@@ -248,10 +248,14 @@ Newest dispatch attempts first over the last 7 days.
 { "windowSeconds": 604800, "count": 2,
   "entries": [{ "at": "...", "packSn": "AB2000-ONE", "requestedW": -400.0,
                 "appliedW": -395.0, "reason": "dispatch", "mode": "auto",
-                "verified": true, "error": null }] }
+                "verified": true, "written": true, "flowMeasured": true,
+                "error": null }] }
 ```
 
-`verified` is the device echo check; `appliedW` is 0 when nothing was sent.
+`verified` is the device echo check; `written` says whether this tick sent a command, so a
+`fault_backoff` row can still carry the pack's measured `appliedW`. `flowMeasured: false` means
+`appliedW` is unknown, not zero delivery. On ledger rows written before this field existed,
+`written` is `null` and `flowMeasured` mirrors `verified`.
 
 ### `GET /savings?period=...`
 

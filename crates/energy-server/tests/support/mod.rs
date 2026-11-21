@@ -224,6 +224,18 @@ fn seed_dispatch(ledger: &Ledger, now: i64, pack: i64) {
     let applied = DispatchEntry::new(now - 30, Some(pack), -400.0, -395.0, "dispatch", "auto")
         .verified(-395.0);
     log.insert(&applied).expect("applied row");
+    let backoff = DispatchEntry::new(
+        now - 10,
+        Some(pack),
+        -800.0,
+        -799.0,
+        "fault_backoff",
+        "auto",
+    )
+    .written(false)
+    .flow_measured(true)
+    .failed("not sent; backing off; previous command still standing; measured -799 W");
+    log.insert(&backoff).expect("backoff row");
 }
 
 fn local_day(offset_days: i64) -> String {
