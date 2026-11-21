@@ -44,7 +44,16 @@ fn discharge_echo(output_limit: u32) -> energy_battery::Report {
 async fn the_second_write_waits_for_the_pacing_floor() {
     let device = Arc::new(ScriptedDevice::new(
         SN,
-        vec![idle_report(), charge_echo(300)],
+        vec![
+            idle_report(),
+            charge_echo(300),
+            report_at(
+                SN,
+                4213,
+                1_791_959_472,
+                json!({"acMode": 1, "inputLimit": 300, "outputLimit": 0}),
+            ),
+        ],
     ));
     let controller = DeviceController::new(Arc::clone(&device), ControlLimits::unlimited());
     controller.poll().await.unwrap();
@@ -54,7 +63,14 @@ async fn the_second_write_waits_for_the_pacing_floor() {
         .await
         .unwrap();
     // A command in doubt blocks the next one until a report resolves it.
-    controller.poll().await.unwrap();
+    assert!(
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed
+            .is_some()
+    );
     controller
         .apply(Command::Charge { watts: 400 })
         .await
@@ -97,8 +113,18 @@ async fn a_custom_spacing_is_honoured() {
         .await
         .unwrap();
     device.push_report(discharge_echo(300));
+    device.push_report(report_at(
+        SN,
+        4213,
+        1_791_959_472,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 300}),
+    ));
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Discharge { watts: 300 })
     );
     controller

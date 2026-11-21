@@ -182,9 +182,10 @@ impl Dispatcher {
         let intended = decide(&context, &request, reading, latch, true);
         let backoff_cause = self.faults.blocker(pack_id, context.now);
         let backoff = backoff_cause.is_some();
-        // Cell-latch holds and emergency charges are safety traffic: backoff never suppresses them.
+        // Cell-latch holds/emergency charges and a measured import-ceiling correction are safety
+        // traffic: backoff never suppresses them, whatever caused the backoff.
         let safety = cell_safety(latch, decision.allowed_w, context.mode);
-        let vector = reading.available && (safety.is_some() || !backoff);
+        let vector = reading.available && (safety.is_some() || guarded || !backoff);
         Planned {
             pack_id: pack_id.to_owned(),
             ledger_id: reading.ledger_id,
@@ -217,7 +218,9 @@ impl Dispatcher {
             // backoff, so it must not clear the fault that is still suppressing ordinary writes.
             let safety_traffic = matches!(
                 plan.reason,
-                Reason::CellVoltageGuard | Reason::CellVoltageEmergencyCharge
+                Reason::CellVoltageGuard
+                    | Reason::CellVoltageEmergencyCharge
+                    | Reason::GridImportCeiling
             );
             self.send(
                 frame.progress,

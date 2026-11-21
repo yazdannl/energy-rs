@@ -22,6 +22,12 @@ pub(crate) struct StateDto {
     cells: Option<CellsDto>,
     sampled_at: Option<Timestamp>,
     stale: bool,
+    /// Active control fault (a messageId reset or a pack that never drew power).
+    control_fault: Option<String>,
+    /// Historical control fault; sustained discharge power with a contradictory status.
+    last_control_fault: Option<String>,
+    /// A sustained power/status contradiction worth showing even though control continues.
+    flow_alarm: Option<String>,
 }
 
 /// The engine's live values, falling back to the newest ledger sample before the first tick.
@@ -34,6 +40,9 @@ pub(crate) fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> Stat
             cells: Some(cells_dto(&live.cells)),
             sampled_at: Timestamp::lenient(live.sampled_at),
             stale: live.stale,
+            control_fault: live.control_fault.clone(),
+            last_control_fault: live.last_control_fault.clone(),
+            flow_alarm: live.flow_alarm.clone(),
         };
     }
     let last = stored.last.as_ref();
@@ -44,5 +53,8 @@ pub(crate) fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> Stat
         cells: None,
         sampled_at: Timestamp::lenient(sampled_at),
         stale: sampled_at.is_none_or(|at| now - at > STALE_AFTER_S),
+        control_fault: None,
+        last_control_fault: None,
+        flow_alarm: None,
     }
 }

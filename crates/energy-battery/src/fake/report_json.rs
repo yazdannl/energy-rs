@@ -25,6 +25,8 @@ impl FakeState {
             "properties": {
                 "electricLevel": self.soc_pct,
                 "acMode": self.reported_ac_mode(),
+                "acStatus": self.ac_status,
+                "dcStatus": self.dc_status,
                 "inputLimit": self.input_limit_w,
                 "outputLimit": self.output_limit_w,
                 "smartMode": self.smart_mode,

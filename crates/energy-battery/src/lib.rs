@@ -37,9 +37,10 @@ pub mod transport;
 
 pub use control::{
     Applied, Ceiling, Command, ControlFault, ControlLimits, DeviceController, Direction,
-    ECHO_CONFIRM_WINDOW, ECHO_POLL_INTERVAL, ECHO_TOLERANCE_W, FAULT_BACKOFF, HardLimit,
-    MAX_EMERGENCY_HOLDS, MAX_HARD_LIMIT_W, MIN_WRITE_SPACING, Observation, Pacer, Pending,
-    SAFETY_HOLD_WINDOW, ceiling_for, clamp_command, clamp_watts,
+    ECHO_CONFIRM_WINDOW, ECHO_POLL_INTERVAL, ECHO_TOLERANCE_W, FAULT_BACKOFF, FLOW_CONFIRM_WINDOW,
+    FLOW_SAMPLES, FLOW_THRESHOLD_W, FlowEvidence, HardLimit, MAX_EMERGENCY_HOLDS, MAX_HARD_LIMIT_W,
+    MIN_WRITE_SPACING, Observation, Pacer, Pending, SAFETY_HOLD_WINDOW, assess, ceiling_for,
+    clamp_command, clamp_watts, flow_threshold, flow_threshold_w,
 };
 pub use discovery::{
     DiscoveredDevice, DiscoveryRegistry, DiscoverySource, browse_mdns, build_hostname,

@@ -11,10 +11,11 @@
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use energy_battery::ControlFault;
 use energy_core::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt};
 
 use super::sent::Sent;
@@ -29,12 +30,16 @@ pub struct FakeSink {
     supersede_writes: AtomicBool,
     unverified_writes: AtomicBool,
     unverified_holds: AtomicBool,
+    /// Positive W: writes confirm with real but lower flow instead of the requested magnitude.
+    curtailed_w: AtomicI64,
     read_miss: AtomicBool,
     observer: Mutex<Option<Observer>>,
     hold_delays: Mutex<BTreeMap<String, Duration>>,
     stuck_holds: Mutex<BTreeSet<String>>,
     fenced_holds: Mutex<BTreeSet<String>>,
     hold_observer: Mutex<Option<Observer>>,
+    /// Return this typed fault for the pack's next write (then clear it).
+    faults: Mutex<BTreeMap<String, ControlFault>>,
 }
 
 impl Default for FakeSink {
@@ -45,12 +50,14 @@ impl Default for FakeSink {
             supersede_writes: AtomicBool::new(false),
             unverified_writes: AtomicBool::new(false),
             unverified_holds: AtomicBool::new(false),
+            curtailed_w: AtomicI64::new(0),
             read_miss: AtomicBool::new(false),
             observer: Mutex::new(None),
             hold_delays: Mutex::new(BTreeMap::new()),
             stuck_holds: Mutex::new(BTreeSet::new()),
             fenced_holds: Mutex::new(BTreeSet::new()),
             hold_observer: Mutex::new(None),
+            faults: Mutex::new(BTreeMap::new()),
         }
     }
 }
@@ -74,6 +81,11 @@ impl FakeSink {
 
     pub fn unverified_holds(&self, unverified: bool) {
         self.unverified_holds.store(unverified, Ordering::Relaxed);
+    }
+
+    /// Confirm writes with direction-correct flow capped at `watts` (0 disables curtailment).
+    pub fn curtail(&self, watts: i64) {
+        self.curtailed_w.store(watts, Ordering::Relaxed);
     }
 
     /// Make this pack's hold wait `delay` before its echo is available.
@@ -103,6 +115,14 @@ impl FakeSink {
     /// Script a read miss during echo confirmation: the write lands, but no echo is read.
     pub fn read_miss(&self, miss: bool) {
         self.read_miss.store(miss, Ordering::Relaxed);
+    }
+
+    /// Make the next write to `pack_id` return a typed device fault.
+    pub fn fault_with(&self, pack_id: &str, fault: ControlFault) {
+        self.faults
+            .lock()
+            .expect("sink faults")
+            .insert(pack_id.to_owned(), fault);
     }
 
     /// Run `hook` at the instant of the transport write, i.e. after the intent was journalled.
@@ -189,6 +209,13 @@ impl CommandSink for FakeSink {
                 });
             }
             let verified = !self.unverified_writes.load(Ordering::Relaxed);
+            let fault = self.faults.lock().expect("sink faults").remove(&pack_id);
+            if let Some(fault) = fault {
+                return Err(SinkError::Fault {
+                    pack_id,
+                    fault: Box::new(fault),
+                });
+            }
             if self.supersede_writes.load(Ordering::Relaxed) {
                 return Ok(WriteReceipt::superseded());
             }
@@ -198,9 +225,16 @@ impl CommandSink for FakeSink {
                     reason: "scripted read miss during echo".to_owned(),
                 });
             }
+            let curtail = self.curtailed_w.load(Ordering::Relaxed);
+            if curtail > 0 {
+                return Ok(WriteReceipt::partial(
+                    curtail.min(watts.abs() as i64) as f64 * watts.signum(),
+                ));
+            }
             Ok(WriteReceipt {
                 applied_w: watts,
                 verified,
+                partial: false,
                 superseded: false,
             })
         })
@@ -253,6 +287,7 @@ impl CommandSink for FakeSink {
             Ok(WriteReceipt {
                 applied_w: 0.0,
                 verified: !unverified,
+                partial: false,
                 superseded: false,
             })
         })

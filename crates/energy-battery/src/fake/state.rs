@@ -16,6 +16,10 @@ pub struct FakeState {
     /// Device wall-clock seconds. Reports advance `message_id`, never the clock.
     pub timestamp: i64,
     pub ac_mode: i32,
+    /// `acStatus` in the report: 2 = grid charging, 1 = AC output, 0 = idle.
+    pub ac_status: i32,
+    /// `dcStatus` in the report: 1 = the DC/DC path is running.
+    pub dc_status: i32,
     pub input_limit_w: u32,
     pub output_limit_w: u32,
     pub smart_mode: i32,
@@ -54,6 +58,8 @@ impl FakeState {
             message_id: 4211,
             timestamp: 1_791_959_470,
             ac_mode: 2,
+            ac_status: 0,
+            dc_status: 0,
             input_limit_w: 0,
             output_limit_w: 0,
             smart_mode: 1,

@@ -233,14 +233,20 @@ async fn a_foreign_report_never_confirms_during_the_wait() {
     assert_eq!(observation.confirmed, None);
     assert!(controller.pending().is_some());
 
-    device.push_report(report_at(
-        SN,
-        4213,
-        T0 + 2,
-        json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0}),
-    ));
+    for (id, timestamp) in [(4213, T0 + 2), (4214, T0 + 3)] {
+        device.push_report(report_at(
+            SN,
+            id,
+            timestamp,
+            json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0}),
+        ));
+    }
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(2), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 500 })
     );
 }
@@ -316,6 +322,12 @@ async fn a_discharge_is_not_confused_with_a_hold_by_zero_input_limit() {
         T0 + 2,
         json!({"acMode": 2, "inputLimit": 0, "outputLimit": 600}),
     ));
+    device.push_report(report_at(
+        SN,
+        4214,
+        T0 + 3,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 600}),
+    ));
     let observation = controller
         .poll_confirming(Duration::from_secs(2), || {})
         .await
@@ -353,6 +365,12 @@ async fn a_transient_read_miss_is_retried_until_the_echo_arrives() {
         SN,
         4212,
         T0 + 1,
+        json!({"acMode": 2, "inputLimit": 0, "outputLimit": 700}),
+    ));
+    scripted.push_report(report_at(
+        SN,
+        4213,
+        T0 + 2,
         json!({"acMode": 2, "inputLimit": 0, "outputLimit": 700}),
     ));
     let observation = controller

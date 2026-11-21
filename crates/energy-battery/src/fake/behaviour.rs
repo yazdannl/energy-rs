@@ -23,6 +23,9 @@ pub struct FakeBehaviour {
     pub write_code: Option<i32>,
     /// Delay each report response, to test bounded reads and stalled transports.
     pub report_delay: Duration,
+    /// Echo an applied limit with real AC flow (the healthy default). Turn off to simulate the
+    /// incident: limits echo while the AC relay stays open and no power moves.
+    pub simulate_flow: bool,
 }
 
 impl Default for FakeBehaviour {
@@ -35,6 +38,7 @@ impl Default for FakeBehaviour {
             http_status: None,
             write_code: None,
             report_delay: Duration::ZERO,
+            simulate_flow: true,
         }
     }
 }
@@ -86,6 +90,13 @@ impl FakeBehaviour {
     #[must_use]
     pub fn with_report_delay(mut self, delay: Duration) -> Self {
         self.report_delay = delay;
+        self
+    }
+
+    /// Echo limits but report no AC power at all (the 2026-11-21 incident).
+    #[must_use]
+    pub fn without_flow(mut self) -> Self {
+        self.simulate_flow = false;
         self
     }
 }

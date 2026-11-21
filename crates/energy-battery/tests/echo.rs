@@ -135,11 +135,16 @@ async fn a_command_is_pending_before_its_write_is_transmitted() {
     writing.await.unwrap().unwrap();
     assert_eq!(device.writes(), 1);
 
-    device.push_report(echo(
-        1,
-        json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0}),
-    ));
-    let observation = controller.poll().await.unwrap();
+    for id in 1..=2 {
+        device.push_report(echo(
+            id,
+            json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0}),
+        ));
+    }
+    let observation = controller
+        .poll_confirming(Duration::from_secs(1), || {})
+        .await
+        .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 500 }));
 }
 
@@ -159,12 +164,18 @@ async fn an_unresolved_command_cannot_be_replaced() {
     );
     assert_eq!(device.write_count(), 1);
 
-    device.push_report(echo(
-        1,
-        json!({"acMode": 1, "inputLimit": 300, "outputLimit": 0}),
-    ));
+    for id in 1..=2 {
+        device.push_report(echo(
+            id,
+            json!({"acMode": 1, "inputLimit": 300, "outputLimit": 0}),
+        ));
+    }
     assert_eq!(
-        controller.poll().await.unwrap().confirmed,
+        controller
+            .poll_confirming(Duration::from_secs(1), || {})
+            .await
+            .unwrap()
+            .confirmed,
         Some(Command::Charge { watts: 300 })
     );
     controller

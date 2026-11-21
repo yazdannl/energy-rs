@@ -11,6 +11,9 @@ use crate::report::Report;
 pub struct Observation {
     pub report: Report,
     pub confirmed: Option<Command>,
+    /// A direction change confirmed with real but lower-than-requested flow: no fault, no claim
+    /// that the requested wattage was achieved. The command stays owned by the controller.
+    pub partial: Option<Command>,
     pub fault: Option<ControlFault>,
     /// Request id whose command this read confirmed or faulted, when it resolved one.
     pub resolved_request: Option<u32>,
@@ -25,12 +28,14 @@ impl Observation {
     pub(super) fn observed(
         report: Report,
         confirmed: Option<Command>,
+        partial: Option<Command>,
         fault: Option<ControlFault>,
         resolved_request: Option<u32>,
     ) -> Self {
         Self {
             report,
             confirmed,
+            partial,
             fault,
             resolved_request,
             superseded: false,
@@ -42,6 +47,7 @@ impl Observation {
         Self {
             report,
             confirmed: None,
+            partial: None,
             fault: None,
             resolved_request: None,
             superseded: true,

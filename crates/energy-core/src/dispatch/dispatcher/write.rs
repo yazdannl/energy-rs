@@ -1,7 +1,11 @@
 //! The write side of the tick: one command, one bounded fail-safe hold.
 
+use energy_battery::ControlFault;
+
 use crate::dispatch::sent::Sent;
-use crate::dispatch::{CommandSink, HOLD_DEADBAND_W, Progress, SinkError, advance};
+use crate::dispatch::{
+    CURTAILMENT_PAUSE_S, CommandSink, HOLD_DEADBAND_W, Progress, SinkError, advance,
+};
 
 use super::{Dispatcher, SendContext};
 
@@ -30,6 +34,11 @@ impl Dispatcher {
                 superseded: Some("safety hold".to_owned()),
                 ..Sent::none()
             },
+            // Real but low flow is a completed episode, not a fault: keep ownership, make no hold,
+            // and pause ordinary writes so a current-limited pack is not re-commanded every tick.
+            Ok(receipt) if receipt.partial => {
+                self.curtailed(progress, pack_id, receipt.applied_w, context.now)
+            }
             Ok(receipt) => {
                 // Progress means work happened: a failed write is the watchdog's business, not a
                 // heartbeat.
@@ -64,6 +73,28 @@ impl Dispatcher {
         }
     }
 
+    /// A pack that really flows below its command is left alone briefly, without a hold or fault.
+    fn curtailed(
+        &self,
+        progress: Option<&dyn Progress>,
+        pack_id: &str,
+        applied_w: f64,
+        now: i64,
+    ) -> Sent {
+        advance(progress, now);
+        let cause = format!(
+            "pack is current-limited at {:.0} W; keeping the command",
+            applied_w.abs()
+        );
+        self.faults
+            .arm_pause(pack_id, now, &cause, CURTAILMENT_PAUSE_S);
+        Sent {
+            written: true,
+            applied_w,
+            ..Sent::none()
+        }
+    }
+
     /// One real hold after a fault, then back off (survey §7 trap 10).
     async fn fail_safe(
         &self,
@@ -74,8 +105,21 @@ impl Dispatcher {
         sink: &dyn CommandSink,
     ) -> Sent {
         let cause = error.to_string();
-        self.faults.arm(pack_id, now, &cause);
-        if !self.failsafe_on_error {
+        // A pack that never drew power, or whose local API restarted, is a hardware fault: it gets
+        // minutes of silence, not the next 15 s tick. A restart gets no hold at all: writing to a
+        // device that is still rebooting is how the command stream kept resetting its messageId.
+        let fault = match error {
+            SinkError::Fault { fault, .. } => Some(&**fault),
+            _ => None,
+        };
+        let restarted = matches!(fault, Some(ControlFault::Restarted { .. }));
+        let no_flow = matches!(fault, Some(ControlFault::NoFlow { .. }));
+        if restarted || no_flow {
+            self.faults.arm_long(pack_id, now, &cause);
+        } else {
+            self.faults.arm(pack_id, now, &cause);
+        }
+        if !self.failsafe_on_error || restarted {
             return Sent {
                 error: Some(cause),
                 ..Sent::none()

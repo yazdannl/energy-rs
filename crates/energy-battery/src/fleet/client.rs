@@ -149,7 +149,9 @@ impl<T: DeviceIo> FleetClient<T> {
         for (index, observation) in results {
             match observation {
                 Ok(observation) => {
-                    states[index] = DeviceSnapshot::from_observation(observation, Instant::now());
+                    let history = self.devices[index].last_fault();
+                    states[index] =
+                        DeviceSnapshot::from_observation(observation, Instant::now(), history);
                 }
                 Err(error) => states[index].record_failure(&error.to_string()),
             }

@@ -110,9 +110,6 @@ pub(crate) fn reason_for(
     if primary != Reason::Ok {
         return primary;
     }
-    if backoff {
-        return Reason::FaultBackoff;
-    }
     let maintenance_hold = overridden.is_some_and(|entry| {
         entry.source == OverrideSource::Maintenance && entry.action == OverrideAction::Hold
     });
@@ -127,6 +124,9 @@ pub(crate) fn reason_for(
     // empty pack or a missing meter must still say what it is.
     if guarded && !hard_safety(primary) {
         return Reason::GridImportCeiling;
+    }
+    if backoff {
+        return Reason::FaultBackoff;
     }
     if context.stale {
         return Reason::StaleInput;

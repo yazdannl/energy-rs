@@ -16,6 +16,10 @@ pub struct Properties {
     pub electric_level_pct: f64,
     /// 1 = charge, 2 = discharge, 0 = not reported, anything else = wedged.
     pub ac_mode: i32,
+    /// `acStatus`: 2 = AC input (grid charge), 1 = AC output (home discharge), 0 = idle.
+    pub ac_status: Option<i32>,
+    /// `dcStatus`: 1 = the DC/DC path is running.
+    pub dc_status: Option<i32>,
     pub input_limit_w: u32,
     pub output_limit_w: u32,
     /// 1 = values kept in RAM, 0 = also written to flash.
@@ -54,6 +58,8 @@ pub fn parse_properties(map: &Map<String, Value>) -> Properties {
     Properties {
         electric_level_pct: decode::int(map, "electricLevel").unwrap_or_default() as f64,
         ac_mode: decode::int(map, "acMode").unwrap_or_default() as i32,
+        ac_status: decode::int(map, "acStatus").map(|raw| raw as i32),
+        dc_status: decode::int(map, "dcStatus").map(|raw| raw as i32),
         input_limit_w: decode::watts(decode::int(map, "inputLimit").unwrap_or_default()),
         output_limit_w: decode::watts(decode::int(map, "outputLimit").unwrap_or_default()),
         smart_mode: decode::int(map, "smartMode").unwrap_or_default() as i32,

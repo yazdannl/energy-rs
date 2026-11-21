@@ -41,13 +41,25 @@ pub struct Pending {
     pub emergency: bool,
     /// The freshest limit mismatch seen so far, held while the write gets a chance to land.
     ///
-    /// Only echo faults are kept here; wedge, restart, foreign and wrong-mode reports still fail
-    /// the command at once. A matching report clears the doubt and confirms; the bounded wait
-    /// turns it into a fault exactly once.
+    /// Only echo faults and a missing flow are kept here; wedge, restart, foreign and wrong-mode
+    /// reports still fail the command at once. A matching echo with sustained flow confirms; the
+    /// bounded wait turns a remaining doubt into a fault exactly once.
     pub inconclusive: Option<ControlFault>,
+    /// Consecutive fresh reports that showed qualifying flow (full or curtailed).
+    pub flow_samples: u8,
+    /// Consecutive fresh reports that met the full command-aware flow threshold.
+    pub full_flow_samples: u8,
+    /// Strongest measured flow seen for this command, W (for diagnostics and `applied_w`).
+    pub flow_w: i64,
 }
 
 impl Pending {
+    /// A doubtful echo or a flow gap restarts both consecutive-report streaks.
+    pub fn reset_flow(&mut self) {
+        self.flow_samples = 0;
+        self.full_flow_samples = 0;
+    }
+
     /// Seconds between the baseline report and now, for diagnostics in timeout faults.
     pub fn age(&self, now: Instant) -> Duration {
         now.saturating_duration_since(self.sent_at)

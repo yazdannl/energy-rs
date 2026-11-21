@@ -1,7 +1,9 @@
 //! The real fleet port: `energy-battery`'s cached fleet read, mapped to pack readings.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
+use energy_battery::control::FLOW_SAMPLES;
 use energy_battery::fleet::DeviceSnapshot;
 use energy_battery::fleet::FleetClient;
 use energy_battery::report::Report;
@@ -9,6 +11,7 @@ use energy_battery::transport::DeviceIo;
 use tokio::time::Instant;
 
 use crate::dispatch::pack_catalog::PackCatalog;
+use crate::dispatch::pack_flow::PackFlow;
 use crate::dispatch::{BoxFuture, DeviceFleet, FleetError, FleetView, PackReading};
 
 /// AC ceiling assumed when a device reports none, W.
@@ -27,6 +30,8 @@ pub struct BatteryFleet<T: DeviceIo> {
     client: Arc<FleetClient<T>>,
     catalog: Arc<PackCatalog>,
     stale_after_s: f64,
+    /// Consecutive reports with discharge power but a contradictory status mapping.
+    flow_alarm_streaks: Mutex<BTreeMap<String, u8>>,
 }
 
 impl<T: DeviceIo> BatteryFleet<T> {
@@ -37,6 +42,7 @@ impl<T: DeviceIo> BatteryFleet<T> {
             client,
             catalog,
             stale_after_s,
+            flow_alarm_streaks: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -79,12 +85,22 @@ impl<T: DeviceIo> BatteryFleet<T> {
         spec.max_soc_pct = 100.0;
         let capacity_kwh = spec.capacity_kwh;
         let soc_pct = report.soc_pct();
+        let flow = PackFlow {
+            grid_input_w: report.properties.grid_input_w,
+            output_pack_w: report.properties.output_pack_w,
+            output_home_w: report.properties.output_home_w,
+            ac_status: report.properties.ac_status,
+            dc_status: report.properties.dc_status,
+        };
         PackReading {
             ledger_id,
             spec,
             soc_pct: Some(soc_pct),
             energy_kwh: (capacity_kwh > 0.0).then(|| capacity_kwh * soc_pct / 100.0),
             power_w: -(report.ac_power_w() as f64),
+            flow_alarm: self.note_flow_alarm(&device.sn, &flow),
+            historical_fault: device.historical_fault.as_ref().map(ToString::to_string),
+            flow: Some(flow),
             min_cell_v: min_cell_v(report),
             max_cell_v: max_cell_v(report),
             total_voltage_v: total_voltage_v(report),
@@ -93,6 +109,22 @@ impl<T: DeviceIo> BatteryFleet<T> {
             available: device.error.is_none(),
             stale: age_s > self.stale_after_s,
         }
+    }
+
+    /// Require consecutive corroborating reports before raising a mapping alarm.
+    fn note_flow_alarm(&self, sn: &str, flow: &PackFlow) -> Option<String> {
+        let alarm = flow.discharge_status_alarm();
+        let mut streaks = self
+            .flow_alarm_streaks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let streak = streaks.entry(sn.to_owned()).or_default();
+        if alarm.is_some() {
+            *streak = streak.saturating_add(1);
+        } else {
+            *streak = 0;
+        }
+        (*streak >= FLOW_SAMPLES).then_some(alarm).flatten()
     }
 
     /// A device that has never answered: unusable, but still listed so it is logged and held.
@@ -106,6 +138,9 @@ impl<T: DeviceIo> BatteryFleet<T> {
             soc_pct: None,
             energy_kwh: None,
             power_w: 0.0,
+            flow: None,
+            flow_alarm: None,
+            historical_fault: device.historical_fault.as_ref().map(ToString::to_string),
             min_cell_v: None,
             max_cell_v: None,
             total_voltage_v: None,

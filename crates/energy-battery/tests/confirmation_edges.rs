@@ -175,14 +175,16 @@ async fn several_counter_wraps_and_an_ack_wrap_still_confirm() {
             json!({"acMode": 1, "inputLimit": 0, "outputLimit": 0}),
         ));
     }
-    device.push_report(report_at(
-        SN,
-        9,
-        T0 + 5,
-        json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0}),
-    ));
+    for (id, timestamp) in [(9, T0 + 5), (12, T0 + 6)] {
+        device.push_report(report_at(
+            SN,
+            id,
+            timestamp,
+            json!({"acMode": 1, "inputLimit": 500, "outputLimit": 0}),
+        ));
+    }
     let observation = controller
-        .poll_confirming(Duration::from_secs(2), || {})
+        .poll_confirming(Duration::from_secs(5), || {})
         .await
         .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 500 }));
@@ -323,19 +325,21 @@ async fn mismatch_then_duplicate_only_confirms_on_the_next_fresh_report() {
         T0 + 1,
         json!({"acMode": 1, "inputLimit": 300, "outputLimit": 0}),
     ));
-    device.push_report(report_at(
-        SN,
-        4213,
-        T0 + 2,
-        json!({"acMode": 1, "inputLimit": 300, "outputLimit": 0}),
-    ));
+    for (id, timestamp) in [(4213, T0 + 2), (4214, T0 + 3)] {
+        device.push_report(report_at(
+            SN,
+            id,
+            timestamp,
+            json!({"acMode": 1, "inputLimit": 300, "outputLimit": 0}),
+        ));
+    }
     let observation = controller
         .poll_confirming(Duration::from_secs(2), || {})
         .await
         .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 300 }));
     assert_eq!(
-        observation.report.message_id, 4213,
+        observation.report.message_id, 4214,
         "the fresh echo confirmed"
     );
 }

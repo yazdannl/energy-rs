@@ -1,5 +1,6 @@
 //! One pack as the fleet port reports it: limits, live state and reading age.
 
+use crate::dispatch::pack_flow::PackFlow;
 use crate::plan::{PackSpec, PackState};
 
 /// The live state of one controllable pack (a device, keyed by its hub serial).
@@ -20,6 +21,13 @@ pub struct PackReading {
     pub energy_kwh: Option<f64>,
     /// Measured AC power, W (positive charging).
     pub power_w: f64,
+    /// Direction-specific flow evidence. The real fleet always fills this; scripted fakes may
+    /// leave it `None` and fall back to `power_w` for legacy tests.
+    pub flow: Option<PackFlow>,
+    /// Sustained discharge power with a contradictory status: an alarm, not a fault.
+    pub flow_alarm: Option<String>,
+    /// Historical control fault from the device controller, even after the report looks idle.
+    pub historical_fault: Option<String>,
     /// Lowest cell voltage the device reported, V.
     pub min_cell_v: Option<f64>,
     /// Highest cell voltage the device reported, V.
