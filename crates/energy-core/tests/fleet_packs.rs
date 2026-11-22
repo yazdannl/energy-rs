@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use energy_battery::learning::{LearningDecision, LearningProfile, LearningStore};
+use energy_battery::learning::{LearningDecision, LearningProfile, LearningStore, PairDiagnostics};
 use energy_battery::report::parse_report;
 use energy_battery::transport::{WriteAck, WriteRequest};
 use energy_battery::{
@@ -27,7 +27,9 @@ use energy_core::dispatch::{
     TickInput,
 };
 use energy_core::safety::{Authority, SafetyLimits};
+use energy_core::savings::{SlotFlowAc, advance};
 use energy_ledger::Ledger;
+use energy_ledger::pool::PoolRow;
 use support::fakes::{FakeSink, NOW, plan};
 
 const SERIALS: [&str; 4] = ["DEV-1", "DEV-2", "DEV-3", "DEV-4"];
@@ -125,6 +127,7 @@ fn profile(id: &str, capacity_kwh: f64, round_trip: f64) -> LearningProfile {
         eta_discharge: eta,
         efficiency_confidence: 0.8,
         efficiency_applied: true,
+        efficiency_diagnostics: PairDiagnostics::default(),
         sessions_used: 4,
         soc_points_covered: 120.0,
         cycles_used: 4,
@@ -142,9 +145,13 @@ struct FourPacks {
 
 impl FourPacks {
     fn new() -> Self {
+        Self::with_round_trip(0.90)
+    }
+
+    fn with_round_trip(round_trip: f64) -> Self {
         let ledger = Arc::new(Ledger::open_in_memory().expect("ledger"));
         let mut profiles = BTreeMap::new();
-        profiles.insert("DEV-1".to_owned(), profile("DEV-1", 1.70, 0.90));
+        profiles.insert("DEV-1".to_owned(), profile("DEV-1", 1.70, round_trip));
         let learning = Arc::new(FakeLearning::new(profiles));
         let catalog = Arc::new(PackCatalog::new(
             Arc::clone(&ledger),
@@ -215,6 +222,39 @@ async fn four_devices_are_four_packs_with_independent_learning() {
         SERIALS.to_vec(),
         "one lookup per device serial"
     );
+}
+
+/// The learned round trip is split once for the plan and once for the measured cost pool.
+#[tokio::test]
+async fn a_measured_round_trip_reaches_the_plan_and_the_economics() {
+    let four = FourPacks::with_round_trip(0.88);
+    let view = four.view().await;
+    let eta = 0.88_f64.sqrt();
+    assert!((view.packs[0].spec.eta_charge - eta).abs() < 1e-12);
+    assert!((view.packs[0].spec.eta_discharge - eta).abs() < 1e-12);
+    for pack in &view.packs[1..] {
+        assert!((pack.spec.eta_charge - 0.81_f64.sqrt()).abs() < 1e-12);
+    }
+    let basis = |split: f64| {
+        let pool = advance(
+            PoolRow::default(),
+            NOW,
+            SlotFlowAc {
+                charge_ac: 1.0,
+                pv_ac: 0.0,
+                discharge_ac: 0.0,
+                buy: 0.20,
+                feed_in: 0.05,
+                eta_charge: split,
+                eta_discharge: split,
+            },
+        );
+        pool.cost_eur / pool.kwh
+    };
+    // 0.81 → 0.88 stores 0.900 → 0.938 kWh per AC kWh and lowers the basis 0.222 → 0.213 EUR.
+    assert!((basis(0.9) - 0.20 / 0.9).abs() < 1e-9);
+    assert!((basis(eta) - 0.20 / eta).abs() < 1e-9);
+    assert!(basis(eta) < basis(0.9));
 }
 
 #[tokio::test]

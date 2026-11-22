@@ -137,7 +137,7 @@ fn collect_inputs(
         }
         let records: Vec<SessionRecord> = sessions
             .iter()
-            .filter_map(|session| record(session, &pack.sn))
+            .map(|session| record(session, &pack.sn))
             .collect();
         if records.is_empty() {
             continue;
@@ -155,7 +155,10 @@ fn store_row(
     report: &LearningReport,
     now: i64,
 ) -> Result<(), WiringError> {
-    let confidence = report.capacity.confidence.min(report.efficiency.confidence);
+    // The pack row has one confidence column. It describes the learned capacity: an unmeasured
+    // round trip (confidence 0 by construction) must not report a learned capacity as untrusted.
+    // The efficiency's own confidence travels in the learning profile and the packs endpoint.
+    let confidence = report.capacity.confidence;
     ledger.packs()?.set_learning(
         id,
         report.capacity.applied_kwh,
@@ -166,15 +169,13 @@ fn store_row(
     Ok(())
 }
 
-/// Map one ledger session into the learner's plain record; incomplete or SoC-less runs are skipped.
-fn record(session: &Session, pack_sn: &str) -> Option<SessionRecord> {
-    let (Some(soc_start_pct), Some(soc_end_pct)) = (session.soc_start, session.soc_end) else {
-        return None;
-    };
-    if !session.complete || session.invalidated_reason.is_some() {
-        return None;
-    }
-    Some(SessionRecord {
+/// Map one ledger session into the learner's plain record.
+///
+/// Invalid runs are *kept* as records with their direction, time bounds and a refusal marker.
+/// Dropping them upstream would erase a direction change: a discarded discharge between two
+/// charges would let the learner merge the charges and book stored energy as a loss.
+fn record(session: &Session, pack_sn: &str) -> SessionRecord {
+    SessionRecord {
         pack_id: pack_sn.to_owned(),
         direction: match session.direction {
             LedgerDirection::Charge => BatteryDirection::Charge,
@@ -182,11 +183,14 @@ fn record(session: &Session, pack_sn: &str) -> Option<SessionRecord> {
         },
         started_at: instant(session.started_at),
         ended_at: instant(session.ended_at),
-        soc_start_pct,
-        soc_end_pct,
+        soc_start_pct: session.soc_start.unwrap_or(f64::NAN),
+        soc_end_pct: session.soc_end.unwrap_or(f64::NAN),
         energy_ac_kwh: session.energy_ac_kwh,
         duration_s: session.duration_s as f64,
         sample_count: u32::try_from(session.sample_count).unwrap_or(u32::MAX),
-        complete: session.complete,
-    })
+        complete: session.complete && session.invalidated_reason.is_none(),
+    }
 }
+
+#[cfg(test)]
+mod sessions_tests;

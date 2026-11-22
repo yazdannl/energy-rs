@@ -2,14 +2,22 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::control::Direction;
-use crate::learning::cycle::CyclePair;
-use crate::learning::robust::weighted_median;
+use crate::learning::pair_diagnostics::PairDiagnostics;
+use crate::learning::pairing::pair_sessions;
+use crate::learning::robust::{median as plain_median, weighted_median};
 use crate::learning::session::SessionRecord;
 
 /// Accepted cycles needed before a measurement replaces the profile.
+///
+/// The fleet cycles about once a day: one charge block and one evening discharge. Three couples
+/// are three days of evidence inside the 30-day session window, enough for a weighted median to
+/// survive one bad run without delaying a real measurement for weeks. Fewer would let a single
+/// mis-metered cycle set the pack's efficiency.
 pub const MIN_PAIRS: usize = 3;
 /// Beyond this idle time a charge and a discharge are not one cycle any more.
+///
+/// The fleet holds a full pack for hours, not days; a week is a generous ceiling for a hold and
+/// keeps a long-abandoned charge from being booked as a loss.
 pub const MAX_PAIR_GAP_DAYS: f64 = 7.0;
 /// The discharge must return the pack to the charge's start within this fraction of its span...
 pub const CYCLE_TOLERANCE_FRACTION: f64 = 0.15;
@@ -38,6 +46,16 @@ pub const FALLBACK_CAPACITY_KWH: f64 = 1.92;
 /// Both numbers are the same convention the UI uses; 81 % is what a healthy LFP pack on this AC
 /// path actually delivers, not the 95 % a datasheet quotes for the DC cells.
 pub const DEFAULT_ROUND_TRIP: f64 = 0.81;
+/// Largest median absolute deviation of accepted round trips (one vote per couple) that still
+/// counts as agreement (absolute AC-to-AC). Beyond this the cycles measured different things.
+pub const AGREEMENT_BAND: f64 = 0.02;
+/// Effective cycles at which confidence saturates (twice the application minimum).
+const CONFIDENCE_CYCLES: f64 = 2.0 * MIN_PAIRS as f64;
+/// A measurement needs this much confidence before it may be published or retained.
+///
+/// At three effective couples this requires `MAD ≤ 0.008`, well inside the agreement band; a
+/// near-boundary cluster of three couples is information, not an accurate measurement.
+pub const MIN_CONFIDENCE: f64 = 0.30;
 
 /// The pack's measured round trip, split evenly into the two legs.
 ///
@@ -55,9 +73,11 @@ pub struct EfficiencyEstimate {
     pub eta_discharge: f64,
     /// Accepted closed cycles this pass.
     pub pairs: usize,
-    /// Adjacent charge/discharge couples the pairing refused.
+    /// Charge/discharge couples the pairing refused.
     pub pairs_refused: usize,
-    /// Confidence in `[0, 1]`, from the accepted cycle count.
+    /// Sessions seen, candidates tried, refusal reasons and implied round trips.
+    pub diagnostics: PairDiagnostics,
+    /// Published confidence in `[0, 1]`, from effective sample size and agreement.
     pub confidence: f64,
     /// Whether *this* pass published a fresh measurement.
     pub applied: bool,
@@ -78,6 +98,7 @@ impl EfficiencyEstimate {
             eta_discharge: split,
             pairs: 0,
             pairs_refused: 0,
+            diagnostics: PairDiagnostics::default(),
             confidence: 0.0,
             applied: false,
             kept_previous: false,
@@ -85,11 +106,13 @@ impl EfficiencyEstimate {
         }
     }
 
-    /// Learn from the pack's sessions, keeping a confident previous profile on thin data.
+    /// Learn from the pack's sessions, keeping a confident previous profile on thin or
+    /// contradictory data.
     ///
-    /// Fewer than [`MIN_PAIRS`] accepted cycles never wipe a profile that was measured: the pass
-    /// reports `kept_previous` and carries the previous numbers forward. With no previous measurement
-    /// the typed [`DEFAULT_ROUND_TRIP`] stands.
+    /// Application needs at least [`MIN_PAIRS`] couples, at least that many *effective* couples
+    /// (so one deep cycle cannot carry the estimate), a dispersion inside [`AGREEMENT_BAND`] and
+    /// [`MIN_CONFIDENCE`] actual confidence. A blocked pass keeps a measured previous profile, or
+    /// the typed default, and names the blocker in the diagnostics.
     pub fn from_sessions(
         pack_id: &str,
         sessions: &[SessionRecord],
@@ -97,38 +120,58 @@ impl EfficiencyEstimate {
         now: DateTime<Utc>,
         previous: Option<&Self>,
     ) -> Self {
-        let (pairs, refused) = pair_cycles(sessions, pack_id, label_kwh);
-        let mut estimate = Self::default_profile(pack_id, now);
-        estimate.pairs = pairs.len();
-        estimate.pairs_refused = refused;
-        if pairs.len() < MIN_PAIRS {
-            return match previous.filter(|prior| prior.is_confident()) {
-                Some(prior) => Self {
-                    pairs: pairs.len(),
-                    pairs_refused: refused,
-                    ..Self::kept(prior, pack_id, now)
-                },
-                None => estimate,
-            };
-        }
+        let (pairs, mut diagnostics) = pair_sessions(sessions, pack_id, label_kwh);
         let samples: Vec<(f64, f64)> = pairs
             .iter()
             .map(|pair| (pair.round_trip, pair.weight))
             .collect();
-        let Some(round_trip) = weighted_median(&samples) else {
+        let evidence = evidence(&samples);
+        let measured_confidence = evidence.as_ref().map_or(0.0, confidence);
+        let blocker = evidence.as_ref().map_or(Some("no_measurement"), |value| {
+            blocker(pairs.len(), value, measured_confidence)
+        });
+        let (effective_pairs, dispersion) = evidence.as_ref().map_or((0.0, 0.0), |value| {
+            (value.effective_pairs, value.dispersion)
+        });
+        let confidence = if blocker.is_none() {
+            measured_confidence
+        } else {
+            0.0
+        };
+        diagnostics.set_evidence(
+            pairs.len(),
+            effective_pairs,
+            dispersion,
+            measured_confidence,
+            blocker,
+        );
+        let summary = diagnostics.summary();
+        tracing::debug!(pack_id, %summary, "efficiency pairing");
+        let mut estimate = Self::default_profile(pack_id, now);
+        estimate.pairs = pairs.len();
+        estimate.pairs_refused = diagnostics.refused;
+        estimate.diagnostics = diagnostics.clone();
+        if blocker.is_some() {
+            return match previous.filter(|prior| prior.is_confident()) {
+                Some(prior) => Self::kept(prior, pack_id, now, pairs.len(), diagnostics),
+                None => estimate,
+            };
+        }
+        let Some(evidence) = evidence else {
             return estimate;
         };
-        let round_trip = round_trip.clamp(MIN_ROUND_TRIP, MAX_ROUND_TRIP);
+        let round_trip = evidence.median.clamp(MIN_ROUND_TRIP, MAX_ROUND_TRIP);
         let split = round_trip.sqrt();
         Self {
             round_trip,
             eta_charge: split,
             eta_discharge: split,
             pairs: pairs.len(),
-            pairs_refused: refused,
-            confidence: confidence(pairs.len()),
+            pairs_refused: diagnostics.refused,
+            confidence,
             applied: true,
             kept_previous: false,
+            diagnostics,
             ..Self::default_profile(pack_id, now)
         }
     }
@@ -141,9 +184,12 @@ impl EfficiencyEstimate {
         self.round_trip.clamp(MIN_ROUND_TRIP, MAX_ROUND_TRIP).sqrt()
     }
 
-    /// Whether the value in hand is a measurement (fresh or carried forward).
+    /// Whether the value in hand is accurate enough to publish or carry forward.
+    ///
+    /// A stale stored profile can claim `applied`; its confidence still decides whether the next
+    /// pass may keep it.
     pub const fn is_confident(&self) -> bool {
-        self.applied || self.kept_previous
+        self.confidence >= MIN_CONFIDENCE
     }
 
     /// A stable slug for logs and the UI.
@@ -157,15 +203,22 @@ impl EfficiencyEstimate {
         }
     }
 
-    /// The previous profile, re-stamped for this pass.
-    fn kept(prior: &Self, pack_id: &str, now: DateTime<Utc>) -> Self {
+    /// The previous profile, re-stamped for this pass with the new evidence attached.
+    fn kept(
+        prior: &Self,
+        pack_id: &str,
+        now: DateTime<Utc>,
+        pairs: usize,
+        diagnostics: PairDiagnostics,
+    ) -> Self {
         Self {
             pack_id: pack_id.to_owned(),
             round_trip: prior.round_trip,
             eta_charge: prior.eta_charge,
             eta_discharge: prior.eta_discharge,
-            pairs: 0,
-            pairs_refused: 0,
+            pairs,
+            pairs_refused: diagnostics.refused,
+            diagnostics,
             confidence: prior.confidence,
             applied: false,
             kept_previous: true,
@@ -174,95 +227,61 @@ impl EfficiencyEstimate {
     }
 }
 
-/// Confidence rises with the cycle count and reaches 1 at twice [`MIN_PAIRS`].
-fn confidence(pairs: usize) -> f64 {
-    (pairs as f64 / (2.0 * MIN_PAIRS as f64)).min(1.0)
+/// The accepted couples' weighted median, Kish effective size and unweighted spread.
+struct Evidence {
+    median: f64,
+    effective_pairs: f64,
+    dispersion: f64,
 }
 
-/// Pair every charge with the discharge that immediately follows it.
-///
-/// Returns the accepted pairs and how many adjacent couples were refused. Only *consecutive*
-/// sessions are candidates: a charge and an unrelated discharge days later are two half cycles, and
-/// comparing them would book stored energy as a loss.
-fn pair_cycles(
-    sessions: &[SessionRecord],
-    pack_id: &str,
-    label_kwh: f64,
-) -> (Vec<CyclePair>, usize) {
-    let mut ordered: Vec<&SessionRecord> = sessions
+fn evidence(samples: &[(f64, f64)]) -> Option<Evidence> {
+    let median = weighted_median(samples)?;
+    let weights: Vec<f64> = samples
         .iter()
-        .filter(|session| session.pack_id == pack_id && session.refusal().is_none())
+        .map(|&(value, weight)| {
+            if value.is_finite() && weight.is_finite() && weight > 0.0 {
+                weight
+            } else {
+                0.0
+            }
+        })
         .collect();
-    ordered.sort_by_key(|session| session.started_at);
-    let mut pairs = Vec::new();
-    let mut refused = 0_usize;
-    for couple in ordered.windows(2) {
-        match pair_one(couple[0], couple[1], label_kwh) {
-            Some(pair) => pairs.push(pair),
-            None => refused += 1,
-        }
+    let total: f64 = weights.iter().sum();
+    let squares: f64 = weights.iter().map(|weight| weight * weight).sum();
+    if total <= 0.0 || squares <= 0.0 || !total.is_finite() || !squares.is_finite() {
+        return None;
     }
-    (pairs, refused)
+    let deviations: Vec<f64> = samples
+        .iter()
+        .map(|(value, _)| (value - median).abs())
+        .collect();
+    Some(Evidence {
+        median,
+        effective_pairs: total * total / squares,
+        dispersion: plain_median(&deviations).unwrap_or(0.0),
+    })
 }
 
-/// One charge → discharge couple, or `None` when it is not a complete cycle.
-fn pair_one(
-    charge: &SessionRecord,
-    discharge: &SessionRecord,
-    label_kwh: f64,
-) -> Option<CyclePair> {
-    if charge.direction != Direction::Charge || discharge.direction != Direction::Discharge {
-        return None;
-    }
-    let charge_span = charge.soc_span_pct();
-    let discharge_span = discharge.soc_span_pct();
-    if charge_span <= 0.0 || discharge_span <= 0.0 {
-        return None;
-    }
-    let gap_s = (discharge.started_at - charge.ended_at).num_seconds();
-    if gap_s < 0 || gap_s as f64 > MAX_PAIR_GAP_DAYS * 86_400.0 {
-        return None;
-    }
-    let drift = (discharge.soc_start_pct - charge.soc_end_pct).abs();
-    if drift > HOLD_DRIFT_PCT.max(HOLD_DRIFT_FRACTION * charge_span) {
-        return None;
-    }
-    let tolerance = CYCLE_TOLERANCE_PCT.max(CYCLE_TOLERANCE_FRACTION * charge_span);
-    let deeper = charge.soc_start_pct - discharge.soc_end_pct;
-    if deeper < -tolerance {
-        return None;
-    }
-    let assumed = if label_kwh.is_finite() && label_kwh > 0.0 {
-        label_kwh
+/// Why this pass may not publish a measurement.
+fn blocker(pairs: usize, evidence: &Evidence, confidence: f64) -> Option<&'static str> {
+    if pairs < MIN_PAIRS {
+        Some("too_few_pairs")
+    } else if !evidence.median.is_finite() || !evidence.dispersion.is_finite() {
+        Some("no_measurement")
+    } else if evidence.effective_pairs < MIN_PAIRS as f64 {
+        Some("too_few_effective_pairs")
+    } else if evidence.dispersion > AGREEMENT_BAND {
+        Some("disagreement")
     } else {
-        FALLBACK_CAPACITY_KWH
-    };
-    let charge_kwh = charge.energy_ac_kwh;
-    let discharge_kwh = discharge.energy_ac_kwh;
-    if charge_kwh <= 0.0 || discharge_kwh <= 0.0 {
-        return None;
+        (confidence < MIN_CONFIDENCE).then_some("low_confidence")
     }
-    let net_kwh = (discharge.soc_end_pct - charge.soc_start_pct) / 100.0 * assumed;
-    let root = (net_kwh * net_kwh + 4.0 * charge_kwh * discharge_kwh).sqrt();
-    let split_eta = (net_kwh + root) / (2.0 * charge_kwh);
-    let round_trip = split_eta * split_eta;
-    let weight = charge_span.min(discharge_span) * (charge_kwh / (charge_kwh + net_kwh.abs()));
-    let pair = CyclePair {
-        charge_at: charge.started_at,
-        discharge_at: discharge.started_at,
-        charge_kwh,
-        discharge_kwh,
-        charge_span_pct: charge_span,
-        discharge_span_pct: discharge_span,
-        net_kwh,
-        split_eta,
-        round_trip,
-        weight,
-    };
-    let implied = pair.implied_capacity_kwh()?;
-    let plausible_trip =
-        round_trip.is_finite() && (MIN_ROUND_TRIP..=MAX_ROUND_TRIP).contains(&round_trip);
-    let plausible_capacity =
-        (MIN_IMPLIED_CAPACITY_KWH..=MAX_IMPLIED_CAPACITY_KWH).contains(&implied);
-    (plausible_trip && plausible_capacity).then_some(pair)
+}
+
+/// `confidence = min(n_eff / (2 · MIN_PAIRS), 1) · clamp(1 - MAD / AGREEMENT_BAND, 0, 1)`.
+/// The median is weighted, the MAD is not: one heavy cycle may move the value but cannot hide
+/// disagreement among the other couples.
+fn confidence(evidence: &Evidence) -> f64 {
+    let information = (evidence.effective_pairs / CONFIDENCE_CYCLES).min(1.0);
+    let agreement = (1.0 - evidence.dispersion / AGREEMENT_BAND).clamp(0.0, 1.0);
+    information * agreement
 }

@@ -27,7 +27,10 @@ pub struct Pack {
     pub learned_capacity_kwh: Option<f64>,
     /// The learner's AC round-trip efficiency.
     pub learned_round_trip: Option<f64>,
-    /// Confidence of the learned numbers, `[0, 1]`.
+    /// Confidence of `learned_capacity_kwh` alone, `[0, 1]`.
+    ///
+    /// The round trip's confidence is a separate field in the learning profile JSON; this column
+    /// never claims to describe both numbers.
     pub learned_confidence: Option<f64>,
     /// When the learned numbers were written, UTC epoch seconds.
     pub learned_at: Option<i64>,

@@ -104,7 +104,7 @@ fn a_discharge_run_is_negative_power_and_positive_energy() {
 }
 
 #[test]
-fn a_one_sample_reversal_flags_both_neighbours_and_is_skipped() {
+fn a_one_sample_reversal_flags_both_neighbours_and_keeps_the_blip_as_a_barrier() {
     let db = TempDatabase::new();
     let ledger = db.ledger();
     let pack = register_pack(&ledger, "ABC123");
@@ -127,11 +127,11 @@ fn a_one_sample_reversal_flags_both_neighbours_and_is_skipped() {
         .unwrap()
         .extract(pack, Tier::OneMinute, 0, 540, &SessionRules::default())
         .unwrap();
-    assert_eq!(report.written, 2);
-    assert_eq!(report.flagged, 2);
+    assert_eq!(report.written, 3);
+    assert_eq!(report.flagged, 3);
     assert_eq!(report.skipped, 1);
     let sessions = ledger.sessions().unwrap().for_pack(pack, 0, 540).unwrap();
-    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions.len(), 3);
     for session in &sessions {
         assert!(!session.complete);
         assert_eq!(
@@ -139,6 +139,7 @@ fn a_one_sample_reversal_flags_both_neighbours_and_is_skipped() {
             Some("direction_reversal")
         );
     }
+    assert_eq!(sessions[1].direction, Direction::Discharge);
 }
 
 #[test]

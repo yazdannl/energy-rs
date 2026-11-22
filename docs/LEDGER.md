@@ -20,7 +20,8 @@ file: migrations are additive and each table name is owned by exactly one crate.
 
 * `packs` — `sn` (unique), optional name, label and reported capacity, optional device power
   maxima, `first_seen`/`last_seen`, and the applied learning numbers (`learned_capacity_kwh`,
-  `learned_round_trip`, `learned_confidence`, `learned_at`, migration v4). The upsert keeps
+  `learned_round_trip`, `learned_confidence` (capacity confidence only; efficiency confidence lives
+  in the `learning.profile.<sn>` JSON), `learned_at`, migration v4). The upsert keeps
   `first_seen`, moves `last_seen` forward, never blanks a known limit or name with `NULL` and never
   touches the learned columns; only a learning pass writes those.
 * `measurements` — 1-minute samples keyed `(pack_id, ts)`; `power_w` signed (positive charges the
