@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 
 use tracing::Subscriber;
 use tracing::field::{Field, Visit};
@@ -143,6 +143,50 @@ fn a_still_empty_source_gets_an_info_after_a_partial_recovery() {
         info.iter().all(|line| !line.contains("sensor.p1_tariff_1")),
         "the recovered source must not be named: {info:?}"
     );
+    assert_eq!(skipped_sources().len(), 1);
+}
+
+#[test]
+fn concurrent_partial_reports_announce_only_once() {
+    let _guard = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let configured = ids(&["sensor.p1_tariff_1", "p1_history:grid_import"]);
+    let empty = ids(&["p1_history:grid_import"]);
+    let capture = Capture::default();
+    let barrier = Arc::new(Barrier::new(4));
+    clear();
+
+    let threads: Vec<_> = (0..4)
+        .map(|_| {
+            let capture = capture.clone();
+            let configured = configured.clone();
+            let empty = empty.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let subscriber = tracing_subscriber::registry().with(capture.clone());
+                tracing::subscriber::with_default(subscriber, || {
+                    barrier.wait();
+                    report("grid_import", &configured, &empty);
+                });
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("report thread");
+    }
+
+    let lines = capture.0.lock().expect("capture").clone();
+    let info: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.starts_with("INFO"))
+        .collect();
+    assert_eq!(
+        info.len(),
+        1,
+        "one notice despite concurrent solves: {lines:?}"
+    );
+    assert!(info[0].contains("p1_history:grid_import"));
     assert_eq!(skipped_sources().len(), 1);
 }
 

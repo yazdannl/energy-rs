@@ -45,39 +45,41 @@ fn lock() -> MutexGuard<'static, Notices> {
     }
 }
 
-/// Update the currently-empty state and return sources still awaiting an INFO notice.
-///
-/// The `announced` set is deliberately not touched here: an all-empty group only emits a WARN, so
-/// its sources must stay eligible for an INFO if the group later partially recovers.
-fn pending_sources(series: &'static str, empty: &[String]) -> Vec<SkippedSource> {
-    let mut notices = lock();
-    // Keep entries for sources that are still empty: re-announcing them on every solve would be
-    // the same log spam this replaces. Drop only this series' entries for sources that recovered
-    // or left the dashboard, so a later silent spell gets its own notice.
+/// Refresh this series' current emptiness, dropping sources that recovered or left the dashboard.
+fn refresh(series: &'static str, empty: &[String], notices: &mut Notices) {
     let still_empty =
         |item: &SkippedSource| item.series != series || empty.contains(&item.entity_id);
     notices.empty.retain(still_empty);
     notices.announced.retain(still_empty);
-    let mut pending = Vec::new();
+    for entity in empty {
+        notices.empty.insert(SkippedSource {
+            series,
+            entity_id: entity.clone(),
+        });
+    }
+}
+
+/// Observe an all-empty group without consuming any INFO notice: only the WARN is emitted here.
+fn observe_empty(series: &'static str, empty: &[String]) {
+    let mut notices = lock();
+    refresh(series, empty, &mut notices);
+}
+
+/// Atomically claim the INFO notices this call owns, so concurrent solves cannot double-announce.
+fn claim_notices(series: &'static str, empty: &[String]) -> Vec<SkippedSource> {
+    let mut notices = lock();
+    refresh(series, empty, &mut notices);
+    let mut claimed = Vec::new();
     for entity in empty {
         let item = SkippedSource {
             series,
             entity_id: entity.clone(),
         };
-        notices.empty.insert(item.clone());
-        if !notices.announced.contains(&item) {
-            pending.push(item);
+        if notices.announced.insert(item.clone()) {
+            claimed.push(item);
         }
     }
-    pending
-}
-
-/// Record that an INFO notice was actually emitted for these sources.
-fn mark_announced(sources: &[SkippedSource]) {
-    let mut notices = lock();
-    for source in sources {
-        notices.announced.insert(source.clone());
-    }
+    claimed
 }
 
 /// The sources currently empty, for the `/api/v1/site` status field.
@@ -87,11 +89,12 @@ pub fn skipped_sources() -> Vec<SkippedSource> {
 
 /// Report this group's empty sources: INFO once per source, WARN while the whole group is empty.
 pub(crate) fn report(series: &'static str, entities: &[String], empty: &[String]) {
-    let pending = pending_sources(series, empty);
     if !entities.is_empty() && empty.len() == entities.len() {
+        observe_empty(series, empty);
         warn_all_empty(series, entities);
     } else {
-        info_once(series, &pending);
+        let claimed = claim_notices(series, empty);
+        info_once(series, &claimed);
     }
 }
 
@@ -118,7 +121,6 @@ fn info_once(series: &'static str, fresh: &[SkippedSource]) {
         source_ids = %ids,
         "empty grid sources are being ignored; no slots were invented"
     );
-    mark_announced(fresh);
 }
 
 #[cfg(test)]
