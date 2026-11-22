@@ -121,16 +121,30 @@ fn a_24h_gap_with_a_real_cycle_moves_updated_at() {
     assert_eq!(profile.updated_at, instant(now));
 }
 
-fn seed_profile(store: &LedgerLearningStore, sn: &str, at: i64) {
-    let report =
-        LearningReport::learn(sn, &[], &CapacityBounds::new(1.92, None), None, instant(at));
+pub(super) fn seed_profile(store: &LedgerLearningStore, sn: &str, at: i64) {
+    seed_profile_with_attempt(store, sn, at, at);
+}
+
+pub(super) fn seed_profile_with_attempt(
+    store: &LedgerLearningStore,
+    sn: &str,
+    learned_at: i64,
+    attempted_at: i64,
+) {
+    let report = LearningReport::learn(
+        sn,
+        &[],
+        &CapacityBounds::new(1.92, None),
+        None,
+        instant(learned_at),
+    );
     let mut profile = LearningProfile::from_report(&report);
-    profile.efficiency_diagnostics.last_attempt_at = Some(instant(at));
+    profile.efficiency_diagnostics.last_attempt_at = Some(instant(attempted_at));
     store.save(&profile).expect("seed profile");
 }
 
 /// A full night charge, a hold, an evening discharge and a hold, all in one-minute samples.
-fn seed_cycle(ledger: &Ledger, pack_id: i64, base: i64) {
+pub(super) fn seed_cycle(ledger: &Ledger, pack_id: i64, base: i64) {
     let mut samples = Vec::new();
     let mut push = |minute: i64, power_w: f64, soc_pct: f64| {
         samples.push(Sample::new(

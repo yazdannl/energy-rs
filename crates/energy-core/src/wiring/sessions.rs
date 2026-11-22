@@ -159,6 +159,11 @@ fn extraction_floor(
     previous: Option<&LearningProfile>,
 ) -> i64 {
     let recent = now.saturating_sub(policy.extract_seconds());
+    // Profiles written before attempt timestamps may hold runs left incomplete by the old
+    // one-hour extraction bug. Repair the whole window once, then resume incremental passes.
+    if previous.is_some_and(|profile| profile.efficiency_diagnostics.last_attempt_at.is_none()) {
+        return from;
+    }
     if stored.is_empty() {
         return from.max(now.saturating_sub(48 * 3600));
     }
@@ -196,12 +201,8 @@ fn skip_reason(
     now: i64,
     policy: &SessionPolicy,
 ) -> Option<&'static str> {
-    if sessions.is_empty() {
-        return Some("no_sessions_in_window");
-    }
-    if complete == 0 {
-        return Some("no_completed_session");
-    }
+    // A pack with no profile has never been learned: the first pass must run so it can create one,
+    // whether or not this window has usable evidence yet.
     let fresh = previous.is_none_or(|profile| {
         let learned_at = profile.updated_at.timestamp();
         sessions
@@ -211,11 +212,19 @@ fn skip_reason(
     if fresh {
         return None;
     }
+    if sessions.is_empty() {
+        return Some("no_sessions_in_window");
+    }
+    if complete == 0 {
+        return Some("no_completed_session");
+    }
+    // Nothing new is a reason to skip only while the last attempt is still fresh. An old or
+    // missing attempt is the backfill case: run the pass once so it stamps a new attempt time.
     let gap = policy.check_seconds().saturating_mul(2).max(3600);
-    let stale = previous
+    let recent = previous
         .and_then(|profile| profile.efficiency_diagnostics.last_attempt_at)
-        .is_none_or(|at| now.saturating_sub(at.timestamp()) >= gap);
-    stale.then_some("no_new_completed_session")
+        .is_some_and(|at| now.saturating_sub(at.timestamp()) < gap);
+    recent.then_some("no_new_completed_session")
 }
 
 fn note_skipped(
@@ -279,6 +288,10 @@ fn record(session: &Session, pack_sn: &str) -> SessionRecord {
     }
 }
 
+#[cfg(test)]
+mod attempt_tests;
+#[cfg(test)]
+mod legacy_tests;
 #[cfg(test)]
 mod scheduled_tests;
 #[cfg(test)]
