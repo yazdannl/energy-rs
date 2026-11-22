@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use super::*;
 use crate::wiring::LedgerLearningStore;
-use energy_battery::learning::{CapacityBounds, LearningProfile, LearningReport};
+use energy_battery::learning::{
+    CapacityBounds, LearningProfile, LearningReport, NEVER_MEASURED_AT,
+};
 use energy_ledger::{Pack, Sample};
 
 #[test]
@@ -24,7 +26,7 @@ fn scheduled_relearn_learns_a_cycle_that_finished_hours_ago() {
     // The charge started five hours ago: a one-hour extraction window cannot see its start, and
     // its completion is far older than two five-minute check intervals.
     let now = base + 300 * 60;
-    let policy = SessionPolicy::new(300, 24 * 3600);
+    let policy = SessionPolicy::new(300, 24);
     let reports = run(&ledger, &store, now, &policy).expect("scheduled relearn");
     assert_eq!(reports.len(), 1, "a completed cycle must be learned");
 
@@ -61,7 +63,7 @@ fn incomplete_only_sessions_report_a_named_blocker_without_moving_updated_at() {
 
     let now = base + 60 * 60;
     let reports =
-        run(&ledger, &store, now, &SessionPolicy::new(300, 24 * 3600)).expect("scheduled relearn");
+        run(&ledger, &store, now, &SessionPolicy::new(300, 24)).expect("scheduled relearn");
     assert_eq!(reports.len(), 0, "an open run is not a completed cycle");
     let profile = store.load("SN-INCOMPLETE").expect("load").expect("profile");
     assert_eq!(profile.updated_at, instant(learned_at));
@@ -85,7 +87,7 @@ fn an_empty_window_reports_no_sessions_in_window() {
     seed_profile(&store, "SN-EMPTY", base - 24 * 3600);
 
     let reports =
-        run(&ledger, &store, base, &SessionPolicy::new(300, 24 * 3600)).expect("scheduled relearn");
+        run(&ledger, &store, base, &SessionPolicy::new(300, 24)).expect("scheduled relearn");
     assert_eq!(reports.len(), 0);
     let profile = store.load("SN-EMPTY").expect("load").expect("profile");
     let diagnostics = profile.efficiency_diagnostics;
@@ -96,6 +98,34 @@ fn an_empty_window_reports_no_sessions_in_window() {
         Some("no_sessions_in_window")
     );
     assert_eq!(diagnostics.last_attempt_at, Some(instant(base)));
+}
+
+#[test]
+fn a_brand_new_pack_with_no_sessions_gets_a_durable_diagnostic() {
+    let ledger = Arc::new(Ledger::open_in_memory().expect("ledger"));
+    ledger
+        .packs()
+        .expect("packs")
+        .upsert(&Pack::new("SN-NEW-EMPTY", 1.92, 0))
+        .expect("upsert");
+    let store = LedgerLearningStore::new(Arc::clone(&ledger));
+    let now = 1_700_000_000;
+
+    let reports =
+        run(&ledger, &store, now, &SessionPolicy::new(300, 24)).expect("scheduled relearn");
+    assert_eq!(reports.len(), 0, "nothing can be measured yet");
+    let profile = store
+        .load("SN-NEW-EMPTY")
+        .expect("load")
+        .expect("a new pack must not disappear silently");
+    assert_eq!(profile.updated_at, NEVER_MEASURED_AT);
+    let diagnostics = profile.efficiency_diagnostics;
+    assert_eq!(diagnostics.last_attempt_at, Some(instant(now)));
+    assert_eq!(diagnostics.last_learning_at, None);
+    assert_eq!(
+        diagnostics.blocker.as_deref(),
+        Some("no_sessions_in_window")
+    );
 }
 
 #[test]
@@ -113,7 +143,7 @@ fn a_24h_gap_with_a_real_cycle_moves_updated_at() {
     seed_cycle(&ledger, id, base + 3600);
 
     let now = base + 25 * 3600;
-    let policy = SessionPolicy::new(300, 48 * 3600);
+    let policy = SessionPolicy::new(300, 48);
     assert!(due(now, Some(base), policy.check_seconds()));
     let reports = run(&ledger, &store, now, &policy).expect("scheduled relearn");
     assert_eq!(reports.len(), 1, "a cycle during the gap must be learned");
@@ -131,6 +161,16 @@ pub(super) fn seed_profile_with_attempt(
     learned_at: i64,
     attempted_at: i64,
 ) {
+    seed_profile_with_clock(store, sn, learned_at, attempted_at, attempted_at);
+}
+
+pub(super) fn seed_profile_with_clock(
+    store: &LedgerLearningStore,
+    sn: &str,
+    learned_at: i64,
+    attempted_at: i64,
+    learning_at: i64,
+) {
     let report = LearningReport::learn(
         sn,
         &[],
@@ -139,7 +179,9 @@ pub(super) fn seed_profile_with_attempt(
         instant(learned_at),
     );
     let mut profile = LearningProfile::from_report(&report);
+    profile.updated_at = instant(learned_at);
     profile.efficiency_diagnostics.last_attempt_at = Some(instant(attempted_at));
+    profile.efficiency_diagnostics.last_learning_at = Some(instant(learning_at));
     store.save(&profile).expect("seed profile");
 }
 

@@ -16,7 +16,7 @@ mod support;
 
 use std::sync::Arc;
 
-use energy_battery::learning::LearningStore;
+use energy_battery::learning::{LearningStore, NEVER_MEASURED_AT};
 use energy_battery::protection::CellLatchStore;
 use energy_core::safety::{Authority, Reason};
 use energy_core::wiring::{LedgerLatchStore, LedgerLearningStore};
@@ -156,15 +156,15 @@ async fn a_completed_session_triggers_a_relearn() {
         .get(id)
         .expect("read")
         .expect("pack row");
-    // One session is below the learner's minimum, so the capacity stays empty but the row still
-    // records the pass (round trip, confidence, instant).
+    // One session is below the learner's minimum: the pass is recorded honestly, but no
+    // measurement landed, so the learned instant remains the never-measured sentinel.
     assert_eq!(row.learned_capacity_kwh, profile.capacity_kwh);
     assert!(
         row.learned_capacity_kwh.is_none(),
         "a single session cannot publish a capacity"
     );
     assert_eq!(row.learned_round_trip, Some(profile.round_trip));
-    assert_eq!(row.learned_at, Some(NOW));
+    assert_eq!(row.learned_at, Some(NEVER_MEASURED_AT.timestamp()));
     assert!(
         row.learned_confidence
             .is_some_and(|value| (0.0..=1.0).contains(&value))

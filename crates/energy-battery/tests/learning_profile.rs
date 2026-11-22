@@ -9,6 +9,7 @@
 
 mod support;
 
+use energy_battery::learning::PairDiagnostics;
 use energy_battery::{
     CapacityBounds, LearningDecision, LearningProfile, LearningReport, recency_weight, relearn,
 };
@@ -51,6 +52,7 @@ fn relearn_persists_and_a_thin_pass_keeps_the_profile() {
     let good = cycles(20.0, 50.0, LABEL_KWH, SPLIT, 3);
     let first = relearn(&store, PACK, &good, &bounds(None), at(24)).unwrap();
     assert!(first.capacity.applied);
+    assert_eq!(first.measured_at, at(24));
     let saved = store.profile(PACK).unwrap();
     assert!(saved.capacity_applied);
     assert!((saved.effective_capacity_kwh().unwrap() - LABEL_KWH).abs() < 1e-9);
@@ -62,11 +64,25 @@ fn relearn_persists_and_a_thin_pass_keeps_the_profile() {
     assert!(again.capacity_applied);
     assert!((again.effective_capacity_kwh().unwrap() - LABEL_KWH).abs() < 1e-9);
     assert!(again.efficiency_applied);
+    assert_eq!(again.updated_at, at(24), "a thin pass is not a measurement");
+    assert_eq!(again.efficiency_diagnostics.last_learning_at, Some(at(48)));
 
     // A third thin pass still sees a confident profile, so the value cannot erode away.
     let third = relearn(&store, PACK, &thin, &bounds(None), at(72)).unwrap();
     assert_eq!(third.capacity.decision, LearningDecision::KeptPrevious);
     assert!((third.capacity.applied_kwh.unwrap() - LABEL_KWH).abs() < 1e-9);
+}
+
+#[test]
+fn legacy_diagnostics_inherit_the_attempt_as_the_learning_time() {
+    let diagnostics: PairDiagnostics =
+        serde_json::from_str(r#"{"lastAttemptAt":"2026-01-01T00:00:00Z"}"#).unwrap();
+    assert!(diagnostics.last_attempt_at.is_some());
+    assert_eq!(diagnostics.last_learning_at, diagnostics.last_attempt_at);
+    let explicit: PairDiagnostics =
+        serde_json::from_str(r#"{"lastAttemptAt":"2026-01-01T00:00:00Z","lastLearningAt":null}"#)
+            .unwrap();
+    assert_eq!(explicit.last_learning_at, None);
 }
 
 #[test]

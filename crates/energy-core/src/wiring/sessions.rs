@@ -2,8 +2,8 @@
 
 use energy_battery::control::Direction as BatteryDirection;
 use energy_battery::learning::{
-    CapacityBounds, CapacityPool, LearningProfile, LearningReport, LearningStore, PairDiagnostics,
-    SessionRecord, relearn_with_pool,
+    CapacityBounds, CapacityPool, LearningProfile, LearningReport, LearningStore, SessionRecord,
+    relearn_with_pool,
 };
 use energy_ledger::session::Direction as LedgerDirection;
 use energy_ledger::{Ledger, Session, SessionRules, Tier};
@@ -92,7 +92,7 @@ fn scan(
     let mut reports = Vec::with_capacity(inputs.len());
     for (sn, id, bounds, records) in inputs {
         let report = relearn_with_pool(store, &sn, &records, &bounds, Some(&pool), instant(now))?;
-        store_row(ledger, id, &report, now)?;
+        store_row(ledger, id, &report, report.measured_at.timestamp())?;
         reports.push(report);
     }
     Ok(reports)
@@ -120,7 +120,7 @@ fn collect_inputs(
         let to = now.saturating_add(1);
         let previous = store.load(&pack.sn)?;
         let stored = ledger.sessions()?.for_pack(pack.id, from, to)?;
-        let extract_from = extraction_floor(policy, now, from, &stored, previous.as_ref());
+        let extract_from = floor::extraction_floor(policy, now, from, &stored, previous.as_ref());
         ledger
             .sessions()?
             .extract(pack.id, Tier::OneMinute, extract_from, to, &policy.rules)?;
@@ -129,7 +129,15 @@ fn collect_inputs(
         if completed_only
             && let Some(blocker) = skip_reason(&sessions, complete, previous.as_ref(), now, policy)
         {
-            note_skipped(store, previous, now, sessions.len(), complete, blocker)?;
+            let bounds = CapacityBounds::new(pack.label_capacity_kwh, pack.reported_capacity_kwh);
+            let skipped = skip::SkippedPass {
+                sn: &pack.sn,
+                now,
+                sessions_in_window: sessions.len(),
+                sessions_complete: complete,
+                blocker,
+            };
+            skip::note_skipped(store, previous, &bounds, skipped)?;
             continue;
         }
         let records: Vec<SessionRecord> = sessions
@@ -143,47 +151,6 @@ fn collect_inputs(
         inputs.push((pack.sn.clone(), pack.id, bounds, records));
     }
     Ok(inputs)
-}
-
-/// How far back this pass must re-extract.
-///
-/// Sessions are rewritten only when their *start* lies in the extraction window, so a run that was
-/// open when first scanned has to be revisited from its start once its trailing hold arrives.
-/// A cold ledger has no such row at all and gets one bounded backfill. A long gap since the last
-/// attempt also forces a backfill, so a cycle finished while the engine was down is still seen.
-fn extraction_floor(
-    policy: &SessionPolicy,
-    now: i64,
-    from: i64,
-    stored: &[Session],
-    previous: Option<&LearningProfile>,
-) -> i64 {
-    let recent = now.saturating_sub(policy.extract_seconds());
-    // Profiles written before attempt timestamps may hold runs left incomplete by the old
-    // one-hour extraction bug. Repair the whole window once, then resume incremental passes.
-    if previous.is_some_and(|profile| profile.efficiency_diagnostics.last_attempt_at.is_none()) {
-        return from;
-    }
-    if stored.is_empty() {
-        return from.max(now.saturating_sub(48 * 3600));
-    }
-    let open = stored
-        .iter()
-        .filter(|session| {
-            !session.complete && session.invalidated_reason.is_none() && session.ended_at >= recent
-        })
-        .map(|session| session.started_at.saturating_sub(60))
-        .min();
-    let gap = previous
-        .and_then(|profile| profile.efficiency_diagnostics.last_attempt_at)
-        .filter(|at| now.saturating_sub(at.timestamp()) > policy.extract_seconds())
-        .map(|at| at.timestamp().saturating_sub(60));
-    [Some(recent), open, gap]
-        .into_iter()
-        .flatten()
-        .min()
-        .unwrap_or(recent)
-        .max(from)
 }
 
 fn usable(session: &Session) -> bool {
@@ -201,8 +168,12 @@ fn skip_reason(
     now: i64,
     policy: &SessionPolicy,
 ) -> Option<&'static str> {
-    // A pack with no profile has never been learned: the first pass must run so it can create one,
-    // whether or not this window has usable evidence yet.
+    // A brand-new pack with no evidence still gets a durable, named diagnostic; otherwise the
+    // packs endpoint would show nothing and the operator could not tell it apart from a dead
+    // learner. A new pack that does have sessions still gets its first pass.
+    if previous.is_none() && sessions.is_empty() {
+        return Some("no_sessions_in_window");
+    }
     let fresh = previous.is_none_or(|profile| {
         let learned_at = profile.updated_at.timestamp();
         sessions
@@ -218,30 +189,14 @@ fn skip_reason(
     if complete == 0 {
         return Some("no_completed_session");
     }
-    // Nothing new is a reason to skip only while the last attempt is still fresh. An old or
-    // missing attempt is the backfill case: run the pass once so it stamps a new attempt time.
+    // Nothing new is a reason to skip only while the last real learning pass is still fresh.
+    // Diagnostic skips must not refresh this clock, or a five-minute cadence could never build a
+    // ten-minute gap and the backfill would be postponed forever.
     let gap = policy.check_seconds().saturating_mul(2).max(3600);
     let recent = previous
-        .and_then(|profile| profile.efficiency_diagnostics.last_attempt_at)
+        .and_then(|profile| profile.efficiency_diagnostics.last_learning_at)
         .is_some_and(|at| now.saturating_sub(at.timestamp()) < gap);
     recent.then_some("no_new_completed_session")
-}
-
-fn note_skipped(
-    store: &dyn LearningStore,
-    previous: Option<LearningProfile>,
-    now: i64,
-    sessions_in_window: usize,
-    sessions_complete: usize,
-    blocker: &'static str,
-) -> Result<(), WiringError> {
-    let Some(mut profile) = previous else {
-        return Ok(());
-    };
-    profile.efficiency_diagnostics =
-        PairDiagnostics::skipped(instant(now), sessions_in_window, sessions_complete, blocker);
-    store.save(&profile)?;
-    Ok(())
 }
 
 /// Publish the learned numbers on the pack row, so `/api/v1/packs` and the planner agree.
@@ -288,8 +243,13 @@ fn record(session: &Session, pack_sn: &str) -> SessionRecord {
     }
 }
 
+mod floor;
+mod skip;
+
 #[cfg(test)]
 mod attempt_tests;
+#[cfg(test)]
+mod boundary_tests;
 #[cfg(test)]
 mod legacy_tests;
 #[cfg(test)]

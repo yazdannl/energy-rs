@@ -119,8 +119,11 @@ sample), the applied learning result with its provenance, the protection latch a
 override.
 
 `efficiencyDiagnostics` explains why no measured round trip was applied. `lastAttemptAt` is the
-last scheduled or manual relearn pass that examined the pack; it moves even when nothing was
-learned, while `updatedAt` stays on the last actual measurement. `sessionsInWindow` counts every
+last scheduled or manual relearn pass that examined the pack, including skips; `lastLearningAt`
+is the last pass that actually ran the learner, so a run of skips cannot postpone the periodic
+backfill. Neither moves `updatedAt`, which stays on the last actual measurement. A pack that has
+never measured anything shows `updatedAt: "1970-01-01T00:00:00Z"` and a named diagnostic blocker.
+`sessionsInWindow` counts every
 ledger session in the learning window, `sessionsComplete` those with both SoC endpoints and no
 invalidation, and `sessionsSeen` the records handed to the learner. A skipped pass therefore names
 `no_sessions_in_window`, `no_completed_session` or `no_new_completed_session` instead of looking
@@ -146,7 +149,8 @@ holds the newest 12 split and candidate events in chronological order.
                "capacityBandHighKwh": 1.92, "roundTrip": 0.9, "etaCharge": 0.9486833,
                "etaDischarge": 0.9486833, "efficiencyConfidence": 0.63,
                "efficiencyApplied": true, "roundTripSource": "measured",
-               "efficiencyDiagnostics": { "lastAttemptAt": "...", "sessionsSeen": 12,
+               "efficiencyDiagnostics": { "lastAttemptAt": "...", "lastLearningAt": "...",
+                 "sessionsSeen": 12,
                  "sessionsInWindow": 14, "sessionsComplete": 12, "sessionsValid": 12,
                  "candidates": 8, "accepted": 6, "refused": 2, "blockSplits": 0,
                  "pairs": 6, "effectivePairs": 5.4, "dispersion": 0.006,

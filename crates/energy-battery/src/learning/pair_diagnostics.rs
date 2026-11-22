@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use serde::de::{Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::learning::pair_attempt::PairAttempt;
@@ -11,12 +12,18 @@ use crate::learning::pair_attempt::PairAttempt;
 const MAX_ATTEMPTS: usize = 12;
 
 /// Session and pair counts plus the refusal-reason distribution of one pass.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairDiagnostics {
-    /// When the last scheduled or manual relearn pass examined this pack.
+    /// When the last scheduled or manual relearn pass examined this pack, including skips.
     #[serde(default)]
     pub last_attempt_at: Option<DateTime<Utc>>,
+    /// When the learner last actually ran, including a backfill that found no measurement.
+    ///
+    /// Separate from `last_attempt_at` so frequent diagnostic skips cannot postpone the periodic
+    /// backfill. A profile written before this field existed inherits `last_attempt_at` on read.
+    #[serde(default)]
+    pub last_learning_at: Option<DateTime<Utc>>,
     /// Ledger sessions in the learning window, whether or not they could be handed to the learner.
     #[serde(default)]
     pub sessions_in_window: usize,
@@ -65,6 +72,137 @@ pub struct PairDiagnostics {
     /// `no_completed_session`, `no_new_completed_session`); `null` when it applied one.
     #[serde(default)]
     pub blocker: Option<String>,
+}
+
+/// The on-disk shape: every field optional so older profiles remain readable.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PairDiagnosticsWire {
+    #[serde(default)]
+    last_attempt_at: Option<DateTime<Utc>>,
+    #[serde(default, deserialize_with = "explicit_learning_time")]
+    last_learning_at: LearningTimeField,
+    #[serde(default)]
+    sessions_in_window: usize,
+    #[serde(default)]
+    sessions_complete: usize,
+    #[serde(default)]
+    sessions_seen: usize,
+    #[serde(default)]
+    sessions_valid: usize,
+    #[serde(default)]
+    candidates: usize,
+    #[serde(default)]
+    accepted: usize,
+    #[serde(default)]
+    refused: usize,
+    #[serde(default)]
+    block_splits: usize,
+    #[serde(default)]
+    reasons: BTreeMap<String, usize>,
+    #[serde(default)]
+    attempts: Vec<PairAttempt>,
+    #[serde(default)]
+    pairs: usize,
+    #[serde(default)]
+    effective_pairs: f64,
+    #[serde(default)]
+    dispersion: f64,
+    #[serde(default)]
+    confidence: f64,
+    #[serde(default)]
+    blocker: Option<String>,
+}
+
+/// Distinguish a missing field (migrate from `lastAttemptAt`) from an explicit JSON `null`.
+#[derive(Debug, Default)]
+enum LearningTimeField {
+    #[default]
+    Missing,
+    Null,
+    Value(DateTime<Utc>),
+}
+
+fn explicit_learning_time<'de, D>(deserializer: D) -> Result<LearningTimeField, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct Field;
+
+    impl<'de> Visitor<'de> for Field {
+        type Value = LearningTimeField;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a timestamp or null")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(LearningTimeField::Null)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            DateTime::<Utc>::deserialize(deserializer).map(LearningTimeField::Value)
+        }
+    }
+
+    deserializer.deserialize_option(Field)
+}
+
+impl<'de> Deserialize<'de> for PairDiagnostics {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = PairDiagnosticsWire::deserialize(deserializer)?;
+        let PairDiagnosticsWire {
+            last_attempt_at,
+            last_learning_at,
+            sessions_in_window,
+            sessions_complete,
+            sessions_seen,
+            sessions_valid,
+            candidates,
+            accepted,
+            refused,
+            block_splits,
+            reasons,
+            attempts,
+            pairs,
+            effective_pairs,
+            dispersion,
+            confidence,
+            blocker,
+        } = wire;
+        Ok(Self {
+            last_attempt_at,
+            last_learning_at: match last_learning_at {
+                LearningTimeField::Missing => last_attempt_at,
+                LearningTimeField::Null => None,
+                LearningTimeField::Value(value) => Some(value),
+            },
+            sessions_in_window,
+            sessions_complete,
+            sessions_seen,
+            sessions_valid,
+            candidates,
+            accepted,
+            refused,
+            block_splits,
+            reasons,
+            attempts,
+            pairs,
+            effective_pairs,
+            dispersion,
+            confidence,
+            blocker,
+        })
+    }
 }
 
 impl PairDiagnostics {
@@ -140,8 +278,9 @@ impl PairDiagnostics {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "last attempt {:?}, sessions {}/{} valid ({} in window, {} complete), candidates {}, accepted {}, refused {}, splits {}, pairs {} (eff {:.2}), dispersion {:.4}, confidence {:.3}, blocked {:?} [{reasons}]",
+            "last attempt {:?}, last learning {:?}, sessions {}/{} valid ({} in window, {} complete), candidates {}, accepted {}, refused {}, splits {}, pairs {} (eff {:.2}), dispersion {:.4}, confidence {:.3}, blocked {:?} [{reasons}]",
             self.last_attempt_at,
+            self.last_learning_at,
             self.sessions_valid,
             self.sessions_seen,
             self.sessions_in_window,

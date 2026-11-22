@@ -66,7 +66,7 @@ fn a_short_discharge_barrier_survives_extraction_and_splits_charge_blocks() {
         &ledger,
         &store,
         now,
-        &SessionPolicy::new(3600, 24 * 3600),
+        &SessionPolicy::new(3600, 24),
         Some("SN-BARRIER"),
     )
     .expect("relearn");
@@ -106,7 +106,7 @@ fn an_invalidated_charge_never_becomes_a_measured_round_trip() {
         &ledger,
         &store,
         now,
-        &SessionPolicy::new(3600, 24 * 3600),
+        &SessionPolicy::new(3600, 24),
         Some("SN-INVALID"),
     )
     .expect("relearn");

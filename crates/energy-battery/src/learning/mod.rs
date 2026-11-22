@@ -64,7 +64,7 @@ pub use pair_attempt::PairAttempt;
 pub use pair_diagnostics::PairDiagnostics;
 pub use pair_refusal::PairRefusal;
 pub use pool::CapacityPool;
-pub use profile::LearningProfile;
+pub use profile::{LearningProfile, NEVER_MEASURED_AT};
 pub use refusal::Refusal;
 pub use relearn::{relearn, relearn_with_pool};
 pub use report::LearningReport;

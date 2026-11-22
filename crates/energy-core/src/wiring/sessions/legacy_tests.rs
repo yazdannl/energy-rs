@@ -26,11 +26,12 @@ fn legacy_incomplete_runs_repair_into_multisegment_cycles() {
         instant(base - 24 * 3600),
     );
     // The stored profile predates attempt timestamps: the first pass must repair old rows.
-    store
-        .save(&LearningProfile::from_report(&report))
-        .expect("legacy profile");
+    let mut profile = LearningProfile::from_report(&report);
+    profile.efficiency_diagnostics.last_attempt_at = None;
+    profile.efficiency_diagnostics.last_learning_at = None;
+    store.save(&profile).expect("legacy profile");
 
-    let policy = SessionPolicy::new(300, 7 * 24 * 3600);
+    let policy = SessionPolicy::new(300, 7 * 24);
     let now = seed_legacy_cycles(&ledger, id, base, &policy);
     let reports = run(&ledger, &store, now, &policy).expect("scheduled relearn");
     assert_eq!(reports.len(), 1, "the repaired cycle must be learned");
