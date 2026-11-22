@@ -224,12 +224,9 @@ impl<'a> Ladder<'a> {
         self.ramp_hi = previous + limit;
     }
 
-    /// The cost-basis floor judges only the **export** leg, on the flow that will actually happen.
-    ///
-    /// A planned self-consumption discharge is never refused, whatever the buy price: only the part
-    /// of the discharge that would leave the house is bounded, and only when the feed-in is below
-    /// the floor. The measured base is preferred over the forecast, because a forecast that made a
-    /// discharge look self-consumed can be wrong by the time the command goes out.
+    /// The cost-basis floor judges only the export leg, on the flow that will actually happen: a
+    /// self-consumption discharge is never refused, and the measured base wins over a forecast that
+    /// might have made it look self-consumed.
     fn floor(&mut self) {
         let (Some(floor), Some(slot)) = (
             self.limits.sell_floor_eur_per_kwh,
@@ -249,25 +246,30 @@ impl<'a> Ladder<'a> {
     }
 
     /// Grid energy may not enter the solar reserve: above the ceiling, a charge is bounded by the
-    /// pack's share of the measured PV surplus, so PV still fills it.
+    /// pack's share of measured PV. A due balance is exempt from this bound only; every other limit stands.
     fn solar_ceiling(&mut self) {
+        if self.request.maintenance_full_charge
+            || !self.request.solar_reserve_armed
+            || self.limits.solar_reserve_pct <= 0.0
+        {
+            return;
+        }
         let Some(slot) = self.request.plan_slot.as_ref() else {
             return;
         };
-        if slot.battery_kw <= NEGLIGIBLE_KW || self.limits.solar_reserve_pct <= 0.0 {
+        if slot.battery_kw <= NEGLIGIBLE_KW {
             return;
         }
         let ceiling =
             self.pack.e_max_kwh() - self.pack.capacity_kwh * self.limits.solar_reserve_pct / 100.0;
+        if self.energy_kwh < ceiling - SOLAR_HYSTERESIS_KWH {
+            return;
+        }
         let (Some(pv), Some(load)) = (self.request.measured.pv_kw, self.request.measured.load_kw)
         else {
             return;
         };
         let surplus = ((pv - load) * 1000.0).max(0.0) * self.share();
-        // No sun now means nothing to protect (the planner uses the same forecast rule).
-        if surplus <= 0.0 || self.energy_kwh < ceiling - SOLAR_HYSTERESIS_KWH {
-            return;
-        }
         if surplus < slot.battery_kw * 1000.0 {
             self.soc_hi = self.soc_hi.min(surplus);
         }

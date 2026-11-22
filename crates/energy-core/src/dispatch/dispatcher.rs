@@ -140,6 +140,10 @@ impl Dispatcher {
             plan_power_w,
             target_w: ceiling.target_w,
             import_ceiling: ceiling.active,
+            // An absent plan cannot prove the horizon is sunless: keep the reserve armed.
+            solar_reserve_armed: input
+                .plan
+                .is_none_or(|plan| plan.has_remaining_pv_surplus(input.now)),
             grid_hold,
         }
     }
@@ -178,7 +182,8 @@ impl Dispatcher {
             context.slot.cloned(),
             context.now,
             measured(&context, reading),
-        );
+        )
+        .with_solar_reserve_forecast(frame.solar_reserve_armed);
         let request = if maintenance_full {
             request.as_maintenance_full_charge()
         } else {

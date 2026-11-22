@@ -146,8 +146,11 @@ cap(t)        = clamp(cap_raw(t), E_min_hw, E_max_hw)
 `cap(t)` is the highest SoC a *grid* charge may reach in slot `t`: room for every kWh of surplus the
 forecast still promises, plus the solar reserve. The reservation is capped by the surplus that actually
 exists in the horizon: with no forecast sun there is nothing to keep headroom for, so a sunless
-winter day may buy the cheap night and sell the next peak (the dispatch ladder applies the same
-rule to measured PV). Early on a sunny day the ceiling is low; as the day passes it rises and by
+winter day may buy the cheap night and sell the next peak. At dispatch the same verdict comes from
+the plan's *remaining* surplus: the reserve is released only when no slot still ahead forecasts PV,
+never from a zero PV reading alone (a cloud gap or pre-sunrise tick still keeps it armed). A due
+seven-day balance is exempt from this bound only; every device, SoC and grid ceiling still applies.
+Early on a sunny day the ceiling is low; as the day passes it rises and by
 evening grid charging may fill the pack. Overnight it already holds tomorrow's surplus, so a sunny
 winter day still allows cheap night charging for the part tomorrow's PV does not need. `cap(t)` is
 nondecreasing, so an early cheap hour is never followed by a lower ceiling.

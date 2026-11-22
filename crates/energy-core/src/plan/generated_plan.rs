@@ -61,4 +61,16 @@ impl Plan {
     pub fn terminal_target_kwh(&self) -> Option<f64> {
         self.summary.terminal_target_kwh
     }
+
+    /// Whether any slot still ahead in the horizon forecasts PV surplus.
+    ///
+    /// This is the dispatch-time form of the planner's `solar_reserve` verdict: the reserve is
+    /// released only when the whole remaining horizon is sunless. A stale or missing plan is not
+    /// proof of that, so the caller leaves the reserve armed in that case.
+    #[must_use]
+    pub fn has_remaining_pv_surplus(&self, now: i64) -> bool {
+        self.slots.iter().any(|slot| {
+            slot.t_start.saturating_add(SLOT_SECONDS) > now && (slot.pv_kw - slot.load_kw) > 1e-9
+        })
+    }
 }

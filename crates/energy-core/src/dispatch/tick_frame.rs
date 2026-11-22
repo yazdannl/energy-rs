@@ -14,6 +14,7 @@ use crate::safety::{Authority, Reason, SafetyLimits};
 /// The plan slot is owned here rather than borrowed from the tick input: it is a clone taken once,
 /// and the per-pack [`PackContext`] borrows it, so the whole tick works off one consistent slot even
 /// if the input plan is replaced meanwhile.
+#[allow(clippy::struct_excessive_bools)] // one independent per-tick verdict per flag
 pub(crate) struct TickFrame<'a> {
     pub(crate) now: i64,
     pub(crate) mode: Authority,
@@ -34,6 +35,8 @@ pub(crate) struct TickFrame<'a> {
     pub(crate) target_w: f64,
     /// Whether the measured import breached the ceiling and lowered the target.
     pub(crate) import_ceiling: bool,
+    /// Whether the remaining plan forecast still promises PV surplus (the solar-reserve verdict).
+    pub(crate) solar_reserve_armed: bool,
     pub(crate) grid_hold: bool,
 }
 

@@ -23,6 +23,9 @@ pub struct CommandRequest {
     pub exit_hold: bool,
     /// Maintenance may use the last 5 % the normal SoC ceiling reserves for balancing.
     pub maintenance_full_charge: bool,
+    /// Whether the remaining plan forecast still promises PV surplus. False is the planner's
+    /// sunless-horizon verdict, which releases the solar reserve; true (the default) keeps it.
+    pub solar_reserve_armed: bool,
     /// Measurements for this tick.
     pub measured: Measured,
 }
@@ -43,6 +46,7 @@ impl CommandRequest {
             now,
             exit_hold: false,
             maintenance_full_charge: false,
+            solar_reserve_armed: true,
             measured,
         }
     }
@@ -58,6 +62,14 @@ impl CommandRequest {
     #[must_use]
     pub fn as_maintenance_full_charge(mut self) -> Self {
         self.maintenance_full_charge = true;
+        self
+    }
+
+    /// Fold the plan's remaining-forecast verdict into the request. An absent or stale plan keeps
+    /// the reserve armed; only a plan that proves no PV surplus remains releases it.
+    #[must_use]
+    pub fn with_solar_reserve_forecast(mut self, armed: bool) -> Self {
+        self.solar_reserve_armed = armed;
         self
     }
 }

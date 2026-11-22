@@ -32,7 +32,6 @@ use support::NOW;
 
 /// Four learned AB2000s: 7.86 kWh, 4 kW charge / 3.2 kW discharge, 90 % each way.
 const FLEET_KWH: f64 = 4.0 * 1.965;
-const FLOOR_KWH: f64 = FLEET_KWH * 0.15;
 
 struct FakeSupply {
     supply: Mutex<Supply>,
@@ -165,24 +164,30 @@ async fn a_sunless_cheap_night_charges_and_the_next_peak_is_sold() {
         .filter(|slot| slot.battery_kw > 0.0)
         .map(|slot| slot.battery_kw * 0.25)
         .sum();
-    assert!(cheap_charge > 0.5, "no cheap-night grid charge: {plan:#?}");
+    // Independent DP with the live fleet: 0.6987 kWh bought at 0.3498-0.3526, 6.0129 kWh sold
+    // in the peak, ending on the 1.179 kWh floor. All three are pinned to 0.01 kWh.
     assert!(
-        plan.summary.grid_charge_kwh > 0.5,
-        "grid charge was clipped"
+        (cheap_charge - 0.6987).abs() < 0.01,
+        "cheap charge {cheap_charge} != 0.6987 kWh"
     );
     assert!(
-        plan.slots[80..96].iter().any(|slot| slot.battery_kw < -0.5),
-        "the dear peak was skipped"
+        (plan.summary.grid_charge_kwh - 0.6987).abs() < 0.01,
+        "grid charge was clipped: {}",
+        plan.summary.grid_charge_kwh
+    );
+    let peak_sale = slots_at(&plan, 80..96);
+    assert!(
+        (peak_sale - 6.0129).abs() < 0.01,
+        "peak sale {peak_sale} != 6.0129 kWh"
     );
     assert!(
-        slots_at(&plan, 80..96) > 5.0,
-        "the peak sale was too small: {}",
-        plan.summary.discharged_kwh
+        (plan.summary.discharged_kwh - peak_sale).abs() < 1e-9,
+        "sold energy outside the peak"
     );
     let terminal = plan.slots.last().expect("last slot").target_soc_kwh;
     assert!(
-        (terminal - FLOOR_KWH).abs() < 0.2,
-        "ended at {terminal}, expected the {FLOOR_KWH} reserve floor"
+        (terminal - 1.179).abs() < 0.01,
+        "ended at {terminal}, expected the 1.179 kWh reserve floor"
     );
 }
 
@@ -200,12 +205,34 @@ async fn an_equal_future_peak_is_not_skipped_for_a_later_twin() {
     });
     let plan = source(prices).plan(NOW, packs(92.0)).await.expect("plan");
 
+    // The C core's strict `<` on ascending actions resolves equal value to the lower power, so
+    // the still-future peak takes 4.5348 kWh and only 0.9121 kWh is left for the identical twin;
+    // total sale 5.4470 kWh. Pin all three to 0.01 kWh instead of accepting any positive sale.
     let first = slots_at(&plan, 40..48);
     let later = slots_at(&plan, 80..88);
-    assert!(first > 0.0, "the still-future peak was skipped");
     assert!(
-        first >= later,
-        "later twin got more energy at the same price: {first} < {later}"
+        (first - 4.5348).abs() < 0.01,
+        "first peak sale {first} != 4.5348 kWh"
+    );
+    assert!(
+        (later - 0.9121).abs() < 0.01,
+        "later peak sale {later} != 0.9121 kWh"
+    );
+    assert!(
+        (plan.summary.discharged_kwh - 5.4470).abs() < 0.01,
+        "total sale {} != 5.4470 kWh",
+        plan.summary.discharged_kwh
+    );
+    assert!(
+        first > later,
+        "tie-break deferred the sale to the later twin"
+    );
+    assert!(
+        plan.slots[40..48]
+            .iter()
+            .chain(&plan.slots[80..88])
+            .all(|slot| slot.battery_kw <= 0.0),
+        "a peak slot charged instead of selling"
     );
 }
 
