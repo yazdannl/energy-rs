@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::learning::pair_attempt::PairAttempt;
@@ -13,6 +14,15 @@ const MAX_ATTEMPTS: usize = 12;
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairDiagnostics {
+    /// When the last scheduled or manual relearn pass examined this pack.
+    #[serde(default)]
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    /// Ledger sessions in the learning window, whether or not they could be handed to the learner.
+    #[serde(default)]
+    pub sessions_in_window: usize,
+    /// Window session records marked complete (bounded and with both SoC endpoints).
+    #[serde(default)]
+    pub sessions_complete: usize,
     /// Session records for this pack in the learning window, valid or not.
     #[serde(default)]
     pub sessions_seen: usize,
@@ -51,12 +61,32 @@ pub struct PairDiagnostics {
     #[serde(default)]
     pub confidence: f64,
     /// Why this pass did not apply a measurement: `too_few_pairs`, `too_few_effective_pairs`,
-    /// `disagreement` or `no_measurement`; `null` when it applied one.
+    /// `disagreement`, `no_measurement`, or a skip reason (`no_sessions_in_window`,
+    /// `no_completed_session`, `no_new_completed_session`); `null` when it applied one.
     #[serde(default)]
     pub blocker: Option<String>,
 }
 
 impl PairDiagnostics {
+    /// A pass that looked at the window but deliberately did not learn the pack.
+    ///
+    /// This keeps `updatedAt` on the last real measurement: an attempt is not an observation.
+    pub fn skipped(
+        now: DateTime<Utc>,
+        sessions_in_window: usize,
+        sessions_complete: usize,
+        blocker: &'static str,
+    ) -> Self {
+        Self {
+            last_attempt_at: Some(now),
+            sessions_in_window,
+            sessions_complete,
+            sessions_seen: sessions_in_window,
+            blocker: Some(blocker.to_owned()),
+            ..Self::default()
+        }
+    }
+
     /// Add one candidate to the counts and the bounded attempt list.
     pub fn record(&mut self, attempt: PairAttempt) {
         *self.reasons.entry(attempt.reason.clone()).or_insert(0) += 1;
@@ -110,9 +140,12 @@ impl PairDiagnostics {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "sessions {}/{} valid, candidates {}, accepted {}, refused {}, splits {}, pairs {} (eff {:.2}), dispersion {:.4}, confidence {:.3}, blocked {:?} [{reasons}]",
+            "last attempt {:?}, sessions {}/{} valid ({} in window, {} complete), candidates {}, accepted {}, refused {}, splits {}, pairs {} (eff {:.2}), dispersion {:.4}, confidence {:.3}, blocked {:?} [{reasons}]",
+            self.last_attempt_at,
             self.sessions_valid,
             self.sessions_seen,
+            self.sessions_in_window,
+            self.sessions_complete,
             self.candidates,
             self.accepted,
             self.refused,

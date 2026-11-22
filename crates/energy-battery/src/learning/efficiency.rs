@@ -121,6 +121,9 @@ impl EfficiencyEstimate {
         previous: Option<&Self>,
     ) -> Self {
         let (pairs, mut diagnostics) = pair_sessions(sessions, pack_id, label_kwh);
+        diagnostics.last_attempt_at = Some(now);
+        diagnostics.sessions_in_window = sessions.len();
+        diagnostics.sessions_complete = sessions.iter().filter(|session| session.complete).count();
         let samples: Vec<(f64, f64)> = pairs
             .iter()
             .map(|pair| (pair.round_trip, pair.weight))

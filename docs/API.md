@@ -118,14 +118,19 @@ One row per known pack: live state (from the engine snapshot, falling back to th
 sample), the applied learning result with its provenance, the protection latch and the manual
 override.
 
-`efficiencyDiagnostics` explains why no measured round trip was applied. `effectivePairs` is the
-Kish effective sample size `(Σw)²/Σw²`; `dispersion` is the median absolute deviation of the
-accepted round trips; `confidence` is `min(effectivePairs/6, 1) · clamp(1 − dispersion/0.02, 0,
-1)` and must reach 0.3 to be published. `blocker` is `too_few_pairs`,
-`too_few_effective_pairs`, `disagreement`, `low_confidence` or `no_measurement` (null when applied).
-`blockSplits` counts charge/discharge boundaries split by the 7-day gap, hold-drift and SoC-closure
-checks; `reasons` counts every pairing refusal. `attempts` holds the newest 12 split and candidate
-events in chronological order.
+`efficiencyDiagnostics` explains why no measured round trip was applied. `lastAttemptAt` is the
+last scheduled or manual relearn pass that examined the pack; it moves even when nothing was
+learned, while `updatedAt` stays on the last actual measurement. `sessionsInWindow` counts every
+ledger session in the learning window, `sessionsComplete` those with both SoC endpoints and no
+invalidation, and `sessionsSeen` the records handed to the learner. A skipped pass therefore names
+`no_sessions_in_window`, `no_completed_session` or `no_new_completed_session` instead of looking
+healthy with a null blocker. `effectivePairs` is the Kish effective sample size `(Σw)²/Σw²`;
+`dispersion` is the median absolute deviation of the accepted round trips; `confidence` is
+`min(effectivePairs/6, 1) · clamp(1 − dispersion/0.02, 0, 1)` and must reach 0.3 to be published.
+`blocker` is `too_few_pairs`, `too_few_effective_pairs`, `disagreement`, `low_confidence` or
+`no_measurement` (null when applied). `blockSplits` counts charge/discharge boundaries split by
+the 7-day gap, hold-drift and SoC-closure checks; `reasons` counts every pairing refusal. `attempts`
+holds the newest 12 split and candidate events in chronological order.
 
 ```json
 { "packs": [{
@@ -141,10 +146,13 @@ events in chronological order.
                "capacityBandHighKwh": 1.92, "roundTrip": 0.9, "etaCharge": 0.9486833,
                "etaDischarge": 0.9486833, "efficiencyConfidence": 0.63,
                "efficiencyApplied": true, "roundTripSource": "measured",
-               "efficiencyDiagnostics": { "sessionsSeen": 12, "sessionsValid": 12,
+               "efficiencyDiagnostics": { "lastAttemptAt": "...", "sessionsSeen": 12,
+                 "sessionsInWindow": 14, "sessionsComplete": 12, "sessionsValid": 12,
                  "candidates": 8, "accepted": 6, "refused": 2, "blockSplits": 0,
                  "pairs": 6, "effectivePairs": 5.4, "dispersion": 0.006,
                  "confidence": 0.63, "blocker": null,
+                 // or, when the scheduled pass found nothing new:
+                 // "blocker": "no_sessions_in_window" | "no_completed_session" | "no_new_completed_session",
                  "reasons": { "accepted": 6, "hold_drift": 2 },
                  "attempts": [{ "at": "...", "reason": "accepted", "accepted": true,
                    "roundTrip": 0.88, "chargeKwh": 1.7, "dischargeKwh": 1.5,
