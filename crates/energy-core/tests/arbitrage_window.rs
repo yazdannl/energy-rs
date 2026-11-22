@@ -145,6 +145,34 @@ fn slots_at(plan: &Plan, range: std::ops::Range<usize>) -> f64 {
         .sum()
 }
 
+/// Gross saving, wear and net profit, recomputed from the plan's grid flows and real tariffs.
+///
+/// The C core quantises energy to a 0.05 kWh SoC lattice, power to 24 actions per slot and prices
+/// to 1e-6 EUR; its value function is linearly interpolated between SoC nodes. Those quanta, not
+/// an arbitrary allowance, justify the 0.01 kWh / 0.01 EUR tolerances below.
+fn economics(plan: &Plan) -> (f64, f64, f64) {
+    let mut cost = 0.0;
+    let mut baseline = 0.0;
+    let mut wear = 0.0;
+    for slot in &plan.slots {
+        let base = slot.load_kw - slot.pv_kw;
+        let grid = base + slot.battery_kw;
+        cost += 0.25
+            * if grid >= 0.0 {
+                slot.buy_all_in * grid
+            } else {
+                slot.feed_in * grid
+            };
+        baseline += 0.25 * slot.buy_all_in * base;
+        if slot.battery_kw < 0.0 {
+            // 0.02 EUR per stored kWh discharged; AC energy / eta_discharge = stored energy.
+            wear += 0.02 * (-slot.battery_kw * 0.25) / 0.9;
+        }
+    }
+    let saved = baseline - cost;
+    (saved, wear, saved - wear)
+}
+
 #[tokio::test]
 async fn a_sunless_cheap_night_charges_and_the_next_peak_is_sold() {
     // Real 2026-11-22 shape: 0.35 overnight, ~0.40 in between, 0.51-0.53 tomorrow afternoon.
@@ -164,8 +192,9 @@ async fn a_sunless_cheap_night_charges_and_the_next_peak_is_sold() {
         .filter(|slot| slot.battery_kw > 0.0)
         .map(|slot| slot.battery_kw * 0.25)
         .sum();
-    // Independent DP with the live fleet: 0.6987 kWh bought at 0.3498-0.3526, 6.0129 kWh sold
-    // in the peak, ending on the 1.179 kWh floor. All three are pinned to 0.01 kWh.
+    // Independent DP with the live fleet: 0.6987 kWh bought at 0.3498, 6.0129 kWh sold in the
+    // peak (4 x 0.8 kWh at 0.5303, 2 x 0.8 kWh plus 1.2129 kWh at 0.5188), ending on the 1.179
+    // kWh floor. All three energies are pinned to 0.01 kWh.
     assert!(
         (cheap_charge - 0.6987).abs() < 0.01,
         "cheap charge {cheap_charge} != 0.6987 kWh"
@@ -189,6 +218,16 @@ async fn a_sunless_cheap_night_charges_and_the_next_peak_is_sold() {
         (terminal - 1.179).abs() < 0.01,
         "ended at {terminal}, expected the 1.179 kWh reserve floor"
     );
+
+    // By hand: baseline 23.4 kWh of house load costs 9.53823 EUR (4 h at ~0.350, 16 h at 0.40,
+    // 4 h at ~0.518, 12 h at 0.40). The plan buys 0.6987 kWh for 0.24439 EUR and sells 6.0129 kWh
+    // for 3.15629 EUR, so gross saving is 2.91190 EUR. Wear is 0.02 x 6.0129/0.9 = 0.13362 EUR,
+    // leaving 2.77828 EUR net.
+    let (saved, wear, net) = economics(&plan);
+    assert!((plan.summary.baseline_cost_eur - 9.53823).abs() < 0.01);
+    assert!((saved - 2.91190).abs() < 0.01, "gross saving {saved}");
+    assert!((wear - 0.13362).abs() < 0.005, "wear {wear}");
+    assert!((net - 2.77828).abs() < 0.01, "net profit {net}");
 }
 
 #[tokio::test]
@@ -234,6 +273,14 @@ async fn an_equal_future_peak_is_not_skipped_for_a_later_twin() {
             .all(|slot| slot.battery_kw <= 0.0),
         "a peak slot charged instead of selling"
     );
+
+    // By hand: house load costs 10.73878 EUR (32 h at 0.45 plus 4 h at 0.5303); all 5.4470 kWh
+    // of sale earn 0.5303, i.e. 2.88853 EUR. Wear is 0.02 x 5.4470/0.9 = 0.12104 EUR, leaving
+    // 2.76749 EUR net. This fails if the same throughput is achieved at a different tariff.
+    let (saved, wear, net) = economics(&plan);
+    assert!((saved - 2.88853).abs() < 0.01, "gross saving {saved}");
+    assert!((wear - 0.12104).abs() < 0.005, "wear {wear}");
+    assert!((net - 2.76749).abs() < 0.01, "net profit {net}");
 }
 
 #[tokio::test]

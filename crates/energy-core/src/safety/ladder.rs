@@ -7,9 +7,9 @@ use crate::plan::{PackSpec, SLOT_MINUTES, SLOT_SECONDS};
 use crate::safety::decision::SafetyDecision;
 use crate::safety::{CommandRequest, Reason, SafetyLimits};
 
-const NEGLIGIBLE_KW: f64 = 1e-9;
+pub(crate) const NEGLIGIBLE_KW: f64 = 1e-9;
 /// Slack on the solar ceiling so a pack sitting on it does not chatter, kWh.
-const SOLAR_HYSTERESIS_KWH: f64 = 0.05;
+pub(crate) const SOLAR_HYSTERESIS_KWH: f64 = 0.05;
 
 /// The bounds collected in ladder order, then applied together.
 #[allow(clippy::struct_excessive_bools)] // one boolean per independent bound
@@ -31,6 +31,7 @@ pub(crate) struct Ladder<'a> {
     pub(crate) grid_import: bool,
     pub(crate) grid_export: bool,
     pub(crate) grid_missing: bool,
+    pub(crate) solar_missing: Option<Reason>,
     pub(crate) base_kw: Option<f64>,
     pub(crate) measured_base: Option<f64>,
     pub(crate) ramp_lo: f64,
@@ -74,6 +75,7 @@ impl<'a> Ladder<'a> {
             grid_import: false,
             grid_export: false,
             grid_missing: false,
+            solar_missing: None,
             base_kw: None,
             measured_base: None,
             ramp_lo: p_min,
@@ -99,8 +101,9 @@ impl<'a> Ladder<'a> {
     fn soc(&mut self, energy_kwh: f64) {
         let eta_charge = self.pack.eta_charge;
         let eta_discharge = self.pack.eta_discharge;
-        // A balancing charge is the one case allowed past the normal SoC ceiling: the pack's
-        // device limit, ramp, cell guard, grid ceiling and one-write-at-a-time pacer still apply.
+        // Bounded exception: only a due seven-day balance inside its scheduled maintenance window
+        // may reach 100 % for cell balancing. Economic charging always stays at max_soc_pct, and
+        // every other bound (device, ramp, cell guard, grid/import, pacer) still applies to both.
         let max_soc = if self.request.maintenance_full_charge {
             100.0
         } else {
@@ -146,7 +149,7 @@ impl<'a> Ladder<'a> {
         end * self.share()
     }
 
-    fn share(&self) -> f64 {
+    pub(crate) fn share(&self) -> f64 {
         if self.limits.fleet_capacity_kwh > 0.0 {
             (self.pack.capacity_kwh / self.limits.fleet_capacity_kwh).clamp(0.0, 1.0)
         } else {
@@ -243,36 +246,6 @@ impl<'a> Ladder<'a> {
         }
         // Discharge no more than the house is using; the rest stays in the pack.
         self.floor_lo = Some((-base * 1000.0).min(0.0));
-    }
-
-    /// Grid energy may not enter the solar reserve: above the ceiling, a charge is bounded by the
-    /// pack's share of measured PV. A due balance is exempt from this bound only; every other limit stands.
-    fn solar_ceiling(&mut self) {
-        if self.request.maintenance_full_charge
-            || !self.request.solar_reserve_armed
-            || self.limits.solar_reserve_pct <= 0.0
-        {
-            return;
-        }
-        let Some(slot) = self.request.plan_slot.as_ref() else {
-            return;
-        };
-        if slot.battery_kw <= NEGLIGIBLE_KW {
-            return;
-        }
-        let ceiling =
-            self.pack.e_max_kwh() - self.pack.capacity_kwh * self.limits.solar_reserve_pct / 100.0;
-        if self.energy_kwh < ceiling - SOLAR_HYSTERESIS_KWH {
-            return;
-        }
-        let (Some(pv), Some(load)) = (self.request.measured.pv_kw, self.request.measured.load_kw)
-        else {
-            return;
-        };
-        let surplus = ((pv - load) * 1000.0).max(0.0) * self.share();
-        if surplus < slot.battery_kw * 1000.0 {
-            self.soc_hi = self.soc_hi.min(surplus);
-        }
     }
 }
 

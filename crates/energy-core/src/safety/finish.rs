@@ -9,21 +9,37 @@ impl Ladder<'_> {
     pub(crate) fn finish(self) -> SafetyDecision {
         let lo = self.lo();
         let hi = self.hi();
+        let solar_missing = self.solar_missing;
+        let with_solar = |mut reasons: Vec<Reason>| {
+            if let Some(reason) = solar_missing {
+                reasons.insert(0, reason);
+            }
+            reasons
+        };
         if self.grid_missing {
             return SafetyDecision::blocked(
                 self.request.requested_w,
                 lo,
                 hi,
-                vec![Reason::GridTelemetryMissing],
+                with_solar(vec![Reason::GridTelemetryMissing]),
             );
         }
         if lo > hi {
-            let reasons = self.block_reasons(lo, hi);
-            return SafetyDecision::blocked(self.request.requested_w, lo, hi, reasons);
+            return SafetyDecision::blocked(
+                self.request.requested_w,
+                lo,
+                hi,
+                with_solar(self.block_reasons(lo, hi)),
+            );
         }
         let allowed = self.target.clamp(lo, hi);
-        let reasons = self.applied_reasons(allowed, lo, hi);
-        SafetyDecision::allowed(self.request.requested_w, allowed, lo, hi, reasons)
+        SafetyDecision::allowed(
+            self.request.requested_w,
+            allowed,
+            lo,
+            hi,
+            with_solar(self.applied_reasons(allowed, lo, hi)),
+        )
     }
 
     fn lo(&self) -> f64 {

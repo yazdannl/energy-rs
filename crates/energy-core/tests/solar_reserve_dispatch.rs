@@ -224,3 +224,98 @@ async fn maintenance_charge_survives_surplus_and_the_import_ceiling_caps_the_sum
     assert!(total_written > 0.0, "no charge reached a device");
     assert_eq!(outcome.grid_limit, Some(Reason::GridImportLimit));
 }
+
+#[tokio::test]
+async fn missing_pv_telemetry_blocks_charge_with_a_named_reason() {
+    let plan = forecast_plan(1.0, 1.5, 1.5, 1.8048);
+    let meter = MeterReading {
+        pv_kw: None,
+        ..meter(1.5)
+    };
+    let (outcome, _) = tick(TickCase {
+        plan: Some(&plan),
+        packs: vec![high_pack()],
+        overrides: &Overrides::none(),
+        limits: &limits(0.0),
+        meter: &meter,
+        now: NOW + 5,
+        stale: false,
+    })
+    .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.intended_w, 0.0, "missing PV must fail closed");
+    assert_eq!(report.intended_reason, Reason::SolarPvTelemetryMissing);
+}
+
+#[tokio::test]
+async fn missing_load_telemetry_blocks_charge_with_a_named_reason() {
+    let plan = forecast_plan(1.0, 1.5, 1.5, 1.8048);
+    let meter = MeterReading {
+        load_kw: None,
+        ..meter(1.5)
+    };
+    let (outcome, _) = tick(TickCase {
+        plan: Some(&plan),
+        packs: vec![high_pack()],
+        overrides: &Overrides::none(),
+        limits: &limits(0.0),
+        meter: &meter,
+        now: NOW + 5,
+        stale: false,
+    })
+    .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.intended_w, 0.0, "missing load must fail closed");
+    assert_eq!(report.intended_reason, Reason::SolarLoadTelemetryMissing);
+}
+
+#[tokio::test]
+async fn only_a_due_balance_may_charge_past_max_soc_pct() {
+    // 94.9 % of a 1.92 kWh pack is 1.82208 kWh; its normal 95 % ceiling leaves 0.00192 kWh,
+    // about 242.5 W at a 30 s tick and 0.95 efficiency. Economic charging must stop there.
+    let plan = forecast_plan(1.0, 0.0, 0.0, 1.82208);
+    let meter = meter(0.0);
+    let near_full = pack("SN-A", 94.9);
+    let (outcome, _) = tick(TickCase {
+        plan: Some(&plan),
+        packs: vec![near_full.clone()],
+        overrides: &Overrides::none(),
+        limits: &limits(0.0),
+        meter: &meter,
+        now: NOW + 5,
+        stale: false,
+    })
+    .await;
+    let economic = outcome.report("SN-A").expect("economic report");
+    assert!(
+        (economic.intended_w - 242.5).abs() < 2.0,
+        "economic charge ignored max_soc_pct: {economic:?}"
+    );
+    assert!(
+        economic.intended_w < 800.0,
+        "economic request exceeded the normal ceiling"
+    );
+
+    // The same pack inside a scheduled, due seven-day balance may reach 100 % for cell balancing.
+    let overrides = Overrides::new(vec![ManualOverride::maintenance(
+        "SN-A",
+        OverrideAction::Charge { watts: 800.0 },
+        NOW + 60,
+    )]);
+    let (outcome, _) = tick(TickCase {
+        plan: Some(&plan),
+        packs: vec![near_full],
+        overrides: &overrides,
+        limits: &limits(0.0),
+        meter: &meter,
+        now: NOW + 5,
+        stale: false,
+    })
+    .await;
+    let balance = outcome.report("SN-A").expect("maintenance report");
+    assert!(
+        balance.intended_w > economic.intended_w + 100.0,
+        "balancing was bounded by the normal SoC ceiling: {balance:?}"
+    );
+    assert_ne!(balance.intended_reason, Reason::SocCeiling);
+}

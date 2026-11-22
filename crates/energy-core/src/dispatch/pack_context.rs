@@ -148,6 +148,8 @@ fn hard_safety(reason: Reason) -> bool {
             | Reason::GridImportLimit
             | Reason::GridExportLimit
             | Reason::GridTelemetryMissing
+            | Reason::SolarPvTelemetryMissing
+            | Reason::SolarLoadTelemetryMissing
             | Reason::SellFloor
             | Reason::CellVoltageGuard
             | Reason::CellVoltageEmergencyCharge

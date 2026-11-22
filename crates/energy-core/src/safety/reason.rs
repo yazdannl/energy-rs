@@ -36,6 +36,10 @@ pub enum Reason {
     GridExportLimit,
     /// Neither a meter nor a forecast base exists to evaluate the grid cap; hold.
     GridTelemetryMissing,
+    /// PV telemetry missing or non-finite while the armed solar reserve needs it.
+    SolarPvTelemetryMissing,
+    /// Load telemetry missing or non-finite while the armed solar reserve needs it.
+    SolarLoadTelemetryMissing,
     /// The per-pack per-tick ramp bound the setpoint.
     RampLimit,
     /// The cost-basis sell floor refused the planned discharge.
@@ -86,6 +90,8 @@ impl Reason {
             Self::GridImportCeiling => "grid_import_ceiling",
             Self::GridExportLimit => "grid_export_limit",
             Self::GridTelemetryMissing => "grid_telemetry_missing",
+            Self::SolarPvTelemetryMissing => "solar_pv_telemetry_missing",
+            Self::SolarLoadTelemetryMissing => "solar_load_telemetry_missing",
             Self::RampLimit => "ramp_limit",
             Self::SellFloor => "sell_floor",
             Self::CellVoltageGuard => "cell_voltage_guard",

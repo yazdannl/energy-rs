@@ -14,6 +14,7 @@ mod limits;
 mod measured;
 mod reason;
 mod request;
+mod solar;
 
 pub use authority::Authority;
 pub use check::check;

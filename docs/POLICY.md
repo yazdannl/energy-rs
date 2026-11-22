@@ -150,6 +150,10 @@ winter day may buy the cheap night and sell the next peak. At dispatch the same 
 the plan's *remaining* surplus: the reserve is released only when no slot still ahead forecasts PV,
 never from a zero PV reading alone (a cloud gap or pre-sunrise tick still keeps it armed). A due
 seven-day balance is exempt from this bound only; every device, SoC and grid ceiling still applies.
+That balance is the one bounded exception to `max_soc_pct`: cell balancing needs a genuine 100 %
+charge, and only a scheduled due-balance request may use it. A full pack, an export limit, a cell
+latch or an unavailable device is never a reason to release the reserve; the last two are handled by
+the existing per-pack guards. Missing PV/load telemetry fails closed with a named reason.
 Early on a sunny day the ceiling is low; as the day passes it rises and by
 evening grid charging may fill the pack. Overnight it already holds tomorrow's surplus, so a sunny
 winter day still allows cheap night charging for the part tomorrow's PV does not need. `cap(t)` is
