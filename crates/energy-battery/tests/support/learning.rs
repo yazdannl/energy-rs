@@ -117,3 +117,18 @@ pub fn discharges(
         .map(|index| discharge(from, to, capacity, split, at(index as i64 * 2)))
         .collect()
 }
+
+/// One closed 30-point cycle with a chosen AC round trip and equal weight.
+pub fn trip(round_trip: f64, start: i64) -> Vec<SessionRecord> {
+    let charge_kwh = 0.64;
+    vec![
+        session(Direction::Charge, 20.0, 50.0, charge_kwh, at(start)),
+        session(
+            Direction::Discharge,
+            50.0,
+            20.0,
+            charge_kwh * round_trip,
+            at(start + 2),
+        ),
+    ]
+}

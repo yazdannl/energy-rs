@@ -6,6 +6,8 @@
 //! to its last sample plus one nominal interval (an unbounded edge, which makes the run
 //! incomplete). A one-sample opposite-direction blip between two runs of the same direction flags
 //! both neighbours as a `direction_reversal` instead of silently booking two truncated sessions.
+//! Runs shorter than `min_samples` are flagged but kept: dropping them would erase a direction
+//! change and let the learning layer merge the surrounding same-direction sessions.
 
 use crate::session::{Direction, SessionRules};
 
@@ -75,11 +77,15 @@ pub(crate) fn scan(
             max_gap,
         );
         mark_reversals(&mut segment, rules.min_samples);
-        skipped += segment
-            .iter()
-            .filter(|run| run.sample_count < rules.min_samples)
-            .count();
-        segment.retain(|run| run.sample_count >= rules.min_samples);
+        for run in &mut segment {
+            if run.sample_count < rules.min_samples {
+                skipped += 1;
+                run.complete = false;
+                if run.invalidated_reason.is_none() {
+                    run.invalidated_reason = Some("short_session");
+                }
+            }
+        }
         runs.append(&mut segment);
         start = end;
     }
@@ -209,6 +215,19 @@ fn mark_reversals(runs: &mut [Run], min_samples: usize) {
         runs[index].complete = false;
         if runs[index].invalidated_reason.is_none() {
             runs[index].invalidated_reason = Some("direction_reversal");
+        }
+    }
+    // The blip itself is also a barrier, even when it is not adjacent to its neighbours.
+    for index in 1..runs.len().saturating_sub(1) {
+        let blip = &runs[index];
+        if blip.sample_count < min_samples
+            && blip.direction != runs[index - 1].direction
+            && blip.direction != runs[index + 1].direction
+        {
+            runs[index].complete = false;
+            if runs[index].invalidated_reason.is_none() {
+                runs[index].invalidated_reason = Some("direction_reversal");
+            }
         }
     }
 }

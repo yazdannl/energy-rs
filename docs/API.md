@@ -110,6 +110,15 @@ One row per known pack: live state (from the engine snapshot, falling back to th
 sample), the applied learning result with its provenance, the protection latch and the manual
 override.
 
+`efficiencyDiagnostics` explains why no measured round trip was applied. `effectivePairs` is the
+Kish effective sample size `(Σw)²/Σw²`; `dispersion` is the median absolute deviation of the
+accepted round trips; `confidence` is `min(effectivePairs/6, 1) · clamp(1 − dispersion/0.02, 0,
+1)` and must reach 0.3 to be published. `blocker` is `too_few_pairs`,
+`too_few_effective_pairs`, `disagreement`, `low_confidence` or `no_measurement` (null when applied).
+`blockSplits` counts charge/discharge boundaries split by the 7-day gap, hold-drift and SoC-closure
+checks; `reasons` counts every pairing refusal. `attempts` holds the newest 12 split and candidate
+events in chronological order.
+
 ```json
 { "packs": [{
   "sn": "AB2000-ONE", "name": null, "alias": "Attic A",
@@ -122,8 +131,16 @@ override.
   "learned": { "capacityKwh": 1.85, "capacityConfidence": 0.8, "capacityApplied": true,
                "capacityDecision": "capacity_learned", "capacityBandLowKwh": 1.7,
                "capacityBandHighKwh": 1.92, "roundTrip": 0.9, "etaCharge": 0.9486833,
-               "etaDischarge": 0.9486833, "efficiencyConfidence": 0.7,
+               "etaDischarge": 0.9486833, "efficiencyConfidence": 0.63,
                "efficiencyApplied": true, "roundTripSource": "measured",
+               "efficiencyDiagnostics": { "sessionsSeen": 12, "sessionsValid": 12,
+                 "candidates": 8, "accepted": 6, "refused": 2, "blockSplits": 0,
+                 "pairs": 6, "effectivePairs": 5.4, "dispersion": 0.006,
+                 "confidence": 0.63, "blocker": null,
+                 "reasons": { "accepted": 6, "hold_drift": 2 },
+                 "attempts": [{ "at": "...", "reason": "accepted", "accepted": true,
+                   "roundTrip": 0.88, "chargeKwh": 1.7, "dischargeKwh": 1.5,
+                   "socFromPct": 20, "socToPct": 20, "chargeSegments": 3 }] },
                "sessionsUsed": 5, "updatedAt": "..." },
   "latch": { "blocked": true, "forceCharge": false, "forceChargeW": 300, "since": "...",
              "reason": "cell_below_resume", "reasonAt": "...", "voltageV": 3.01,

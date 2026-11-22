@@ -24,11 +24,16 @@
 //! Everything here is pure. Input timestamps and the report's `now` are arguments, the profile is
 //! persisted through [`LearningStore`], and nothing reads a clock.
 
+mod blocks;
 pub mod bounds;
 pub mod capacity;
 pub mod cycle;
 pub mod decision;
 pub mod efficiency;
+pub mod pair_attempt;
+pub mod pair_diagnostics;
+pub mod pair_refusal;
+mod pairing;
 pub mod pool;
 pub mod profile;
 pub mod refusal;
@@ -50,10 +55,14 @@ pub use capacity::{
 pub use cycle::CyclePair;
 pub use decision::LearningDecision;
 pub use efficiency::{
-    CYCLE_TOLERANCE_FRACTION, CYCLE_TOLERANCE_PCT, DEFAULT_ROUND_TRIP, EfficiencyEstimate,
-    HOLD_DRIFT_FRACTION, HOLD_DRIFT_PCT, MAX_IMPLIED_CAPACITY_KWH, MAX_PAIR_GAP_DAYS,
-    MAX_ROUND_TRIP, MIN_IMPLIED_CAPACITY_KWH, MIN_PAIRS, MIN_ROUND_TRIP,
+    AGREEMENT_BAND, CYCLE_TOLERANCE_FRACTION, CYCLE_TOLERANCE_PCT, DEFAULT_ROUND_TRIP,
+    EfficiencyEstimate, HOLD_DRIFT_FRACTION, HOLD_DRIFT_PCT, MAX_IMPLIED_CAPACITY_KWH,
+    MAX_PAIR_GAP_DAYS, MAX_ROUND_TRIP, MIN_CONFIDENCE, MIN_IMPLIED_CAPACITY_KWH, MIN_PAIRS,
+    MIN_ROUND_TRIP,
 };
+pub use pair_attempt::PairAttempt;
+pub use pair_diagnostics::PairDiagnostics;
+pub use pair_refusal::PairRefusal;
 pub use pool::CapacityPool;
 pub use profile::LearningProfile;
 pub use refusal::Refusal;

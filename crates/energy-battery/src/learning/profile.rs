@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::learning::decision::LearningDecision;
 use crate::learning::efficiency::EfficiencyEstimate;
+use crate::learning::pair_diagnostics::PairDiagnostics;
 use crate::learning::report::LearningReport;
 use crate::learning::source::CapacitySource;
 
@@ -40,6 +41,9 @@ pub struct LearningProfile {
     pub efficiency_confidence: f64,
     /// Whether the round trip is a measurement rather than the typed default.
     pub efficiency_applied: bool,
+    /// Last pass's pairing counts, refusal reasons and candidate round trips.
+    #[serde(default)]
+    pub efficiency_diagnostics: PairDiagnostics,
     /// Capacity samples that contributed at the last pass.
     pub sessions_used: usize,
     /// SoC points the contributing cycles actually covered.
@@ -73,6 +77,7 @@ impl LearningProfile {
             eta_discharge: efficiency.eta_discharge,
             efficiency_confidence: efficiency.confidence,
             efficiency_applied: efficiency.is_confident(),
+            efficiency_diagnostics: efficiency.diagnostics.clone(),
             sessions_used: report.used,
             soc_points_covered: capacity.soc_points,
             cycles_used: capacity.cycles_used,
@@ -92,8 +97,8 @@ impl LearningProfile {
 
     /// The previous profile as an estimate, so the next pass can keep it on thin data.
     ///
-    /// `pairs` and `pairs_refused` are unknown after a round trip through storage and stay 0; the
-    /// kept-previous path only reads the numbers, the flags and the confidence.
+    /// Pair counts are stored separately in [`Self::efficiency_diagnostics`]; the kept-previous
+    /// path only reads the numbers, the flags and the confidence.
     pub fn efficiency_estimate(&self) -> EfficiencyEstimate {
         EfficiencyEstimate {
             pack_id: self.pack_id.clone(),
@@ -101,7 +106,8 @@ impl LearningProfile {
             eta_charge: self.eta_charge,
             eta_discharge: self.eta_discharge,
             pairs: 0,
-            pairs_refused: 0,
+            pairs_refused: self.efficiency_diagnostics.refused,
+            diagnostics: self.efficiency_diagnostics.clone(),
             confidence: self.efficiency_confidence,
             applied: self.efficiency_applied,
             kept_previous: false,

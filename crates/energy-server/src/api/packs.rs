@@ -13,6 +13,7 @@ use crate::api::error::ApiError;
 use crate::api::state_dto::{StateDto, state_dto};
 use crate::service::Service;
 
+use energy_battery::learning::PairDiagnostics;
 use energy_battery::{CellLatch, LearningProfile};
 use energy_core::dispatch::{ManualOverride, OverrideAction};
 use energy_core::stream::PackSnapshot;
@@ -41,6 +42,8 @@ struct LearnedDto {
     efficiency_applied: bool,
     /// `measured` when closed cycles produced the number, `default` while it is the typed fallback.
     round_trip_source: &'static str,
+    /// Session counts, pair refusals and the round trip each candidate implied.
+    efficiency_diagnostics: PairDiagnostics,
     sessions_used: usize,
     updated_at: Timestamp,
 }
@@ -137,6 +140,7 @@ fn learned_dto(profile: &LearningProfile) -> LearnedDto {
         } else {
             "default"
         },
+        efficiency_diagnostics: profile.efficiency_diagnostics.clone(),
         sessions_used: profile.sessions_used,
         updated_at: Timestamp::from_datetime(profile.updated_at),
     }

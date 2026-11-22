@@ -310,6 +310,7 @@ fn learning_profile(sn: &str) -> LearningProfile {
         "eta_discharge": 0.948_683_3,
         "efficiency_confidence": 0.7,
         "efficiency_applied": true,
+        "efficiency_diagnostics": { "sessionsSeen": 8, "sessionsValid": 8, "candidates": 2, "accepted": 1, "refused": 1, "blockSplits": 1, "pairs": 1, "effectivePairs": 1.8, "dispersion": 0.012, "confidence": 0.3, "blocker": null, "reasons": { "accepted": 1, "gap_too_long": 1 }, "attempts": [{ "at": "2026-01-01T00:00:00Z", "reason": "gap_too_long", "accepted": false, "roundTrip": 0.42, "chargeKwh": 1.0, "dischargeKwh": 0.42, "socFromPct": 20.0, "socToPct": 50.0, "chargeSegments": 2 }] },
         "sessions_used": 5,
         "updated_at": "2026-01-01T00:00:00Z",
     }))

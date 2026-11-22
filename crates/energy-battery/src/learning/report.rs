@@ -124,8 +124,9 @@ impl LearningReport {
             .capacity
             .raw_kwh
             .map_or_else(|| "n/a".to_owned(), |value| format!("{value:.4}"));
+        let pairing = self.efficiency.diagnostics.summary();
         format!(
-            "pack {}: capacity {capacity} (raw {raw}, source {}, confidence {:.3}, {} points/{} cycles, band {:.3}..{:.3}, {}), efficiency {:.4} ({}), used {}/{} sessions, refused {}",
+            "pack {}: capacity {capacity} (raw {raw}, source {}, confidence {:.3}, {} points/{} cycles, band {:.3}..{:.3}, {}), efficiency {:.4} ({}), used {}/{} sessions, refused {}, pairing [{pairing}]",
             self.pack_id,
             self.capacity.source.slug(),
             self.capacity.confidence,

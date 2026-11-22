@@ -60,6 +60,17 @@ async fn packs_join_state_learning_latch_and_limits() {
     assert_eq!(first["learned"]["capacityKwh"], 1.85);
     assert_eq!(first["learned"]["capacityDecision"], "capacity_learned");
     assert_eq!(first["learned"]["sessionsUsed"], 5);
+    let pairing = &first["learned"]["efficiencyDiagnostics"];
+    assert_eq!(pairing["sessionsSeen"], 8);
+    assert_eq!(pairing["candidates"], 2);
+    assert_eq!(pairing["refused"], 1);
+    assert_eq!(pairing["reasons"]["gap_too_long"], 1);
+    assert_eq!(pairing["blockSplits"], 1);
+    assert_eq!(pairing["effectivePairs"], 1.8);
+    assert_eq!(pairing["dispersion"], 0.012);
+    assert_eq!(pairing["confidence"], 0.3);
+    assert!(pairing["blocker"].is_null());
+    assert_eq!(pairing["attempts"][0]["roundTrip"], 0.42);
     assert_eq!(first["latch"]["blocked"], true);
     assert_eq!(first["latch"]["reason"], "cell_below_resume");
     assert_eq!(first["limits"]["maxDischargeW"], 800.0);
