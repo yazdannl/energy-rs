@@ -38,6 +38,7 @@ mod pv_plane;
 mod pv_select;
 mod pv_source;
 mod quality;
+pub mod source_notice;
 mod supply;
 mod supply_port;
 
@@ -56,6 +57,7 @@ pub use pv_mode::PvMode;
 pub use pv_plane::PvPlane;
 pub use pv_source::PvSource;
 pub use quality::ForecastQuality;
+pub use source_notice::{SkippedSource, skipped_sources};
 pub use supply::Supply;
 pub use supply_port::PlanSupply;
 

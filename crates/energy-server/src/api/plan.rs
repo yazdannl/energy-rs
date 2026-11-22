@@ -206,3 +206,40 @@ pub(crate) async fn current_plan(
         slots,
     }))
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::float_cmp)]
+mod tests {
+    use super::summary_dto;
+    use energy_core::plan::PlanSummary;
+
+    fn summary(terminal: f64, soft: f64) -> PlanSummary {
+        PlanSummary {
+            cost_estimate_eur: 0.0,
+            baseline_cost_eur: 0.0,
+            saved_eur: 0.0,
+            charged_kwh: 0.0,
+            discharged_kwh: 0.0,
+            grid_charge_kwh: 0.0,
+            pv_charge_kwh: 0.0,
+            cycles: 0.0,
+            terminal_target_kwh: Some(terminal),
+            infeasible_reason: None,
+            export_floor_eur_per_kwh: None,
+            zero_export: false,
+            cost_basis_eur_per_kwh: None,
+            peak_reserve_kwh: Some(soft),
+            solar_reserve_kwh: 0.0,
+            clipped_kwh: 0.0,
+            gated_kwh: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_clamped_target_and_its_soft_guideline_are_reported_separately() {
+        let value = serde_json::to_value(summary_dto(&summary(1.152, 0.786_347))).unwrap();
+        assert_eq!(value["terminalTargetWh"], 1152.0);
+        assert_eq!(value["peakReserveWh"], 786.347);
+        assert!(value["infeasibleReason"].is_null());
+    }
+}

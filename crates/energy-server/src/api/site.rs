@@ -11,6 +11,7 @@ use crate::api::dto::Timestamp;
 use crate::api::error::ApiError;
 use crate::service::Service;
 
+use energy_core::plan_source::{SkippedSource, skipped_sources};
 use energy_core::safety::Authority;
 use energy_ledger::Pack;
 
@@ -44,6 +45,8 @@ struct PackDto {
 pub(crate) struct Site {
     configured: bool,
     sources: Vec<SourceDto>,
+    /// Configured grid sources currently empty and ignored by the planner.
+    empty_grid_sources: Vec<SkippedSource>,
     packs: Vec<PackDto>,
     capabilities: Vec<String>,
     mode: Authority,
@@ -93,6 +96,7 @@ pub(crate) async fn site(State(service): State<Arc<Service>>) -> Result<Json<Sit
     Ok(Json(Site {
         configured: snapshot.site.configured,
         sources,
+        empty_grid_sources: skipped_sources(),
         packs,
         capabilities: snapshot.site.capabilities.clone(),
         mode: snapshot.mode,

@@ -111,7 +111,7 @@ impl HaPlanSupply {
         for entity in entities {
             series.push(ha_series::fetch(&self.connection, entity, window).await?);
         }
-        Ok(ha_series::sum_sources(&series, name))
+        Ok(ha_series::sum_sources(&series, entities, name))
     }
 
     /// The summed battery statistics of one direction; empty when no battery configures one.

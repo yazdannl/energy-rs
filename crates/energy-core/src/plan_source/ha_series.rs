@@ -8,7 +8,7 @@ use energy_forecast::time::parse_iso_utc;
 use energy_ha::{Connection, SiteModel, SolarForecast, slot_series_15min};
 
 use crate::plan::{HORIZON_SLOTS, PlanError, SLOT_SECONDS};
-use crate::plan_source::MeasuredHistory;
+use crate::plan_source::{MeasuredHistory, source_notice};
 
 /// Shortest gap-free tail worth validating: one hour of real measurements.
 const MIN_GAP_FREE_SLOTS: i64 = 4;
@@ -78,18 +78,23 @@ pub(crate) fn sum_series(series: &[BTreeMap<i64, f64>]) -> BTreeMap<i64, f64> {
     }
 }
 
-/// [`sum_series`] with one warning when an absent source is skipped among several.
+/// [`sum_series`] with a one-time INFO notice naming each skipped source.
 ///
-/// A lone source stays silent so single-source dashboards behave exactly as before.
-pub(crate) fn sum_sources(series: &[BTreeMap<i64, f64>], name: &'static str) -> BTreeMap<i64, f64> {
-    let absent = series.iter().filter(|source| source.is_empty()).count();
-    if series.len() > 1 && absent > 0 && absent < series.len() {
-        tracing::warn!(
-            series = name,
-            absent_sources = absent,
-            "skipped grid sources with no complete quarter in the window; no slots invented"
-        );
-    }
+/// The source IDs come from the dashboard configuration, alongside the aligned `series`. The
+/// maths is unchanged: an absent source is still skipped and no slot is invented. See
+/// [`source_notice`] for the once-per-source rule and the all-empty WARN.
+pub(crate) fn sum_sources(
+    series: &[BTreeMap<i64, f64>],
+    entities: &[String],
+    name: &'static str,
+) -> BTreeMap<i64, f64> {
+    let empty: Vec<String> = entities
+        .iter()
+        .zip(series)
+        .filter(|(_, values)| values.is_empty())
+        .map(|(entity, _)| entity.clone())
+        .collect();
+    source_notice::report(name, entities, &empty);
     sum_series(series)
 }
 

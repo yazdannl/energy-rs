@@ -34,15 +34,32 @@ pub(crate) fn solver_config(input: &PlanInput, aggregate: &Aggregate, salvage: f
     config
 }
 
-/// The soft end-of-horizon target: the operator's explicit target, else the peak guideline.
+/// The terminal target handed to the solver: a soft guideline raised to the hard floor.
+///
+/// The peak reserve is a soft end-of-horizon guideline and `reserve_soc_pct` is a hard floor the
+/// clamp ladder will not let the fleet cross. A guideline below that floor is a configuration
+/// contradiction: the solver would be penalised for ending above the target while the ladder
+/// forbids ending below it, so every solve is reported `terminal_target_unreachable` even though
+/// the SoC path correctly stops at the floor. There is no legitimate case for keeping such a
+/// target -- deliberately setting `peak_reserve_pct` below `reserve_soc_pct` still asks to spend
+/// energy the dispatcher refuses to deliver -- so the effective target is the greater of the two.
+/// The soft guideline itself is reported separately in `peak_reserve_kwh`; only this effective
+/// target is stored in `terminal_target_kwh` and used for the feasibility check.
 fn terminal_target(input: &PlanInput, aggregate: &Aggregate) -> Option<f64> {
-    if let Some(pct) = input.terminal_target_pct {
-        return Some(
+    let soft = if let Some(pct) = input.terminal_target_pct {
+        Some(
             aggregate.spec.e_min_kwh
                 + (aggregate.spec.e_max_kwh - aggregate.spec.e_min_kwh) * pct / 100.0,
-        );
-    }
-    input
-        .policy
-        .peak_target_kwh(aggregate.capacity_kwh, aggregate.start_kwh)
+        )
+    } else {
+        input
+            .policy
+            .peak_target_kwh(aggregate.capacity_kwh, aggregate.start_kwh)
+    }?;
+    // The upper bound keeps an out-of-band start or an oversized guideline inside the physical
+    // band; the floor is the part that fixes the contradiction described above.
+    Some(
+        soft.max(aggregate.spec.e_min_kwh)
+            .min(aggregate.spec.e_max_kwh),
+    )
 }

@@ -38,6 +38,7 @@ async fn site_lists_sources_capabilities_and_packs() {
     assert_eq!(body["capabilities"][0], "battery_control");
     assert_eq!(body["sources"][0]["kind"], "grid");
     assert_eq!(body["sources"][1]["entityId"], "sensor.pv_energy");
+    assert!(body["emptyGridSources"].is_array());
     assert_eq!(body["packs"].as_array().unwrap().len(), 2);
     assert_eq!(body["packs"][0]["sn"], "AB2000-ONE");
     assert_eq!(body["packs"][0]["labelCapacityKwh"], 1.92);

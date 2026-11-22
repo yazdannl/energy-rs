@@ -29,6 +29,8 @@ use support::{NOW, book, settlement, state};
 const CAPACITY_KWH: f64 = 3.84;
 const PACK_CAPACITY_KWH: f64 = 1.92;
 const PACK_MIN_SOC_PCT: f64 = 5.0;
+/// The live four-pack fleet: 4 × 1.92 kWh label capacity.
+const FLEET_CAPACITY_KWH: f64 = 4.0 * PACK_CAPACITY_KWH;
 
 struct FakeSupply {
     supply: Mutex<Supply>,
@@ -63,15 +65,15 @@ fn packs() -> Vec<PackState> {
 }
 
 /// Expensive first half, cheap second half, no sun: the solver drains the packs towards their
-/// floor while import is dear. The cheap tail keeps the salvage value low, so holding energy has
-/// no upside. Feed-in is far below the buy price too.
-fn source(reserve: f64, peak_reserve: f64) -> LivePlanSource<FakeSupply> {
+/// floor while import is dear. Feed-in is far below the buy price too. A non-zero penalty makes
+/// the solver actually finish at the terminal target instead of optimising past it.
+fn source(reserve: f64, peak_reserve: f64, peak_penalty: f64) -> LivePlanSource<FakeSupply> {
     let policy = Policy {
         export: ExportPolicy::Legacy,
         net_metering: NetMetering::Off,
         solar_reserve_pct: 0.0,
         peak_reserve_pct: peak_reserve,
-        peak_reserve_value_eur_per_kwh: 0.0,
+        peak_reserve_value_eur_per_kwh: peak_penalty,
         wear_eur_per_kwh: 0.0,
         cost_basis_eur_per_kwh: None,
         zero_export: false,
@@ -96,10 +98,25 @@ fn source(reserve: f64, peak_reserve: f64) -> LivePlanSource<FakeSupply> {
 }
 
 async fn plan(reserve: f64, peak_reserve: f64) -> Plan {
-    source(reserve, peak_reserve)
-        .plan(NOW, packs())
+    plan_for(packs(), reserve, peak_reserve, 0.0).await
+}
+
+async fn plan_for(
+    fleet: Vec<PackState>,
+    reserve: f64,
+    peak_reserve: f64,
+    peak_penalty: f64,
+) -> Plan {
+    source(reserve, peak_reserve, peak_penalty)
+        .plan(NOW, fleet)
         .await
         .expect("plan")
+}
+
+fn four_packs() -> Vec<PackState> {
+    (0..4)
+        .map(|index| state(&format!("pack-{index}"), PACK_CAPACITY_KWH, 500.0, 60.0))
+        .collect()
 }
 
 fn floor_kwh(reserve: f64) -> f64 {
@@ -111,6 +128,55 @@ fn min_slot_kwh(plan: &Plan) -> f64 {
         .iter()
         .map(|slot| slot.soc_kwh)
         .fold(f64::INFINITY, f64::min)
+}
+
+/// The live contradiction: 10 % peak guideline, 15 % hard reserve, four packs.
+#[tokio::test]
+async fn a_soft_guideline_below_the_floor_is_raised_and_the_plan_is_feasible() {
+    let plan = plan_for(four_packs(), 15.0, 10.0, 0.15).await;
+    let floor = FLEET_CAPACITY_KWH * 0.15;
+    let soft = FLEET_CAPACITY_KWH * 0.10;
+
+    assert!(
+        (plan.summary.terminal_target_kwh.expect("effective target") - floor).abs() < 1e-6,
+        "terminal target must be the 15 % floor: {:?}",
+        plan.summary.terminal_target_kwh
+    );
+    assert!(
+        (plan.summary.peak_reserve_kwh.expect("soft guideline") - soft).abs() < 1e-6,
+        "the soft 10 % guideline must stay distinct: {:?}",
+        plan.summary.peak_reserve_kwh
+    );
+    assert!(plan.feasible, "the floor-clamped target must be reachable");
+    assert_eq!(plan.summary.infeasible_reason, None);
+    // `soc_kwh` is the state at a slot's start; `target_soc_kwh` is the end state (the DP's
+    // final step is reconstructed there), so that is the horizon's terminal SoC.
+    let end = plan.slots.last().expect("a final slot").target_soc_kwh;
+    assert!(
+        end + 1e-6 >= floor && end <= floor + 0.11,
+        "the SoC path must still end at the 15 % floor, not below it: {end} vs {floor}"
+    );
+    assert!(
+        min_slot_kwh(&plan) + 1e-6 >= floor,
+        "no slot may dip below the 15 % floor"
+    );
+}
+
+/// The guideline above the floor is unchanged: the clamp is one-way.
+#[tokio::test]
+async fn a_soft_guideline_above_the_floor_is_unchanged() {
+    let plan = plan(10.0, 20.0).await;
+    let soft = CAPACITY_KWH * 0.20;
+
+    assert!(
+        (plan.summary.terminal_target_kwh.expect("effective target") - soft).abs() < 1e-6,
+        "a guideline above the floor must pass through unchanged: {:?}",
+        plan.summary.terminal_target_kwh
+    );
+    assert_eq!(
+        plan.summary.terminal_target_kwh,
+        plan.summary.peak_reserve_kwh
+    );
 }
 
 /// The reported terminal/peak figure follows the policy (10 % here), while the hard floor follows

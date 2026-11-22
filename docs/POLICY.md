@@ -173,15 +173,25 @@ the later `f` clears `break_even` (R1), so it cannot lose money by construction.
 **Peak reserve = soft target.** The DP is configured with
 
 ```
-e_target       = min(peak_reserve_pct% · E_cap, S)      # the guideline, never above what exists
+peak_reserve   = min(peak_reserve_pct% · E_cap, S)       # the soft guideline, never above what exists
+e_target       = max(peak_reserve, E_min(reserve_soc_pct))  # effective: never below the hard floor
 target_penalty = peak_reserve_value_eur_per_kwh          # default 0.15
 ```
 
 so the plan *aims* to end the horizon at the reserve and pays `penalty` per kWh it ends below it. It
 discharges into the reserve whenever the avoided buy (or the avoided curtailment) is worth more than
-the penalty — which is exactly "never import while stored energy can serve the load". No hard floor:
-`e_min_kwh` stays the hardware minimum, and the ladder enforces nothing above it. The guideline
-therefore cannot force an import.
+the penalty — which is exactly "never import while stored energy can serve the load". The guideline
+alone does not create a hard floor: the ladder enforces only `reserve_soc_pct` (on top of each pack's
+hardware minimum), and an end-of-horizon guideline may be spent down to that floor.
+
+A guideline *below* the hard floor is a configuration contradiction, not a target worth aiming at:
+the solver is penalised for anything above the target while the dispatcher refuses every discharge
+below the floor, so `terminal_target_unreachable` would be permanent. `peak_reserve_pct <
+reserve_soc_pct` (whether deliberate or accidental) is therefore resolved by raising the effective
+target to the floor; the same clamp applies to an explicit `terminal_target_pct`. The two numbers
+stay visible and distinct in `GET /plan/current`: `summary.peakReserveWh` is the unmodified soft
+guideline, `summary.terminalTargetWh` is the effective (floor-clamped) target used by the solve and
+its feasibility check.
 
 `target_penalty` is the only new economic number: it says what a kWh of headroom is worth. 0.15
 €/kWh is a little above the current spread between an average buy and the feed-in, so the reserve is
@@ -360,7 +370,7 @@ Every row is a decided behaviour.
 
 | # | Case | Behaviour |
 |---|---|---|
-| 1 | `S` below the peak guideline (deep discharge, manual override) | `e_target = min(reserve, S)`: the guideline is capped at what exists, so nothing is unreachable. The DP still discharges to serve the house (never an import while energy is stored) and refills toward the guideline when cheap. No recovery mode, no hard floor. |
+| 1 | `S` below the peak guideline (deep discharge, manual override) | `e_target = min(reserve, S)`: the guideline is capped at what exists, so nothing is unreachable. The DP still discharges to serve the house (never an import while energy is stored) and refills toward the guideline when cheap. No recovery mode; only the configured reserve floor bounds the target. |
 | 2 | `S ≥ cap(t₀)` (PV already filled the reserve) | no grid charge in that slot; `cap(t)` rises as the forecast surplus is consumed, so a later slot may allow it. PV may always charge to `E_max_hw`. |
 | 3 | Pack full, PV surplus, `f < break_even`, surplus below the fleet charge power | the battery does not export (R1); the PV surplus still exports at `f` because it is not battery energy. `battery_kw = 0`, reason `export_below_floor` on the battery leg only. |
 | 3b | Pack full, PV arriving that the pack cannot take | the capture budget licenses a below-break-even sale up to `budget · η_rt`; beyond that the surplus is curtailed and `pv_clipped` reports it. |
@@ -374,7 +384,7 @@ Every row is a decided behaviour.
 | 10 | efficiencies not yet learned | `η = 0.95/0.95` defaults (`PackSpec`), so `break_even = b/0.9025 + w` — conservative. |
 | 11 | `wear_eur_per_kwh = 0` | allowed; `break_even = b/η_rt`. |
 | 12 | mixed packs (different η, different SoC) | capacity-weighted η for the aggregate; floor and ceilings are fleet sums; the per-pack split stays the ladder's `share()`. |
-| 13 | operator `terminal_target_pct` also set | one soft target only: the operator value replaces the peak guideline (`e_target`), with the same penalty. Neither is ever a hard floor. |
+| 13 | operator `terminal_target_pct` also set | one soft target only: the operator value replaces the peak guideline, with the same penalty. Neither is ever a hard floor; both are raised to `E_min(reserve_soc_pct)` before becoming `e_target`, and the unmodified guideline still reports separately. |
 | 14 | plan refused / stale / held | unchanged: the previous plan is never executed (0.1.1), the packs hold, and the policy never runs on a refused plan. |
 | 15 | manual override on a pack | the override wins; the reserves re-assert on the next tick without an override. |
 | 16 | protection latch (low cell) | unchanged: the latch forces hold and emergency charge; the reserve logic does not fight it. |
@@ -389,7 +399,7 @@ Every row is a decided behaviour.
 | 25 | forecast flips between replans | the ceiling is continuous in the forecast; there is no binary gate left, so a flip changes a few Wh of allowed charge, not the plan. |
 | 26 | `cap_raw(t) < E_min_hw` | clamped to the hardware floor, `reserve_saturated`, grid charging disabled for the remaining horizon; PV still fills to `E_max_hw`. |
 | 27 | `S > E_max_hw` (bad SoC reading) | the clamp starts from `min(S, E_max_hw)` and the plan carries `soc_out_of_band`; the ladder's own bounds still hold. |
-| 28 | terminal target above `cap(t)` | the ceiling bounds grid charging only, so PV may still reach the target; a target above `E_max_hw` is refused by the existing `checks`. |
+| 28 | terminal target above `cap(t)` | the ceiling bounds grid charging only, so PV may still reach the target; an out-of-band target is capped at `E_max_hw` by the same effective-target calculation that raises it to the reserve floor. |
 | 29 | export power limit / grid export cap | unchanged: the DP's action window applies both; R1 changes only the price floor. |
 | 30 | charging and exporting in the same slot | impossible: one battery power per slot and the grid flow is `base + power`. |
 | 31 | netting flips mid-horizon | see row 7. |

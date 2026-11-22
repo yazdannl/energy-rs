@@ -25,7 +25,9 @@ pub struct PlanSummary {
     pub pv_charge_kwh: f64,
     /// Equivalent full cycles over the horizon.
     pub cycles: f64,
-    /// Terminal target used for this solve, kWh.
+    /// Effective terminal target used for this solve, kWh: the soft guideline raised to the hard
+    /// `reserve_soc_pct` floor (and capped at the usable ceiling). This is the number the
+    /// feasibility check uses; [`Self::peak_reserve_kwh`] keeps the unclamped soft guideline.
     pub terminal_target_kwh: Option<f64>,
     /// `terminal_target_unreachable` when the target was missed.
     pub infeasible_reason: Option<String>,
@@ -38,7 +40,10 @@ pub struct PlanSummary {
     /// The cost basis the gate was armed with, EUR/kWh.
     #[serde(default)]
     pub cost_basis_eur_per_kwh: Option<f64>,
-    /// The soft peak guideline in force, kWh.
+    /// The soft peak guideline in force, kWh, before the reserve-floor clamp.
+    ///
+    /// It can be lower than [`Self::terminal_target_kwh`] when `peak_reserve_pct` is set below
+    /// `reserve_soc_pct`; the two numbers must stay distinct so the contradiction is visible.
     #[serde(default)]
     pub peak_reserve_kwh: Option<f64>,
     /// Headroom kept free of grid energy, kWh.

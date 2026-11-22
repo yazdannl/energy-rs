@@ -94,6 +94,7 @@ The discovered energy dashboard, the known packs (identity) and the capability s
 { "configured": true, "mode": "dry_run", "lastTickAt": "...",
   "capabilities": ["battery_control", "savings"],
   "sources": [{ "kind": "grid", "entityId": "sensor.grid_energy", "label": "Grid" }],
+  "emptyGridSources": [{ "series": "grid_import", "entityId": "p1_history:grid_import" }],
   "packs": [{ "sn": "AB2000-ONE", "name": null, "alias": "Attic A", "labelCapacityKwh": 1.92,
               "reportedCapacityKwh": null, "maxChargeW": 800, "maxDischargeW": 800,
               "firstSeenAt": "...", "lastSeenAt": "..." }] }
@@ -103,6 +104,13 @@ The discovered energy dashboard, the known packs (identity) and the capability s
 label and `null` until one is set. The UI shows `alias`, then `name`, then the serial.
 
 `configured:false` means HA has no energy dashboard; every list may still hold ledger packs.
+
+`emptyGridSources` lists configured grid statistics ids that published no complete quarter in the
+last measurement window and are being ignored (the sum skips them, no slots are invented). It is
+empty when every source publishes; a source that starts publishing again disappears from the list.
+The first skip also logs one `INFO` notice naming the source IDs instead of a `WARN` on every
+replan. If *all* sources of a series are empty, the plan is refused with a statistics-gap error and
+the log keeps a `WARN`.
 
 ### `GET /packs`
 
@@ -227,6 +235,13 @@ slot's state of charge against the fleet's learned capacity (`null` while no pac
 same denominator `/packs` prints per pack.
 `bindingReasons` comes from the engine's snapshot for that plan id, else from the distinct slot
 reasons; a missed terminal target adds `terminal_target_unreachable`.
+
+`summary.terminalTargetWh` is the **effective** target the solver used: the soft end-of-horizon
+guideline raised to the hard `reserve_soc_pct` floor (and capped at the usable ceiling), so a
+guideline below the floor cannot make an otherwise valid plan permanently infeasible.
+`summary.peakReserveWh` remains the unmodified soft guideline. They differ when
+`peak_reserve_pct < reserve_soc_pct`; both are reported so the configuration contradiction is
+visible without changing the SoC path (which still ends at the floor).
 
 ### `GET /plans?limit`
 
