@@ -45,8 +45,11 @@ fn lock() -> MutexGuard<'static, Notices> {
     }
 }
 
-/// Update the registry and return the sources that have not been announced yet.
-pub(crate) fn announce(series: &'static str, empty: &[String]) -> Vec<SkippedSource> {
+/// Update the currently-empty state and return sources still awaiting an INFO notice.
+///
+/// The `announced` set is deliberately not touched here: an all-empty group only emits a WARN, so
+/// its sources must stay eligible for an INFO if the group later partially recovers.
+fn pending_sources(series: &'static str, empty: &[String]) -> Vec<SkippedSource> {
     let mut notices = lock();
     // Keep entries for sources that are still empty: re-announcing them on every solve would be
     // the same log spam this replaces. Drop only this series' entries for sources that recovered
@@ -55,18 +58,26 @@ pub(crate) fn announce(series: &'static str, empty: &[String]) -> Vec<SkippedSou
         |item: &SkippedSource| item.series != series || empty.contains(&item.entity_id);
     notices.empty.retain(still_empty);
     notices.announced.retain(still_empty);
-    let mut fresh = Vec::new();
+    let mut pending = Vec::new();
     for entity in empty {
         let item = SkippedSource {
             series,
             entity_id: entity.clone(),
         };
         notices.empty.insert(item.clone());
-        if notices.announced.insert(item.clone()) {
-            fresh.push(item);
+        if !notices.announced.contains(&item) {
+            pending.push(item);
         }
     }
-    fresh
+    pending
+}
+
+/// Record that an INFO notice was actually emitted for these sources.
+fn mark_announced(sources: &[SkippedSource]) {
+    let mut notices = lock();
+    for source in sources {
+        notices.announced.insert(source.clone());
+    }
 }
 
 /// The sources currently empty, for the `/api/v1/site` status field.
@@ -76,11 +87,11 @@ pub fn skipped_sources() -> Vec<SkippedSource> {
 
 /// Report this group's empty sources: INFO once per source, WARN while the whole group is empty.
 pub(crate) fn report(series: &'static str, entities: &[String], empty: &[String]) {
-    let fresh = announce(series, empty);
+    let pending = pending_sources(series, empty);
     if !entities.is_empty() && empty.len() == entities.len() {
         warn_all_empty(series, entities);
     } else {
-        info_once(series, &fresh);
+        info_once(series, &pending);
     }
 }
 
@@ -107,6 +118,7 @@ fn info_once(series: &'static str, fresh: &[SkippedSource]) {
         source_ids = %ids,
         "empty grid sources are being ignored; no slots were invented"
     );
+    mark_announced(fresh);
 }
 
 #[cfg(test)]

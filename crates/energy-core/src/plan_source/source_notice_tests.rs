@@ -105,6 +105,48 @@ fn an_all_empty_group_still_surfaces_a_warning() {
 }
 
 #[test]
+fn a_still_empty_source_gets_an_info_after_a_partial_recovery() {
+    let _guard = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let configured = ids(&["sensor.p1_tariff_1", "sensor.p1_tariff_2"]);
+    let all_empty = configured.clone();
+    let still_empty = ids(&["sensor.p1_tariff_2"]);
+
+    let (lines, ()) = captured(|| {
+        report("grid_import", &configured, &all_empty); // WARN only
+        report("grid_import", &configured, &still_empty); // INFO for the survivor
+        report("grid_import", &configured, &still_empty); // same silent spell: quiet
+        report("grid_import", &configured, &[]); // fully recovered
+        report("grid_import", &configured, &still_empty); // re-armed INFO
+    });
+
+    let warnings: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.starts_with("WARN"))
+        .collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "only the all-empty solve warns: {lines:?}"
+    );
+    let info: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.starts_with("INFO"))
+        .collect();
+    assert_eq!(info.len(), 2, "one notice per silent spell: {lines:?}");
+    assert!(
+        info.iter().all(|line| line.contains("sensor.p1_tariff_2")),
+        "the notice must name the still-empty source: {info:?}"
+    );
+    assert!(
+        info.iter().all(|line| !line.contains("sensor.p1_tariff_1")),
+        "the recovered source must not be named: {info:?}"
+    );
+    assert_eq!(skipped_sources().len(), 1);
+}
+
+#[test]
 fn the_sum_ignores_an_empty_source_and_names_it_once() {
     let _guard = TEST_LOCK
         .lock()
