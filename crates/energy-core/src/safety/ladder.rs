@@ -259,14 +259,15 @@ impl<'a> Ladder<'a> {
         }
         let ceiling =
             self.pack.e_max_kwh() - self.pack.capacity_kwh * self.limits.solar_reserve_pct / 100.0;
-        if self.energy_kwh < ceiling - SOLAR_HYSTERESIS_KWH {
-            return;
-        }
         let (Some(pv), Some(load)) = (self.request.measured.pv_kw, self.request.measured.load_kw)
         else {
             return;
         };
         let surplus = ((pv - load) * 1000.0).max(0.0) * self.share();
+        // No sun now means nothing to protect (the planner uses the same forecast rule).
+        if surplus <= 0.0 || self.energy_kwh < ceiling - SOLAR_HYSTERESIS_KWH {
+            return;
+        }
         if surplus < slot.battery_kw * 1000.0 {
             self.soc_hi = self.soc_hi.min(surplus);
         }

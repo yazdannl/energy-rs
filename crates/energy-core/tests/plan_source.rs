@@ -283,7 +283,14 @@ async fn the_solar_reserve_stops_grid_charging_but_not_pv_charging() {
         policy,
         ..SourceConfig::default()
     };
-    let source = LivePlanSource::new(FakeSupply::new(supply(prices, NOW)), config);
+    // Give the horizon real PV surplus: the reserve is only held when there is sun to fill it.
+    let mut supply = supply(prices, NOW);
+    supply.forecast = Some(Forecast::fresh(
+        vec![1.0; HORIZON_SLOTS],
+        vec![0.5; HORIZON_SLOTS],
+        NOW,
+    ));
+    let source = LivePlanSource::new(FakeSupply::new(supply), config);
     let plan = plan(&source).await;
     // The ceiling is half the pack: no plan slot charges above it from the grid.
     let cap = plan.solar_reserve_kwh;

@@ -101,7 +101,14 @@ fn ceilings(request: &Request<'_>) -> Vec<f64> {
         let surplus = (request.pv_kw[index] - request.load_kw[index]).max(0.0) * HOURS;
         after[index] = after[index + 1] + surplus;
     }
-    let reserve = request.policy.solar_reserve_kwh(request.spec.e_max_kwh);
+    // The reserve is headroom for solar that is actually in the horizon. Without any forecast
+    // surplus there is no sun to make room for: holding the ceiling below the current SoC would
+    // ban every cheap grid charge (a 10 % reserve on a 92 % fleet) for no benefit. Cap the
+    // reservation at the surplus the forecast promises, so an overcast day releases it.
+    let reserve = request
+        .policy
+        .solar_reserve_kwh(request.spec.e_max_kwh)
+        .min(after.first().copied().unwrap_or(0.0));
     (0..slots)
         .map(|index| {
             (request.spec.e_max_kwh - reserve - after[index + 1])

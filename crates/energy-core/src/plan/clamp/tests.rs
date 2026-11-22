@@ -50,20 +50,38 @@ fn request<'a>(
 
 #[test]
 fn a_grid_charge_stops_at_the_solar_ceiling_but_the_pv_part_survives() {
-    let policy = policy(50.0); // 2 kWh reserve on a 4 kWh pack -> ceiling 2 kWh
-    // SoC 1.9, 1 kW PV surplus, a 2 kW charge: the 0.4 kW of grid room is used, the PV kW stays.
+    let policy = policy(50.0); // 2 kWh reserve on a 4 kWh pack
+    // Slot 0 has 1 kW of PV surplus and slot 1 promises 2 kWh more, so the full reserve is kept:
+    // the grid part is cut and the PV kW charges. SoC 1.9, a 2 kW charge -> 1.0 kW survives.
     let powers = [2.0, 0.0];
     let energies = [1.9, 2.0];
-    let pv = [1.0, 0.0];
+    let pv = [1.0, 8.0];
     let load = [0.0, 0.0];
     let feed_in = [0.05, 0.05];
     let outcome = clamp(&request(&powers, &energies, &pv, &load, &feed_in, &policy));
     assert!(
-        (outcome.powers[0] - 1.4).abs() < 1e-9,
+        (outcome.powers[0] - 1.0).abs() < 1e-9,
         "{:?}",
         outcome.powers
     );
     assert!(outcome.flags[0].ceiling);
+}
+
+#[test]
+fn a_sunless_horizon_releases_the_reserve_for_grid_charging() {
+    let policy = policy(50.0);
+    let powers = [2.0];
+    let energies = [1.9];
+    let pv = [0.0];
+    let load = [0.5];
+    let feed_in = [0.05];
+    let outcome = clamp(&request(&powers, &energies, &pv, &load, &feed_in, &policy));
+    assert!(
+        (outcome.powers[0] - 2.0).abs() < 1e-9,
+        "{:?}",
+        outcome.powers
+    );
+    assert!(!outcome.flags[0].ceiling);
 }
 
 #[test]

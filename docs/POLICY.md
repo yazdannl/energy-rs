@@ -138,16 +138,19 @@ what PV does not cover. That is a **time-varying ceiling on grid charging**, nev
 
 ```
 S_pv_after(t) = Σ_{u ≥ t} max(0, pv(u) − load(u)) · Δt              Δt = 0.25 h
-cap_raw(t)    = E_cap − E_solar_reserve − S_pv_after(t)
+E_reserve     = min(E_solar_reserve, S_pv_after(0))
+cap_raw(t)    = E_cap − E_reserve − S_pv_after(t)
 cap(t)        = clamp(cap_raw(t), E_min_hw, E_max_hw)
 ```
 
 `cap(t)` is the highest SoC a *grid* charge may reach in slot `t`: room for every kWh of surplus the
-forecast still promises, plus the solar reserve. Early on a sunny day the ceiling is low; as the day
-passes it rises and by evening grid charging may fill the pack. Overnight it already holds
-tomorrow's surplus, so a sunny winter day still allows cheap night charging for the part tomorrow's
-PV does not need. `cap(t)` is nondecreasing, so an early cheap hour is never followed by a lower
-ceiling.
+forecast still promises, plus the solar reserve. The reservation is capped by the surplus that actually
+exists in the horizon: with no forecast sun there is nothing to keep headroom for, so a sunless
+winter day may buy the cheap night and sell the next peak (the dispatch ladder applies the same
+rule to measured PV). Early on a sunny day the ceiling is low; as the day passes it rises and by
+evening grid charging may fill the pack. Overnight it already holds tomorrow's surplus, so a sunny
+winter day still allows cheap night charging for the part tomorrow's PV does not need. `cap(t)` is
+nondecreasing, so an early cheap hour is never followed by a lower ceiling.
 
 The ceiling bounds the *grid portion* only (§R4), so PV always fills to `E_max_hw` — no solar is
 ever lost to it, and it cannot force an import (it only defers a purchase).
@@ -168,7 +171,7 @@ the later `f` clears `break_even` (R1), so it cannot lose money by construction.
 | Guideline | Default | Meaning | Mechanism |
 |---|---|---|---|
 | `peak_reserve_pct` | 20 % | energy worth keeping for a load peak the forecast missed | **soft**: terminal target + penalty |
-| `solar_reserve_pct` | 20 % | headroom worth keeping free of **grid** energy for a PV peak the forecast missed | **soft-ish**: per-slot ceiling on grid charging only |
+| `solar_reserve_pct` | 20 % | headroom worth keeping free of **grid** energy for PV the forecast actually promises | **soft-ish**: per-slot ceiling on grid charging only, released on a sunless horizon |
 
 **Peak reserve = soft target.** The DP is configured with
 
