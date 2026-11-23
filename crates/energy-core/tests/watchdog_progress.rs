@@ -145,6 +145,8 @@ impl CommandSink for ProbeSink {
                 verified: true,
                 partial: false,
                 superseded: false,
+                flow_measured: true,
+                measured_at: Some(NOW),
             })
         })
     }
@@ -170,6 +172,8 @@ impl CommandSink for ProbeSink {
                 verified: true,
                 partial: false,
                 superseded: false,
+                flow_measured: true,
+                measured_at: Some(NOW),
             })
         })
     }
@@ -407,7 +411,7 @@ async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
         DeviceController::new(io, ControlLimits::unlimited()).with_spacing(Duration::ZERO),
     );
     controller.poll().await.expect("baseline report");
-    let sink = BatterySink::new(vec![Arc::clone(&controller)]);
+    let sink = BatterySink::new(vec![Arc::clone(&controller)], Duration::MAX);
     let spy = MarkSpy(AtomicUsize::new(0));
 
     let write = sink

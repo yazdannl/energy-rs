@@ -18,6 +18,7 @@ use std::time::Duration;
 use energy_battery::ControlFault;
 use energy_core::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt};
 
+use super::NOW;
 use super::sent::Sent;
 
 /// A hook that runs at the instant of the transport write.
@@ -239,13 +240,16 @@ impl CommandSink for FakeSink {
             if curtail > 0 {
                 return Ok(WriteReceipt::partial(
                     curtail.min(watts.abs() as i64) as f64 * watts.signum(),
-                ));
+                )
+                .with_measurement(NOW));
             }
             Ok(WriteReceipt {
                 applied_w: watts,
                 verified,
                 partial: false,
                 superseded: false,
+                flow_measured: true,
+                measured_at: Some(NOW),
             })
         })
     }
@@ -308,6 +312,8 @@ impl CommandSink for FakeSink {
                 verified: !unverified,
                 partial: false,
                 superseded: false,
+                flow_measured: true,
+                measured_at: Some(NOW),
             })
         })
     }

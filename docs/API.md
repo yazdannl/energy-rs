@@ -304,14 +304,16 @@ Newest dispatch attempts first over the last 7 days.
                 "appliedWReason": null, "error": null }] }
 ```
 
-`verified` is the device echo check; `written` says whether this tick sent a command, so a
-`fault_backoff` row can still carry the pack's measured `appliedW`. `appliedW` is `null` whenever
-`flowMeasured` is false: an unmeasured value is never published as zero delivery. `appliedWReason`
-then says `sample_stale` (missing/old pack sample) or `read_failed` (transport read failed), so a
-checker can tell "measured zero" from "could not measure". A hold whose echo could not be verified
-because the device did not answer carries reason `hold_unverifiable_device_unreachable`, distinct
-from a device refusal. On ledger rows written before these fields existed, `written` is `null` and
-`flowMeasured` mirrors `verified`.
+`verified` is the device echo check only; it is not proof of flow. `written` says whether this
+tick sent a command, so a `fault_backoff` row can still carry the pack's measured `appliedW`.
+`appliedW` is `null` whenever `flowMeasured` is false: an unmeasured value is never published as
+zero delivery. `flowMeasured` requires a sample younger than the configured pack freshness bound
+with power in the commanded direction (or genuine idle for a hold), not merely a matching echo.
+`appliedWReason` then says `sample_stale` (missing/old pack sample) or `read_failed` (transport read
+failed) on new rows, so a checker can tell "measured zero" from "could not measure". A hold whose echo could
+not be verified because the device did not answer carries reason
+`hold_unverifiable_device_unreachable`, distinct from a device refusal. On ledger rows written
+before these fields existed, `written` is `null` and `flowMeasured` mirrors `verified`.
 
 ### `GET /savings?period=...`
 

@@ -20,13 +20,27 @@ use energy_battery::{
     FakeState, HttpTransport, MIN_WRITE_SPACING,
 };
 use energy_core::dispatch::{
-    BatterySink, Dispatcher, FleetView, MeterReading, Overrides, TickInput,
+    BatterySink, Dispatcher, FleetView, MeterReading, Overrides, TickInput, TickOutcome,
 };
 use energy_core::plan::Plan;
 use energy_core::safety::{Authority, Reason, SafetyLimits};
 use support::fakes::{NOW, Sent, pack, plan};
 use support::harness;
 use tokio::time::Instant;
+
+/// A production-shaped sink whose fake device clock is historical, so freshness is unbounded here.
+async fn tick_with(
+    dispatcher: &Dispatcher,
+    controller: &Arc<DeviceController<HttpTransport>>,
+    input: &TickInput<'_>,
+) -> TickOutcome {
+    dispatcher
+        .tick(
+            input,
+            &BatterySink::new(vec![Arc::clone(controller)], Duration::MAX),
+        )
+        .await
+}
 
 fn latched(pack_id: &str, voltage: f64, force_charge: bool, at: i64) -> CellLatch {
     let when = Utc.timestamp_opt(at, 0).single().expect("timestamp");
@@ -199,7 +213,10 @@ async fn a_latch_hold_reaches_the_fake_device_and_is_echoed() {
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
     dispatcher.faults().arm("SN-A", NOW, "scripted fault");
     let outcome = dispatcher
-        .tick(&input, &BatterySink::new(vec![Arc::clone(&controller)]))
+        .tick(
+            &input,
+            &BatterySink::new(vec![Arc::clone(&controller)], Duration::MAX),
+        )
         .await;
 
     let report = outcome.report("SN-A").expect("report");
@@ -334,7 +351,10 @@ async fn a_pending_discharge_is_preempted_by_a_bounded_safety_hold() {
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
     dispatcher.faults().arm("SN-A", NOW, "scripted fault");
     let held = dispatcher
-        .tick(&input, &BatterySink::new(vec![Arc::clone(&controller)]))
+        .tick(
+            &input,
+            &BatterySink::new(vec![Arc::clone(&controller)], Duration::MAX),
+        )
         .await;
     let report = held.report("SN-A").expect("report");
     assert_eq!(report.reason, Reason::CellVoltageGuard);
@@ -360,9 +380,7 @@ async fn a_failed_safety_hold_is_bounded_and_control_recovers_after_the_backoff(
     let input = tick_input(NOW + 1, &plan, &view, &latches, &meter, &overrides);
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
     let started = Instant::now();
-    let failed = dispatcher
-        .tick(&input, &BatterySink::new(vec![Arc::clone(&controller)]))
-        .await;
+    let failed = tick_with(&dispatcher, &controller, &input).await;
     assert!(
         Instant::now().duration_since(started)
             <= 2 * ECHO_CONFIRM_WINDOW + MIN_WRITE_SPACING + Duration::from_millis(500)
@@ -382,9 +400,7 @@ async fn a_failed_safety_hold_is_bounded_and_control_recovers_after_the_backoff(
         now: NOW + 8,
         ..input
     };
-    let held = dispatcher
-        .tick(&retry, &BatterySink::new(vec![Arc::clone(&controller)]))
-        .await;
+    let held = tick_with(&dispatcher, &controller, &retry).await;
     let report = held.report("SN-A").expect("report");
     assert!(
         report.written && report.verified,
@@ -398,9 +414,7 @@ async fn a_failed_safety_hold_is_bounded_and_control_recovers_after_the_backoff(
     let clear_view = FleetView::new(vec![healthy]);
     // NOW + 12 is past the 10 s backoff armed by the failed tick.
     let clear = tick_input(NOW + 12, &plan, &clear_view, &[], &meter, &overrides);
-    let resumed = dispatcher
-        .tick(&clear, &BatterySink::new(vec![Arc::clone(&controller)]))
-        .await;
+    let resumed = tick_with(&dispatcher, &controller, &clear).await;
     let report = resumed.report("SN-A").expect("report");
     assert_eq!(report.applied_w, -800.0);
     assert!(report.verified);

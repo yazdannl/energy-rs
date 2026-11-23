@@ -5,7 +5,7 @@ use energy_battery::ControlFault;
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
     AppliedPowerReason, CURTAILMENT_PAUSE_S, CommandSink, HOLD_DEADBAND_W, Progress, SinkError,
-    advance,
+    WriteReceipt, advance,
 };
 
 use super::{Dispatcher, SendContext};
@@ -51,8 +51,9 @@ impl Dispatcher {
                 Sent {
                     written: true,
                     verified: receipt.verified,
-                    flow_measured: receipt.verified,
+                    flow_measured: receipt.flow_measured,
                     applied_w: receipt.applied_w,
+                    applied_w_reason: receipt_reason(&receipt, None),
                     ..Sent::none()
                 }
             }
@@ -109,9 +110,7 @@ impl Dispatcher {
         sink: &dyn CommandSink,
     ) -> Sent {
         let cause = error.to_string();
-        // A pack that never drew power, or whose local API restarted, is a hardware fault: it gets
-        // minutes of silence, not the next 15 s tick. A restart gets no hold at all: writing to a
-        // device that is still rebooting is how the command stream kept resetting its messageId.
+        // A restart or no-flow gets minutes of silence; a restart gets no hold at all.
         let fault = match error {
             SinkError::Fault { fault, .. } => Some(&**fault),
             _ => None,
@@ -151,10 +150,9 @@ impl Dispatcher {
                 Sent {
                     written: true,
                     verified: receipt.verified,
-                    flow_measured: false,
+                    flow_measured: receipt.flow_measured,
                     applied_w: receipt.applied_w,
-                    applied_w_reason: applied_w_reason
-                        .or_else(|| (!receipt.verified).then_some(AppliedPowerReason::ReadFailed)),
+                    applied_w_reason: receipt_reason(&receipt, applied_w_reason),
                     fail_safe: true,
                     superseded: receipt.superseded.then(|| "safety hold".to_owned()),
                     error: Some(format!("{cause}; fail-safe hold")),
@@ -167,4 +165,18 @@ impl Dispatcher {
             },
         }
     }
+}
+
+/// Why a receipt carries no measured watts: a fresh-sample failure unless a read already failed.
+fn receipt_reason(
+    receipt: &WriteReceipt,
+    fallback: Option<AppliedPowerReason>,
+) -> Option<AppliedPowerReason> {
+    fallback.or(if receipt.flow_measured {
+        None
+    } else if receipt.verified {
+        Some(AppliedPowerReason::SampleStale)
+    } else {
+        Some(AppliedPowerReason::ReadFailed)
+    })
 }

@@ -61,7 +61,7 @@ impl CommandSink for SupersedingSink {
     ) -> energy_core::dispatch::BoxFuture<'_, Result<WriteReceipt, energy_core::dispatch::SinkError>>
     {
         self.0.lock().unwrap().push("hold");
-        Box::pin(async { Ok(WriteReceipt::verified(0.0)) })
+        Box::pin(async { Ok(WriteReceipt::verified(0.0).with_measurement(NOW)) })
     }
 }
 
@@ -79,8 +79,9 @@ async fn fixture(
     let transport = HttpTransport::with_timeout(fake.endpoint(SN), Duration::from_secs(2)).unwrap();
     let controller = Arc::new(DeviceController::new(transport, ControlLimits::unlimited()));
     controller.poll().await.unwrap();
-    let sink =
-        Arc::new(BatterySink::new(vec![Arc::clone(&controller)]).with_confirm_window(window));
+    let sink = Arc::new(
+        BatterySink::new(vec![Arc::clone(&controller)], Duration::MAX).with_confirm_window(window),
+    );
     (fake, sink, controller)
 }
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use energy_battery::BatteryError;
-use energy_battery::control::flow::measured_w;
+use energy_battery::control::flow::{FLOW_THRESHOLD_W, measured_w, status_direction};
 use energy_battery::control::{
     Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW, ECHO_TOLERANCE_W,
     FLOW_CONFIRM_WINDOW,
@@ -26,11 +26,12 @@ pub struct BatterySink<T: DeviceIo> {
     devices: BTreeMap<String, Arc<DeviceController<T>>>,
     confirm_window: Duration,
     flow_window: Duration,
+    sample_fresh_after: Duration,
 }
 
 impl<T: DeviceIo> BatterySink<T> {
     /// A sink over the controllers, keyed by serial.
-    pub fn new(devices: Vec<Arc<DeviceController<T>>>) -> Self {
+    pub fn new(devices: Vec<Arc<DeviceController<T>>>, sample_fresh_after: Duration) -> Self {
         Self {
             devices: devices
                 .into_iter()
@@ -38,6 +39,7 @@ impl<T: DeviceIo> BatterySink<T> {
                 .collect(),
             confirm_window: ECHO_CONFIRM_WINDOW,
             flow_window: FLOW_CONFIRM_WINDOW,
+            sample_fresh_after,
         }
     }
 
@@ -110,7 +112,12 @@ impl<T: DeviceIo> BatterySink<T> {
                 fault: Box::new(fault),
             });
         }
-        Ok(receipt(target, &observation))
+        Ok(receipt(
+            target,
+            &observation,
+            Utc::now().timestamp(),
+            self.sample_fresh_after,
+        ))
     }
 }
 
@@ -165,15 +172,37 @@ fn device_error(pack_id: String, error: &BatteryError) -> SinkError {
 
 /// A receipt from the observation, never from the clamped intention: an echoed limit with the AC
 /// relay open must not be reported as applied power.
-fn receipt(command: Command, observation: &energy_battery::Observation) -> WriteReceipt {
+fn receipt(
+    command: Command,
+    observation: &energy_battery::Observation,
+    now: i64,
+    fresh_after: Duration,
+) -> WriteReceipt {
     let verified = observation
         .confirmed
         .is_some_and(|confirmed| same_intent(confirmed, command));
     let partial = observation
         .partial
         .is_some_and(|confirmed| same_intent(confirmed, command));
-    let measured = measured_w(&command, &observation.report).max(0) as f64;
-    let applied_w = if verified || partial {
+    let report = &observation.report;
+    let age = now.saturating_sub(report.timestamp);
+    let fresh = age >= 0 && age <= i64::try_from(fresh_after.as_secs()).unwrap_or(i64::MAX);
+    let measured = measured_w(&command, report).max(0) as f64;
+    let idle = report.properties.grid_input_w.abs() <= FLOW_THRESHOLD_W
+        && report.properties.output_home_w.abs() <= FLOW_THRESHOLD_W;
+    let flow_measured = fresh
+        && match command.direction() {
+            Some(Direction::Discharge) => {
+                measured > f64::from(i32::try_from(FLOW_THRESHOLD_W).unwrap_or(i32::MAX))
+            }
+            Some(Direction::Charge) => {
+                measured > f64::from(i32::try_from(FLOW_THRESHOLD_W).unwrap_or(i32::MAX))
+                    && status_direction(report.properties.ac_status, report.properties.dc_status)
+                        == Some(Direction::Charge)
+            }
+            None => idle,
+        };
+    let applied_w = if flow_measured {
         match command.direction() {
             Some(Direction::Discharge) => -measured,
             Some(Direction::Charge) | None => measured,
@@ -181,14 +210,22 @@ fn receipt(command: Command, observation: &energy_battery::Observation) -> Write
     } else {
         0.0
     };
-    if partial {
-        return WriteReceipt::partial(applied_w);
-    }
-    WriteReceipt {
-        applied_w,
-        verified,
-        partial: false,
-        superseded: false,
+    let result = if partial {
+        WriteReceipt::partial(applied_w)
+    } else {
+        WriteReceipt {
+            applied_w,
+            verified,
+            partial: false,
+            superseded: false,
+            flow_measured: false,
+            measured_at: None,
+        }
+    };
+    if flow_measured {
+        result.with_measurement(report.timestamp)
+    } else {
+        result
     }
 }
 

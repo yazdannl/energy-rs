@@ -255,10 +255,14 @@ impl Dispatcher {
             Sent::none()
         };
         backoff::finish(&self.last_commands, &plan, &mut sent);
-        let mut applied_w_reason = sent.applied_w_reason;
-        if !sent.flow_measured && applied_w_reason.is_none() && plan.measured_flow_w.is_none() {
-            applied_w_reason = Some(AppliedPowerReason::SampleStale);
-        }
+        let applied_w_reason = if sent.flow_measured {
+            None
+        } else {
+            Some(
+                sent.applied_w_reason
+                    .unwrap_or(AppliedPowerReason::SampleStale),
+            )
+        };
         PackReport {
             pack_id: plan.pack_id,
             ledger_id: plan.ledger_id,
