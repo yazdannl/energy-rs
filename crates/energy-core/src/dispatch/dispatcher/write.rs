@@ -30,6 +30,9 @@ impl Dispatcher {
                 .await
         };
         match result {
+            // The write reached the device; flow is verified by the next fleet read, not by
+            // holding this tick's slice open for the AC ramp. No retry and no fail-safe hold.
+            Ok(receipt) if receipt.confirmation_pending => Self::pending_sent(),
             // A safety hold replaced this write; that hold is the episode's one fail-safe action.
             Ok(receipt) if receipt.superseded => Sent {
                 superseded: Some("safety hold".to_owned()),
@@ -74,6 +77,17 @@ impl Dispatcher {
                 self.fail_safe(progress, context.now, pack_id, &error, sink)
                     .await
             }
+        }
+    }
+
+    /// The write landed; watts stay unknown until the next fleet read resolves the echo and flow.
+    fn pending_sent() -> Sent {
+        Sent {
+            written: true,
+            confirmation_pending: true,
+            applied_w_reason: Some(AppliedPowerReason::SampleStale),
+            error: Some("confirmation pending; readback will verify".to_owned()),
+            ..Sent::none()
         }
     }
 
@@ -159,6 +173,7 @@ impl Dispatcher {
                     applied_w: receipt.applied_w,
                     applied_w_reason: receipt_reason(&receipt, applied_w_reason),
                     fail_safe: true,
+                    confirmation_pending: receipt.confirmation_pending,
                     superseded: receipt.superseded.then(|| "safety hold".to_owned()),
                     error: Some(format!("{cause}; fail-safe hold")),
                 }

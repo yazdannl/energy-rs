@@ -9,7 +9,6 @@ use energy_battery::BatteryError;
 use energy_battery::control::flow::{FLOW_THRESHOLD_W, measured_w, status_direction};
 use energy_battery::control::{
     Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW, ECHO_TOLERANCE_W,
-    FLOW_CONFIRM_WINDOW,
 };
 use energy_battery::transport::DeviceIo;
 
@@ -25,7 +24,6 @@ use crate::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt,
 pub struct BatterySink<T: DeviceIo> {
     devices: BTreeMap<String, Arc<DeviceController<T>>>,
     confirm_window: Duration,
-    flow_window: Duration,
     sample_fresh_after: Duration,
 }
 
@@ -38,7 +36,6 @@ impl<T: DeviceIo> BatterySink<T> {
                 .map(|device| (device.sn().to_owned(), device))
                 .collect(),
             confirm_window: ECHO_CONFIRM_WINDOW,
-            flow_window: FLOW_CONFIRM_WINDOW,
             sample_fresh_after,
         }
     }
@@ -47,7 +44,6 @@ impl<T: DeviceIo> BatterySink<T> {
     #[must_use]
     pub fn with_confirm_window(mut self, window: Duration) -> Self {
         self.confirm_window = window;
-        self.flow_window = window;
         self
     }
 
@@ -86,15 +82,15 @@ impl<T: DeviceIo> BatterySink<T> {
         };
         mark();
         let target = applied.map_or(command, |applied| applied.command);
-        // A direction change needs the whole AC ramp (20-36 s measured), not the short echo
-        // window. A hold has no flow to wait for.
-        let window = if target.direction().is_some() {
-            self.flow_window
-        } else {
-            self.confirm_window
-        };
+        // A direction change used to wait the whole 45 s AC ramp inside a tick; with four packs
+        // that alone outlives the watchdog. The write is accepted, so defer flow confirmation to
+        // the next fleet read, which already folds the strike streak and no-flow backoff. Only a
+        // hold still needs the short echo wait inside this tick.
+        if target.direction().is_some() {
+            return Ok(WriteReceipt::pending());
+        }
         let observation = controller
-            .poll_confirming(window, &mark)
+            .poll_confirming(self.confirm_window, &mark)
             .await
             .map_err(|error| device_error(pack_id.clone(), &error))?;
         if observation.superseded {
@@ -220,6 +216,7 @@ fn receipt(
             superseded: false,
             flow_measured: false,
             measured_at: None,
+            confirmation_pending: false,
         }
     };
     if flow_measured {

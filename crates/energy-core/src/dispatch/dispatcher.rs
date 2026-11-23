@@ -1,9 +1,11 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
 mod backoff;
+mod row;
 mod write;
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::dispatch::grid_telemetry;
 use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
@@ -12,9 +14,8 @@ use crate::dispatch::pack_context::{
 };
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    AppliedPowerReason, CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading,
-    PackReport, Planned, TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp,
-    slot_power,
+    CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading, PackReport, Planned,
+    TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp, slot_power,
 };
 use crate::safety::Reason;
 use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
@@ -38,6 +39,11 @@ pub struct Dispatcher {
     /// Last non-hold command issued per pack, so a backoff row can name a real standing command.
     last_commands: Mutex<backoff::LastCommands>,
 }
+
+/// One pack's I/O budget: the 8 s echo window, a bounded write and 1 s of scheduling slack.
+/// It stays below the engine's 15 s minimum watchdog bound, so even a wedged device cannot make
+/// the tick look dead. A non-hold write normally returns after the transport write, far sooner.
+const PACK_SEND_BUDGET: Duration = Duration::from_secs(14);
 
 /// Per-send context: the tick clock and whether this command bypasses fault backoff.
 #[derive(Clone, Copy)]
@@ -86,9 +92,23 @@ impl Dispatcher {
         outcome.target_w = frame.target_w;
         outcome.grid_limit = frame.grid_limit;
         outcome.fleet_clamp = fleet_limit;
-        for plan in plans {
-            outcome.packs.push(self.send_plan(&frame, plan, sink).await);
-        }
+        // One unreachable device must not hold the other three hostage. Every pack is an
+        // independent future; `join_all` keeps fleet order while their bounded writes overlap.
+        // Each sink still bounds its own transport, and a non-hold write no longer awaits flow.
+        let reports = futures_util::future::join_all(plans.into_iter().map(|plan| {
+            let frame = &frame;
+            async move {
+                let budgeted_plan = plan.clone();
+                match tokio::time::timeout(PACK_SEND_BUDGET, self.send_plan(frame, plan, sink))
+                    .await
+                {
+                    Ok(report) => report,
+                    Err(_) => row::finish(self, budgeted_plan, row::deadline_sent()),
+                }
+            }
+        }))
+        .await;
+        outcome.packs.extend(reports);
         outcome
     }
 
@@ -229,7 +249,7 @@ impl Dispatcher {
         plan: Planned,
         sink: &dyn CommandSink,
     ) -> PackReport {
-        let mut sent = if plan.send {
+        let sent = if plan.send {
             // A verified cell-safety write is not proof the transport recovered: it bypasses the
             // backoff, so it must not clear the fault that is still suppressing ordinary writes.
             let safety_traffic = matches!(
@@ -254,31 +274,6 @@ impl Dispatcher {
         } else {
             Sent::none()
         };
-        backoff::finish(&self.last_commands, &plan, &mut sent);
-        let applied_w_reason = if sent.flow_measured {
-            None
-        } else {
-            Some(
-                sent.applied_w_reason
-                    .unwrap_or(AppliedPowerReason::SampleStale),
-            )
-        };
-        PackReport {
-            pack_id: plan.pack_id,
-            ledger_id: plan.ledger_id,
-            requested_w: plan.requested_w,
-            intended_w: plan.command_w,
-            applied_w: sent.applied_w,
-            flow_measured: sent.flow_measured,
-            applied_w_reason,
-            reason: plan.reason,
-            intended_reason: plan.intended_reason,
-            written: sent.written,
-            verified: sent.verified,
-            fail_safe: sent.fail_safe,
-            superseded: sent.superseded,
-            error: sent.error,
-            note: plan.note,
-        }
+        row::finish(self, plan, sent)
     }
 }

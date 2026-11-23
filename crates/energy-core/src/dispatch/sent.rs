@@ -14,6 +14,8 @@ pub(crate) struct Sent {
     /// Why the watts are unknown, when they could not be measured.
     pub(crate) applied_w_reason: Option<AppliedPowerReason>,
     pub(crate) fail_safe: bool,
+    /// A write was accepted but flow will be checked on a later tick.
+    pub(crate) confirmation_pending: bool,
     /// Why a safety hold took over this attempt; ownership stays with that hold.
     pub(crate) superseded: Option<String>,
     pub(crate) error: Option<String>,
@@ -29,6 +31,7 @@ impl Sent {
             applied_w: 0.0,
             applied_w_reason: None,
             fail_safe: false,
+            confirmation_pending: false,
             superseded: None,
             error: None,
         }

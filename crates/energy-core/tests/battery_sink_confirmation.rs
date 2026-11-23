@@ -21,7 +21,7 @@ use energy_core::dispatch::{
     BatterySink, CommandSink, Dispatcher, FleetView, MeterReading, Overrides, Progress, TickInput,
     WriteReceipt,
 };
-use energy_core::safety::{Authority, SafetyLimits};
+use energy_core::safety::{Authority, Reason, SafetyLimits};
 use support::fakes::{NOW, pack, plan};
 
 const SN: &str = "SN-A";
@@ -86,7 +86,7 @@ async fn fixture(
 }
 
 #[tokio::test]
-async fn one_unconfirmed_dispatch_gets_one_hold_and_marks_progress() {
+async fn an_unconfirmed_dispatch_records_pending_and_marks_progress() {
     let (fake, sink, _) = fixture(
         FakeBehaviour::default()
             .without_spacing_rule()
@@ -115,19 +115,23 @@ async fn one_unconfirmed_dispatch_gets_one_hold_and_marks_progress() {
     let outcome = dispatcher.tick(&input, sink.as_ref()).await;
 
     let report = outcome.report(SN).expect("pack report");
-    assert!(report.fail_safe);
+    assert_eq!(report.reason, Reason::ConfirmationPending);
+    assert!(!report.fail_safe && !report.verified && !report.flow_measured);
     assert!(
         report
             .error
             .as_deref()
-            .is_some_and(|error| error.contains("not confirmed")),
+            .is_some_and(|error| error.contains("confirmation pending")),
         "{:?}",
         report.error
     );
     let state = fake.state().unwrap();
-    assert_eq!(state.write_count(), 2, "one setpoint write and one hold");
+    assert_eq!(
+        state.write_count(),
+        1,
+        "one write, never a retry inside the tick"
+    );
     assert_eq!(state.writes[0]["properties"]["outputLimit"], 800);
-    assert_eq!(state.writes[1]["properties"]["outputLimit"], 0);
     assert!(
         marks.0.load(Ordering::Relaxed) > 0,
         "the wait must mark progress"
@@ -136,7 +140,7 @@ async fn one_unconfirmed_dispatch_gets_one_hold_and_marks_progress() {
 }
 
 #[tokio::test]
-async fn a_hold_requested_during_confirmation_is_not_blocked() {
+async fn a_hold_after_a_pending_write_is_not_blocked() {
     let (fake, sink, controller) = fixture(
         FakeBehaviour::default()
             .without_spacing_rule()
@@ -144,24 +148,14 @@ async fn a_hold_requested_during_confirmation_is_not_blocked() {
         Duration::from_secs(2),
     )
     .await;
-    let writing = {
-        let sink = Arc::clone(&sink);
-        tokio::spawn(async move { sink.write(SN, -800.0).await })
-    };
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while controller.pending().is_none() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the write became pending");
+    let pending = sink.write(SN, -800.0).await.expect("write accepted");
+    assert!(pending.confirmation_pending);
+    assert!(
+        controller.pending().is_some(),
+        "the echo is resolved by a later read"
+    );
     let held = sink.hold(SN).await.expect("hold succeeds");
     assert!(held.verified);
-    let superseded = writing.await.unwrap().unwrap();
-    assert!(
-        superseded.superseded && !superseded.verified,
-        "the superseded write resolves without a fault"
-    );
     assert_eq!(
         fake.state().unwrap().write_count(),
         2,

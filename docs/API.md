@@ -304,8 +304,10 @@ Newest dispatch attempts first over the last 7 days.
                 "appliedWReason": null, "error": null }] }
 ```
 
-`verified` is the device echo check only; it is not proof of flow. `written` says whether this
-tick sent a command, so a `fault_backoff` row can still carry the pack's measured `appliedW`.
+`verified` is the device echo check only; it is not proof of flow. A non-hold write is accepted
+without waiting out the 45 s AC ramp: its row carries reason `confirmation_pending` and no measured
+watts, and the next fleet read resolves the echo and any continuing flow. `written` says whether
+this tick sent a command, so a `fault_backoff` row can still carry the pack's measured `appliedW`.
 `appliedW` is `null` whenever `flowMeasured` is false: an unmeasured value is never published as
 zero delivery. `flowMeasured` requires a sample younger than the configured pack freshness bound
 with power in the commanded direction (or genuine idle for a hold), not merely a matching echo.

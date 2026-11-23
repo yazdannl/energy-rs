@@ -22,6 +22,8 @@ pub struct WriteReceipt {
     pub flow_measured: bool,
     /// Device clock of the sample that supplied `applied_w`, when there was one.
     pub measured_at: Option<i64>,
+    /// The write was accepted but flow confirmation is deferred to the next fleet read.
+    pub confirmation_pending: bool,
 }
 
 impl WriteReceipt {
@@ -34,6 +36,7 @@ impl WriteReceipt {
             superseded: false,
             flow_measured: false,
             measured_at: None,
+            confirmation_pending: false,
         }
     }
 
@@ -46,6 +49,7 @@ impl WriteReceipt {
             superseded: false,
             flow_measured: false,
             measured_at: None,
+            confirmation_pending: false,
         }
     }
 
@@ -58,6 +62,7 @@ impl WriteReceipt {
             superseded: false,
             flow_measured: false,
             measured_at: None,
+            confirmation_pending: false,
         }
     }
 
@@ -70,6 +75,20 @@ impl WriteReceipt {
             superseded: true,
             flow_measured: false,
             measured_at: None,
+            confirmation_pending: false,
+        }
+    }
+
+    /// A write the transport accepted; its flow is checked by the next tick's read, not now.
+    pub const fn pending() -> Self {
+        Self {
+            applied_w: 0.0,
+            verified: false,
+            partial: false,
+            superseded: false,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: true,
         }
     }
 

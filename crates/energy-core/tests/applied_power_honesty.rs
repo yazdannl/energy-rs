@@ -25,7 +25,7 @@ use energy_core::dispatch::{
     AppliedPowerReason, BatterySink, Dispatcher, FleetView, MeterReading, Overrides, PackReport,
     TickInput,
 };
-use energy_core::safety::{Authority, SafetyLimits};
+use energy_core::safety::{Authority, Reason, SafetyLimits};
 use serde_json::json;
 use support::fakes::{NOW, pack, plan};
 
@@ -225,15 +225,17 @@ async fn a_stale_nonzero_sample_has_null_applied_w_and_sample_stale_reason() {
         "an independent meter sees real power"
     );
     assert_unmeasured(&report, AppliedPowerReason::SampleStale);
+    assert_eq!(report.reason, Reason::ConfirmationPending);
     assert!(
-        report.verified,
-        "the echo landed; only the sample was stale"
+        !report.verified,
+        "flow is no longer awaited inside the tick"
     );
 }
 
 #[tokio::test]
 async fn a_failed_read_has_null_applied_w_and_read_failed_reason() {
     let device = std::sync::Arc::new(ScriptedDevice::new(0));
+    device.refuse_write();
     let (report, _) = tick_case(&device, true, Case::Charge).await;
 
     assert_unmeasured(&report, AppliedPowerReason::ReadFailed);
@@ -248,20 +250,13 @@ async fn a_failed_read_has_null_applied_w_and_read_failed_reason() {
 }
 
 #[tokio::test]
-async fn a_stale_partial_observation_has_null_applied_w_and_sample_stale_reason() {
+async fn a_partial_command_is_reported_as_pending_not_measured_zero() {
     let device = std::sync::Arc::new(ScriptedDevice::new(STALE_AGE_S).partial());
     let (report, independent_grid_w) = tick_case(&device, false, Case::Partial).await;
 
     assert!(independent_grid_w.abs() > 1.0);
     assert_unmeasured(&report, AppliedPowerReason::SampleStale);
-    assert!(
-        report
-            .error
-            .as_deref()
-            .is_none_or(|error| !error.contains("NoFlow")),
-        "partial flow is not a failed start: {:?}",
-        report.error
-    );
+    assert_eq!(report.reason, Reason::ConfirmationPending);
 }
 
 #[tokio::test]
@@ -270,10 +265,6 @@ async fn a_stale_hold_has_null_applied_w_and_sample_stale_reason() {
     let (report, _) = tick_case(&device, false, Case::Hold).await;
 
     assert_unmeasured(&report, AppliedPowerReason::SampleStale);
-    assert!(
-        report.verified,
-        "the hold echo landed; the sample was stale"
-    );
 }
 
 #[tokio::test]

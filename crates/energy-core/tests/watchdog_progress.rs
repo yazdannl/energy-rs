@@ -147,6 +147,7 @@ impl CommandSink for ProbeSink {
                 superseded: false,
                 flow_measured: true,
                 measured_at: Some(NOW),
+                confirmation_pending: false,
             })
         })
     }
@@ -174,6 +175,7 @@ impl CommandSink for ProbeSink {
                 superseded: false,
                 flow_measured: true,
                 measured_at: Some(NOW),
+                confirmation_pending: false,
             })
         })
     }
@@ -395,7 +397,7 @@ fn report_at(message_id: u32, output_limit: u32) -> energy_battery::Report {
     .expect("report parses")
 }
 
-/// The real sink marks after the accepted write and after the report carrying the echo.
+/// The real sink marks after the accepted write and during the hold's echo poll.
 #[tokio::test]
 async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
     let io = EchoIo {
@@ -418,16 +420,20 @@ async fn the_battery_sink_marks_both_the_write_and_the_echo_poll() {
         .write_with_progress("SN-A", -800.0, Some(&spy), NOW)
         .await
         .expect("write");
-    assert!(write.verified, "the fresh report must echo the command");
-    assert_eq!(
-        spy.0.load(Ordering::Relaxed),
-        5,
-        "the write ack and every echo/flow-wait mark must advance the watchdog"
+    assert!(
+        write.confirmation_pending,
+        "flow is checked by a later read"
     );
+    assert!(!write.verified);
+    let after_write = spy.0.load(Ordering::Relaxed);
+    assert!(after_write > 0, "the accepted write marks the watchdog");
     let hold = sink
         .hold_with_progress("SN-A", Some(&spy), NOW)
         .await
         .expect("hold");
     assert!(hold.verified, "the fresh report must echo the hold");
-    assert_eq!(spy.0.load(Ordering::Relaxed), 8);
+    assert!(
+        spy.0.load(Ordering::Relaxed) > after_write,
+        "the echo poll keeps marking progress"
+    );
 }

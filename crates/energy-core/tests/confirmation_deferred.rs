@@ -1,0 +1,178 @@
+//! A tick must never wait out the AC ramp: writes are accepted, flow is confirmed later.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::float_cmp,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
+mod support;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+use chrono::Utc;
+use energy_battery::{
+    BatteryError, BoxFuture as IoFuture, ControlLimits, DeviceController, DeviceIo, WriteAck,
+    WriteRequest, parse_report,
+};
+use energy_core::dispatch::{
+    AppliedPowerReason, BatterySink, Dispatcher, FleetView, MeterReading, Overrides, Progress,
+    TickInput,
+};
+use energy_core::engine::Watchdog;
+use energy_core::safety::{Authority, Reason, SafetyLimits};
+use serde_json::json;
+use support::fakes::{NOW, pack, plan};
+
+const IDS: [&str; 4] = ["SN-A", "SN-B", "SN-C", "SN-D"];
+const SLOW_SN: &str = "SN-A";
+
+/// A device whose reports never echo a command: confirmation cannot arrive in this tick.
+struct NeverConfirms {
+    sn: &'static str,
+    message_id: AtomicU32,
+}
+
+impl DeviceIo for NeverConfirms {
+    fn sn(&self) -> &'static str {
+        self.sn
+    }
+
+    fn report(&self) -> IoFuture<'_, Result<energy_battery::Report, BatteryError>> {
+        let id = self.message_id.fetch_add(1, Ordering::Relaxed);
+        let document = json!({
+            "timestamp": Utc::now().timestamp(),
+            "messageId": id,
+            "sn": self.sn,
+            "version": 3,
+            "product": "solarFlow800Plus",
+            "properties": {
+                "acMode": 2,
+                "acStatus": 0,
+                "dcStatus": 0,
+                "inputLimit": 0,
+                "outputLimit": 0,
+                "gridInputPower": 0,
+                "outputHomePower": 0,
+                "chargeMaxLimit": 1000,
+                "inverseMaxPower": 800
+            },
+            "packData": []
+        });
+        Box::pin(async move {
+            parse_report(&serde_json::to_vec(&document).expect("report json")).map_err(|error| {
+                BatteryError::Payload {
+                    reason: error.to_string(),
+                }
+            })
+        })
+    }
+
+    fn write(&self, _: WriteRequest) -> IoFuture<'_, Result<WriteAck, BatteryError>> {
+        let slow = self.sn == SLOW_SN;
+        Box::pin(async move {
+            // One device is deliberately slow; the other three must not queue behind it.
+            if slow {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Ok(WriteAck {
+                timestamp: None,
+                message_id: None,
+                code: 200,
+                sn: Some(self.sn.to_owned()),
+            })
+        })
+    }
+}
+
+struct Marks(Arc<Watchdog>);
+
+impl Progress for Marks {
+    fn mark(&self, now: i64) {
+        self.0.mark(now);
+    }
+}
+
+async fn fixture() -> (
+    BatterySink<Arc<NeverConfirms>>,
+    FleetView,
+    energy_core::plan::Plan,
+    Overrides,
+) {
+    let controllers: Vec<_> = IDS
+        .iter()
+        .map(|sn| {
+            let device = Arc::new(NeverConfirms {
+                sn,
+                message_id: AtomicU32::new(1),
+            });
+            Arc::new(DeviceController::new(device, ControlLimits::unlimited()))
+        })
+        .collect();
+    for controller in &controllers {
+        controller.poll().await.expect("prime the report");
+    }
+    let sink = BatterySink::new(controllers, Duration::from_secs(180))
+        .with_confirm_window(Duration::from_millis(100));
+    let fleet = FleetView::new(IDS.iter().map(|sn| pack(sn, 50.0)).collect());
+    let plan = plan(NOW, -3.2, 0.96);
+    (sink, fleet, plan, Overrides::none())
+}
+
+#[tokio::test]
+async fn a_never_confirming_pack_cannot_stall_the_tick_or_its_peers() {
+    let (sink, fleet, plan, overrides) = fixture().await;
+    let meter = MeterReading::default();
+    let watchdog = Arc::new(Watchdog::new(5));
+    watchdog.mark(NOW);
+    let marks = Marks(Arc::clone(&watchdog));
+    let input = TickInput {
+        now: NOW,
+        mode: Authority::Auto,
+        plan: Some(&plan),
+        fleet: &fleet,
+        meter: &meter,
+        latches: &[],
+        overrides: &overrides,
+        stale: false,
+        progress: Some(&marks),
+        selection: None,
+    };
+
+    let started = tokio::time::Instant::now();
+    let outcome = Dispatcher::new(SafetyLimits::default(), true, 10)
+        .tick(&input, &sink)
+        .await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "one slow write must not become a serial fleet wait: {elapsed:?}"
+    );
+    assert_eq!(outcome.writes(), IDS.len(), "all four commands were issued");
+    for sn in IDS {
+        let row = outcome.report(sn).expect("a row per pack");
+        assert_eq!(row.reason, Reason::ConfirmationPending, "{sn}: {row:?}");
+        assert!(!row.verified && !row.flow_measured, "{sn}: {row:?}");
+        assert_eq!(
+            row.applied_w_reason,
+            Some(AppliedPowerReason::SampleStale),
+            "{sn}: {row:?}"
+        );
+        assert_eq!(row.applied_w, 0.0);
+    }
+
+    // This is the same heartbeat the health route reads as `lastTick`: a completed tick advances
+    // it, so `/api/v1/health` cannot report `tick_stalled` for this fleet.
+    watchdog.mark(NOW + elapsed.as_secs() as i64);
+    assert!(watchdog.last_progress().is_some());
+    assert!(
+        !watchdog.stalled(NOW + elapsed.as_secs() as i64),
+        "a bounded tick keeps the watchdog healthy"
+    );
+}

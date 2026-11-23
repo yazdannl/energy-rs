@@ -250,6 +250,7 @@ impl CommandSink for FakeSink {
                 superseded: false,
                 flow_measured: true,
                 measured_at: Some(NOW),
+                confirmation_pending: false,
             })
         })
     }
@@ -314,6 +315,7 @@ impl CommandSink for FakeSink {
                 superseded: false,
                 flow_measured: true,
                 measured_at: Some(NOW),
+                confirmation_pending: false,
             })
         })
     }

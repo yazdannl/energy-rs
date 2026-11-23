@@ -50,6 +50,8 @@ pub enum Reason {
     CellVoltageEmergencyCharge,
     /// The plan is missing, expired or too old; the tick holds instead of keeping a setpoint.
     StaleInput,
+    /// A write was accepted; flow confirmation is deferred to the next fleet read.
+    ConfirmationPending,
     /// A device write failed (transport, echo or mode fault).
     DriverError,
     /// A device is backing off after a fault, so the tick sends it nothing.
@@ -99,6 +101,7 @@ impl Reason {
             Self::CellVoltageGuard => "cell_voltage_guard",
             Self::CellVoltageEmergencyCharge => "cell_voltage_emergency_charge",
             Self::StaleInput => "stale_input",
+            Self::ConfirmationPending => "confirmation_pending",
             Self::DriverError => "driver_error",
             Self::FaultBackoff => "fault_backoff",
             Self::WatchdogHold => "watchdog_hold",
