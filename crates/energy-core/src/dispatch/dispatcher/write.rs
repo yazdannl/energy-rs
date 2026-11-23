@@ -4,7 +4,8 @@ use energy_battery::ControlFault;
 
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    CURTAILMENT_PAUSE_S, CommandSink, HOLD_DEADBAND_W, Progress, SinkError, advance,
+    AppliedPowerReason, CURTAILMENT_PAUSE_S, CommandSink, HOLD_DEADBAND_W, Progress, SinkError,
+    advance,
 };
 
 use super::{Dispatcher, SendContext};
@@ -65,6 +66,7 @@ impl Dispatcher {
             // leave the backoff alone: this is not a device fault.
             Err(SinkError::ReadUnverified { reason, .. }) => Sent {
                 written: true,
+                applied_w_reason: Some(AppliedPowerReason::ReadFailed),
                 error: Some(reason),
                 ..Sent::none()
             },
@@ -121,8 +123,14 @@ impl Dispatcher {
         } else {
             self.faults.arm(pack_id, now, &cause);
         }
+        let read_failed = matches!(
+            error,
+            SinkError::ReadUnverified { .. } | SinkError::DeviceUnreachable { .. }
+        );
+        let applied_w_reason = read_failed.then_some(AppliedPowerReason::ReadFailed);
         if !self.failsafe_on_error || restarted {
             return Sent {
+                applied_w_reason,
                 error: Some(cause),
                 ..Sent::none()
             };
@@ -134,6 +142,7 @@ impl Dispatcher {
                 written: true,
                 verified: false,
                 fail_safe: true,
+                applied_w_reason: Some(AppliedPowerReason::ReadFailed),
                 error: Some(format!("{cause}; fail-safe hold not echoed: {reason}")),
                 ..Sent::none()
             },
@@ -144,12 +153,15 @@ impl Dispatcher {
                     verified: receipt.verified,
                     flow_measured: false,
                     applied_w: receipt.applied_w,
+                    applied_w_reason: applied_w_reason
+                        .or_else(|| (!receipt.verified).then_some(AppliedPowerReason::ReadFailed)),
                     fail_safe: true,
                     superseded: receipt.superseded.then(|| "safety hold".to_owned()),
                     error: Some(format!("{cause}; fail-safe hold")),
                 }
             }
             Err(hold_error) => Sent {
+                applied_w_reason: Some(AppliedPowerReason::ReadFailed),
                 error: Some(format!("{cause}; fail-safe hold failed: {hold_error}")),
                 ..Sent::none()
             },

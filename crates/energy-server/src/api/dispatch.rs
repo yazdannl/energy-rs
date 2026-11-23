@@ -40,7 +40,10 @@ struct EntryDto {
     at: Timestamp,
     pack_sn: Option<String>,
     requested_w: f64,
-    applied_w: f64,
+    /// `null` when no fresh measurement exists; never an assumed zero.
+    applied_w: Option<f64>,
+    /// Why the watts are unknown: `sample_stale` or `read_failed`.
+    applied_w_reason: Option<String>,
     reason: String,
     mode: String,
     verified: bool,
@@ -65,7 +68,8 @@ fn entry_dto(entry: &DispatchEntry, serials: &BTreeMap<i64, String>) -> Result<E
         at: Timestamp::from_epoch(entry.ts)?,
         pack_sn: entry.pack_id.and_then(|id| serials.get(&id).cloned()),
         requested_w: watts(entry.requested_w),
-        applied_w: watts(entry.applied_w),
+        applied_w: entry.flow_measured.then(|| watts(entry.applied_w)),
+        applied_w_reason: entry.applied_w_reason.clone(),
         reason: entry.reason.clone(),
         mode: entry.mode.clone(),
         verified: entry.verified,

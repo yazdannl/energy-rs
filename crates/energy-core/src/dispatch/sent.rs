@@ -1,5 +1,7 @@
 //! The result of one transport attempt, before it becomes a `PackReport`.
 
+use crate::dispatch::AppliedPowerReason;
+
 /// What one send attempt produced.
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)] // written, verified and flow_measured are different facts
@@ -9,6 +11,8 @@ pub(crate) struct Sent {
     /// Whether `applied_w` came from a fresh measurement rather than being unknown.
     pub(crate) flow_measured: bool,
     pub(crate) applied_w: f64,
+    /// Why the watts are unknown, when they could not be measured.
+    pub(crate) applied_w_reason: Option<AppliedPowerReason>,
     pub(crate) fail_safe: bool,
     /// Why a safety hold took over this attempt; ownership stays with that hold.
     pub(crate) superseded: Option<String>,
@@ -23,6 +27,7 @@ impl Sent {
             verified: false,
             flow_measured: false,
             applied_w: 0.0,
+            applied_w_reason: None,
             fail_safe: false,
             superseded: None,
             error: None,

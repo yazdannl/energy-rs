@@ -56,6 +56,8 @@ pub enum Reason {
     FaultBackoff,
     /// The watchdog saw no loop progress for three ticks and held the pack.
     WatchdogHold,
+    /// A hold could not be verified because the device did not answer, not because it refused.
+    HoldUnverifiableDeviceUnreachable,
     /// An operator override set this setpoint.
     ManualOverride,
     /// The full-charge maintenance window holds this pack at neutral; the log carries the
@@ -100,6 +102,7 @@ impl Reason {
             Self::DriverError => "driver_error",
             Self::FaultBackoff => "fault_backoff",
             Self::WatchdogHold => "watchdog_hold",
+            Self::HoldUnverifiableDeviceUnreachable => "hold_unverifiable_device_unreachable",
             Self::ManualOverride => "manual_override",
             Self::MaintenanceHold => "maintenance_hold",
             Self::BootHold => "boot_hold",

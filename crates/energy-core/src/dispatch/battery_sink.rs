@@ -80,12 +80,7 @@ impl<T: DeviceIo> BatterySink<T> {
             // An earlier tick's write is still waiting for the AC ramp. It is not a device fault:
             // a fail-safe hold here would cancel a charge that is about to start drawing power.
             Err(BatteryError::Unconfirmed { .. }) => None,
-            Err(error) => {
-                return Err(SinkError::Device {
-                    pack_id: pack_id.clone(),
-                    reason: error.to_string(),
-                });
-            }
+            Err(error) => return Err(device_error(pack_id.clone(), &error)),
         };
         mark();
         let target = applied.map_or(command, |applied| applied.command);
@@ -99,10 +94,7 @@ impl<T: DeviceIo> BatterySink<T> {
         let observation = controller
             .poll_confirming(window, &mark)
             .await
-            .map_err(|error| SinkError::Device {
-                pack_id: pack_id.clone(),
-                reason: error.to_string(),
-            })?;
+            .map_err(|error| device_error(pack_id.clone(), &error))?;
         if observation.superseded {
             // A safety hold has already taken over this episode. A second hold here would be a storm.
             return Ok(WriteReceipt::superseded());
@@ -149,6 +141,25 @@ impl<T: DeviceIo> CommandSink for BatterySink<T> {
         now: i64,
     ) -> BoxFuture<'a, Result<WriteReceipt, SinkError>> {
         Box::pin(self.send(pack_id.to_owned(), Command::Hold, progress, now))
+    }
+}
+
+/// A transport or read failure is an unreachable device, not a refusal the ladder can diagnose.
+fn device_error(pack_id: String, error: &BatteryError) -> SinkError {
+    match &error {
+        BatteryError::Transport { .. }
+        | BatteryError::Disabled { .. }
+        | BatteryError::HttpStatus { .. }
+        | BatteryError::Payload { .. }
+        | BatteryError::Discovery { .. }
+        | BatteryError::Invalid { .. } => SinkError::DeviceUnreachable {
+            pack_id,
+            reason: error.to_string(),
+        },
+        _ => SinkError::Device {
+            pack_id,
+            reason: error.to_string(),
+        },
     }
 }
 

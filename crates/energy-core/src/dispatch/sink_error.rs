@@ -20,6 +20,14 @@ pub enum SinkError {
         /// Human-readable cause.
         reason: String,
     },
+    /// The device could not answer at all: a transport or read failure, not a refusal.
+    #[error("pack {pack_id}: device unreachable: {reason}")]
+    DeviceUnreachable {
+        /// The pack that could not be reached.
+        pack_id: String,
+        /// Human-readable transport cause.
+        reason: String,
+    },
     /// The write reached the device, but a read miss prevented echo confirmation.
     ///
     /// Not a fault: the pack stays latched and no backoff is armed, because a slow read says

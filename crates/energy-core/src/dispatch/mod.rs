@@ -17,6 +17,7 @@
 //! from `energy-battery` and [`BatterySink`] wraps its per-device controllers (pacing and echo
 //! included). Tests use fakes that answer synchronously.
 
+mod applied_power_reason;
 mod battery_fleet;
 mod battery_sink;
 mod command_sink;
@@ -53,6 +54,7 @@ mod tick_input;
 mod tick_outcome;
 mod write_receipt;
 
+pub use applied_power_reason::AppliedPowerReason;
 pub use battery_fleet::BatteryFleet;
 pub use battery_sink::BatterySink;
 pub use command_sink::CommandSink;

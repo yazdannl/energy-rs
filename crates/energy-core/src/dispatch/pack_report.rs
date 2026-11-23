@@ -1,5 +1,6 @@
 //! One pack's part of a tick: what was asked, what was allowed, what was written.
 
+use crate::dispatch::AppliedPowerReason;
 use crate::safety::Reason;
 
 /// The audit trail of one pack in one tick.
@@ -25,6 +26,8 @@ pub struct PackReport {
     pub applied_w: f64,
     /// Whether `applied_w` came from a fresh reading; false means unknown, not zero delivery.
     pub flow_measured: bool,
+    /// Why the applied watts are unknown; `None` when a measurement exists or was not expected.
+    pub applied_w_reason: Option<AppliedPowerReason>,
     /// The binding reason for what happened.
     pub reason: Reason,
     /// The ladder's own reason for `intended_w`.

@@ -9,7 +9,7 @@ use std::sync::{Mutex, PoisonError};
 use energy_battery::FLOW_THRESHOLD_W;
 
 use crate::dispatch::sent::Sent;
-use crate::dispatch::{HOLD_DEADBAND_W, Planned};
+use crate::dispatch::{AppliedPowerReason, HOLD_DEADBAND_W, Planned};
 
 /// Commands we last issued, so backoff wording can tell a standing command from an odd flow.
 pub(super) type LastCommands = BTreeMap<String, f64>;
@@ -57,6 +57,8 @@ pub(super) fn finish(last: &Mutex<LastCommands>, plan: &Planned, sent: &mut Sent
     if let Some(flow_w) = flow_w {
         sent.applied_w = flow_w;
         sent.flow_measured = true;
+    } else {
+        sent.applied_w_reason = Some(AppliedPowerReason::SampleStale);
     }
     sent.error = Some(format!("not sent; backing off after {cause}{detail}"));
 }

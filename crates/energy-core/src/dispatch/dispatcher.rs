@@ -12,8 +12,9 @@ use crate::dispatch::pack_context::{
 };
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading, PackReport, Planned,
-    TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp, slot_power,
+    AppliedPowerReason, CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading,
+    PackReport, Planned, TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp,
+    slot_power,
 };
 use crate::safety::Reason;
 use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
@@ -254,6 +255,10 @@ impl Dispatcher {
             Sent::none()
         };
         backoff::finish(&self.last_commands, &plan, &mut sent);
+        let mut applied_w_reason = sent.applied_w_reason;
+        if !sent.flow_measured && applied_w_reason.is_none() && plan.measured_flow_w.is_none() {
+            applied_w_reason = Some(AppliedPowerReason::SampleStale);
+        }
         PackReport {
             pack_id: plan.pack_id,
             ledger_id: plan.ledger_id,
@@ -261,6 +266,7 @@ impl Dispatcher {
             intended_w: plan.command_w,
             applied_w: sent.applied_w,
             flow_measured: sent.flow_measured,
+            applied_w_reason,
             reason: plan.reason,
             intended_reason: plan.intended_reason,
             written: sent.written,
