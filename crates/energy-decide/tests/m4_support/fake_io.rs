@@ -1,7 +1,8 @@
-//! In-memory pack transport with observable transactions and cancellation.
+//! In-memory pack transport with explicit device application and cancellation.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,7 +10,7 @@ use energy_decide::dispatch::{Echo, FlowReport, PackCommand, PackIo, WriteAck};
 
 use super::Behavior;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct State {
     behaviors: HashMap<String, Behavior>,
     writes: Vec<(String, PackCommand, u64)>,
@@ -22,35 +23,11 @@ struct State {
     release_latency_ms: HashMap<u64, u64>,
     reports: BTreeMap<String, Vec<FlowReport>>,
     failures_left: HashMap<String, usize>,
-    cancelled: HashSet<u64>,
     workers: usize,
     peak_workers: usize,
-    worker_wait: Arc<Condvar>,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            behaviors: HashMap::new(),
-            writes: Vec::new(),
-            applied: Vec::new(),
-            active: HashSet::new(),
-            peak_active: 0,
-            next_tx: 0,
-            released: Vec::new(),
-            begin_at: HashMap::new(),
-            release_latency_ms: HashMap::new(),
-            reports: BTreeMap::new(),
-            failures_left: HashMap::new(),
-            cancelled: HashSet::new(),
-            workers: 0,
-            peak_workers: 0,
-            worker_wait: Arc::new(Condvar::new()),
-        }
-    }
-}
-
-/// In-memory pack transport with observable transaction and worker lifetime.
+/// In-memory pack transport with observable transactions and device effects.
 #[derive(Debug, Default, Clone)]
 pub struct FakeIo {
     state: Arc<Mutex<State>>,
@@ -70,20 +47,19 @@ impl FakeIo {
 
     /// Queue a report for a later `observe` call.
     pub fn queue(&self, report: FlowReport) {
-        let mut state = self.lock();
-        state
+        self.lock()
             .reports
             .entry(report.pack_id.clone())
             .or_default()
             .push(report);
     }
 
-    /// Commands that reached the fake transport, in order.
+    /// Transport-entry log: every command that reached the transport.
     pub fn writes(&self) -> Vec<(String, PackCommand, u64)> {
         self.lock().writes.clone()
     }
 
-    /// Commands whose physical write completed, in device-application order.
+    /// Device-application log: only commands that physically took effect.
     pub fn applied_commands(&self) -> Vec<PackCommand> {
         self.lock()
             .applied
@@ -92,7 +68,7 @@ impl FakeIo {
             .collect()
     }
 
-    /// Last applied commanded wattage for one pack.
+    /// Last wattage physically applied to one pack.
     pub fn device_w(&self, pack_id: &str) -> Option<f64> {
         self.lock()
             .applied
@@ -102,7 +78,7 @@ impl FakeIo {
             .map(|(_, command)| command.requested_w)
     }
 
-    /// Number of writes that reached the fake transport.
+    /// Number of writes that reached the transport.
     pub fn write_count(&self) -> usize {
         self.lock().writes.len()
     }
@@ -112,7 +88,7 @@ impl FakeIo {
         self.lock().peak_active
     }
 
-    /// Open transaction ids; empty once the coordinator releases them.
+    /// Open transaction ids; empty once the arbiter releases them.
     pub fn active(&self) -> Vec<u64> {
         self.lock().active.iter().copied().collect()
     }
@@ -127,12 +103,12 @@ impl FakeIo {
         self.lock().release_latency_ms.values().copied().collect()
     }
 
-    /// Transport workers currently inside `write`.
+    /// Transports currently inside `write`.
     pub fn active_workers(&self) -> usize {
         self.lock().workers
     }
 
-    /// Highest number of simultaneous `write` workers.
+    /// Highest number of simultaneous `write` calls.
     pub fn peak_workers(&self) -> usize {
         self.lock().peak_workers
     }
@@ -148,19 +124,28 @@ impl FakeIo {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn wait_cancel(&self, tx_id: u64, max_wait_ms: u64, at_ms: i64) -> WriteAck {
+    fn apply(&self, pack_id: &str, command: &PackCommand) {
+        self.lock()
+            .applied
+            .push((pack_id.to_owned(), command.clone()));
+    }
+
+    fn accepted(&self, pack_id: &str, command: &PackCommand) -> WriteAck {
+        self.apply(pack_id, command);
+        WriteAck::Accepted {
+            echo: Some(Echo {
+                limit_w: command.requested_w,
+                at_ms: command.issued_at_ms,
+            }),
+            at_ms: command.issued_at_ms,
+        }
+    }
+
+    fn wait_cancel(token: &Arc<AtomicBool>, max_wait_ms: u64, at_ms: i64) -> WriteAck {
         let started = Instant::now();
-        let waiter = Arc::clone(&self.lock().worker_wait);
-        let mut state = self.lock();
         let limit = Duration::from_millis(max_wait_ms);
-        while !state.cancelled.contains(&tx_id) && started.elapsed() < limit {
-            let left = limit.saturating_sub(started.elapsed());
-            let (guard, _) = waiter
-                .wait_timeout_while(state, left, |value| {
-                    !value.cancelled.contains(&tx_id) && started.elapsed() < limit
-                })
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            state = guard;
+        while !token.load(Ordering::SeqCst) && started.elapsed() < limit {
+            thread::sleep(Duration::from_millis(1));
         }
         WriteAck::Failed {
             reason: "write_cancelled",
@@ -173,24 +158,20 @@ impl FakeIo {
         behavior: &Behavior,
         pack_id: &str,
         command: &PackCommand,
-        tx_id: u64,
         deadline_ms: u64,
+        token: &Arc<AtomicBool>,
     ) -> WriteAck {
-        let accepted = || WriteAck::Accepted {
-            echo: Some(Echo {
-                limit_w: command.requested_w,
-                at_ms: command.issued_at_ms,
-            }),
-            at_ms: command.issued_at_ms,
-        };
         match behavior {
-            Behavior::Accept { echo } => WriteAck::Accepted {
-                echo: echo.then_some(Echo {
-                    limit_w: command.requested_w,
+            Behavior::Accept { echo } => {
+                self.apply(pack_id, command);
+                WriteAck::Accepted {
+                    echo: echo.then_some(Echo {
+                        limit_w: command.requested_w,
+                        at_ms: command.issued_at_ms,
+                    }),
                     at_ms: command.issued_at_ms,
-                }),
-                at_ms: command.issued_at_ms,
-            },
+                }
+            }
             Behavior::Reject(reason) => WriteAck::Rejected {
                 reason,
                 at_ms: command.issued_at_ms,
@@ -200,16 +181,14 @@ impl FakeIo {
                 at_ms: command.issued_at_ms,
             },
             Behavior::Stuck { max_wait_ms } => {
-                self.wait_cancel(tx_id, *max_wait_ms, command.issued_at_ms)
+                Self::wait_cancel(token, *max_wait_ms, command.issued_at_ms)
             }
-            Behavior::Never => self.wait_cancel(tx_id, 5_000, command.issued_at_ms),
+            Behavior::Never => Self::wait_cancel(token, 5_000, command.issued_at_ms),
             Behavior::Late { after_ms } => {
                 thread::sleep(Duration::from_millis(deadline_ms.saturating_add(*after_ms)));
-                accepted()
+                self.accepted(pack_id, command)
             }
-            Behavior::FailFirst(count, reason) => {
-                self.fail_first(pack_id, command, *count, reason, accepted())
-            }
+            Behavior::FailFirst(count, reason) => self.fail_first(pack_id, command, *count, reason),
         }
     }
 
@@ -219,7 +198,6 @@ impl FakeIo {
         command: &PackCommand,
         count: usize,
         reason: &'static str,
-        accepted: WriteAck,
     ) -> WriteAck {
         let mut state = self.lock();
         let left = state
@@ -233,7 +211,8 @@ impl FakeIo {
                 at_ms: command.issued_at_ms,
             }
         } else {
-            accepted
+            drop(state);
+            self.accepted(pack_id, command)
         }
     }
 }
@@ -264,7 +243,8 @@ impl PackIo for FakeIo {
         pack_id: &str,
         command: &PackCommand,
         deadline_ms: u64,
-        tx_id: u64,
+        _tx_id: u64,
+        cancel: Arc<AtomicBool>,
     ) -> WriteAck {
         let behavior = self
             .lock()
@@ -280,17 +260,9 @@ impl PackIo for FakeIo {
                 .writes
                 .push((pack_id.to_owned(), command.clone(), deadline_ms));
         }
-        let ack = self.answer(&behavior, pack_id, command, tx_id, deadline_ms);
-        let mut state = self.lock();
-        state.applied.push((pack_id.to_owned(), command.clone()));
-        state.workers -= 1;
+        let ack = self.answer(&behavior, pack_id, command, deadline_ms, &cancel);
+        self.lock().workers -= 1;
         ack
-    }
-
-    fn cancel(&self, _pack_id: &str, tx_id: u64) {
-        let mut state = self.lock();
-        state.cancelled.insert(tx_id);
-        state.worker_wait.notify_all();
     }
 
     fn read(&self, pack_id: &str, _deadline_ms: u64) -> Option<FlowReport> {

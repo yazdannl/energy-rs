@@ -3,7 +3,7 @@
 use crate::dispatch::PendingConfirmation;
 
 /// Confirmation, uncertainty, backoff and pause state for one pack.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PackState {
     /// Outstanding confirmation, when flow has not yet verified the command.
     pub pending: Option<PendingConfirmation>,
@@ -13,6 +13,8 @@ pub struct PackState {
     pub uncertain_reason: Option<&'static str>,
     /// How truth was re-established after uncertainty: verified_hold or read_back.
     pub uncertainty_cleared_by: Option<&'static str>,
+    /// True once every transport future carrying this pack's command is gone.
+    pub transport_gone: bool,
     /// End of ordinary fault backoff, epoch milliseconds.
     pub backoff_until_ms: i64,
     /// Typed reason for ordinary backoff.
@@ -29,6 +31,26 @@ pub struct PackState {
     pub generation: u64,
     /// Last command identity tracked for this pack, accepted or not.
     pub last_command: Option<crate::dispatch::PackCommand>,
+}
+
+impl Default for PackState {
+    fn default() -> Self {
+        Self {
+            pending: None,
+            uncertain: false,
+            uncertain_reason: None,
+            uncertainty_cleared_by: None,
+            transport_gone: true,
+            backoff_until_ms: 0,
+            backoff_reason: None,
+            pause_until_ms: 0,
+            pause_target_w: None,
+            partial_retries: 0,
+            idle_reports: 0,
+            generation: 0,
+            last_command: None,
+        }
+    }
 }
 
 impl PackState {

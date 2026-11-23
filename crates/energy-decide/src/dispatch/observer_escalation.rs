@@ -6,9 +6,8 @@ use crate::dispatch::constants::PARTIAL_PAUSE_MS;
 use crate::dispatch::fallback::{fallback_accepted, write_fallback};
 use crate::dispatch::flow_predicates::classify_flow;
 use crate::dispatch::{
-    DispatchContext, DispatchOutcome, DispatchRow, EvidenceKind, FallbackResult, FlowClass,
-    FlowReport, LateWrite, PackCommand, PackIo, PackState, RetryClock, WorkerHandle,
-    WorkerTerminationViolation, status_direction,
+    DispatchContext, DispatchOutcome, DispatchRow, DriveBoundEvent, EvidenceKind, FallbackResult,
+    FlowClass, FlowReport, LateWrite, PackCommand, PackIo, PackState, RetryClock, status_direction,
 };
 
 /// Transport and clock used only when a partial flow becomes persistent.
@@ -19,10 +18,10 @@ pub struct Escalation<'a> {
     pub clock: &'a dyn RetryClock,
     /// Late completions from superseded writes.
     pub late: &'a Arc<Mutex<Vec<LateWrite>>>,
-    /// Worker bound violations.
-    pub violations: &'a Arc<Mutex<Vec<WorkerTerminationViolation>>>,
-    /// Started workers and their flags.
-    pub workers: &'a Arc<Mutex<Vec<WorkerHandle>>>,
+    /// Driver-loop bound violations.
+    pub bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
+    /// Arbiter poll bound.
+    pub max_polls: u64,
     /// End-to-end per-pack budget.
     pub budget_ms: u64,
 }
@@ -55,8 +54,8 @@ pub fn escalate(
         io: escalation.io,
         clock: escalation.clock,
         late: escalation.late,
-        violations: escalation.violations,
-        workers: escalation.workers,
+        bound: escalation.bound,
+        max_polls: escalation.max_polls,
         budget_ms: escalation.budget_ms,
         now_ms,
     };

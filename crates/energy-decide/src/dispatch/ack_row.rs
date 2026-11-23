@@ -193,6 +193,15 @@ pub fn from_attempt(
         WriteAttempt::Superseded { generation, .. } => {
             superseded_effect(command, generation, elapsed, context.budget_ms)
         }
+        WriteAttempt::BoundExceeded { generation, .. } => {
+            let mut effect = timeout_row(command, elapsed, context.budget_ms);
+            effect.row.generation = generation;
+            effect.row = effect
+                .row
+                .reason("drive_bound_exceeded")
+                .reason("controller_uncertain");
+            effect
+        }
         WriteAttempt::Failed { reason, .. } => {
             failed_row(command, reason, None, elapsed, context.budget_ms)
         }

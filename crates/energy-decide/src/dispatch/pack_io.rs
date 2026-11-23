@@ -1,16 +1,16 @@
 //! Provisional hardware port: M4 receives this from the caller, never creates I/O.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::dispatch::{FlowReport, PackCommand, WriteAck};
 
 /// Bounded, cancellable pack transport and its read/write transaction.
 ///
-/// The coordinator owns the transaction id and releases it at the write's absolute
-/// deadline even if a worker is still inside `write`. Implementations must honour
-/// `deadline_ms` and `cancel`: a cancelled write must return promptly, and a write
-/// that ignores cancellation must still be bounded. Late completions from a
-/// superseded generation are ignored by M4's STATE, not unsent from the device.
-/// Once a request has left for the device it cannot be un-sent; M4 re-establishes
-/// truth with a verified hold or a device read-back before the next economic command.
+/// M4's arbiter owns one future per pack. The future's return value is the acknowledgement;
+/// there is no channel and no second claimant. Once a request has left for the device it
+/// cannot be un-sent: cancellation and generation fencing prevent STATE contamination only.
+/// A cancelled write that ignores the token stays unresolved until reconciliation joins it.
 pub trait PackIo: Send + Sync + 'static {
     /// Acquire the per-pack read/write transaction; exactly one release is required.
     fn begin(&self, pack_id: &str) -> u64;
@@ -18,13 +18,22 @@ pub trait PackIo: Send + Sync + 'static {
     /// Release a transaction acquired by `begin`, including after a deadline.
     fn release(&self, pack_id: &str, tx_id: u64);
 
-    /// Send one command under the given transaction and remaining budget in ms.
-    fn write(&self, pack_id: &str, command: &PackCommand, deadline_ms: u64, tx_id: u64)
-    -> WriteAck;
-
-    /// Stop an in-flight write at its deadline; must be safe to call repeatedly.
-    fn cancel(&self, pack_id: &str, tx_id: u64);
+    /// Send one command under this transaction. The future token is set at the deadline;
+    /// implementations must check it and return promptly when cancellation is requested.
+    fn write(
+        &self,
+        pack_id: &str,
+        command: &PackCommand,
+        deadline_ms: u64,
+        tx_id: u64,
+        cancel: Arc<AtomicBool>,
+    ) -> WriteAck;
 
     /// Read one flow report within the given deadline.
     fn read(&self, pack_id: &str, deadline_ms: u64) -> Option<FlowReport>;
+}
+
+/// Whether a cancellation token has been set.
+pub fn cancelled(token: &Arc<AtomicBool>) -> bool {
+    token.load(Ordering::SeqCst)
 }

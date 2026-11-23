@@ -5,9 +5,8 @@ use std::sync::{Arc, Mutex};
 use crate::dispatch::confirmation::{ConfirmationVerdict, fold, idle_confirmed};
 use crate::dispatch::constants::{NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS};
 use crate::dispatch::{
-    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowClass,
-    FlowReport, LateWrite, PackCommand, PackIo, PendingConfirmation, RetryClock, WorkerHandle,
-    WorkerTerminationViolation,
+    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, DriveBoundEvent, EvidenceKind,
+    FlowClass, FlowReport, LateWrite, PackCommand, PackIo, PendingConfirmation, RetryClock,
 };
 
 fn command_for(pack_id: &str, pending: Option<&PendingConfirmation>) -> PackCommand {
@@ -180,8 +179,8 @@ pub struct Observer<'a> {
     io: &'a Arc<dyn PackIo>,
     clock: &'a dyn RetryClock,
     late: &'a Arc<Mutex<Vec<LateWrite>>>,
-    violations: &'a Arc<Mutex<Vec<WorkerTerminationViolation>>>,
-    workers: &'a Arc<Mutex<Vec<WorkerHandle>>>,
+    bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
+    max_polls: u64,
     budget_ms: u64,
 }
 
@@ -191,16 +190,16 @@ impl<'a> Observer<'a> {
         io: &'a Arc<dyn PackIo>,
         clock: &'a dyn RetryClock,
         late: &'a Arc<Mutex<Vec<LateWrite>>>,
-        violations: &'a Arc<Mutex<Vec<WorkerTerminationViolation>>>,
-        workers: &'a Arc<Mutex<Vec<WorkerHandle>>>,
+        bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
+        max_polls: u64,
         budget_ms: u64,
     ) -> Self {
         Self {
             io,
             clock,
             late,
-            violations,
-            workers,
+            bound,
+            max_polls,
             budget_ms,
         }
     }
@@ -279,8 +278,8 @@ impl<'a> Observer<'a> {
             io: self.io,
             clock: self.clock,
             late: self.late,
-            violations: self.violations,
-            workers: self.workers,
+            bound: self.bound,
+            max_polls: self.max_polls,
             budget_ms: self.budget_ms,
         };
         crate::dispatch::observer_escalation::escalate(

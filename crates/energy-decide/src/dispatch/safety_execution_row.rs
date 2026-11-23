@@ -35,3 +35,25 @@ pub fn execution(row: &DispatchRow) -> (SafetyExecution, EvidenceKind, Option<&'
     }
     (SafetyExecution::Accepted, EvidenceKind::PortDecision, None)
 }
+
+/// Annotate economic preemption without hiding the safety command's own outcome.
+pub fn row(
+    mut row: DispatchRow,
+    gate_reason: Option<&'static str>,
+    interrupted: bool,
+) -> DispatchRow {
+    if interrupted {
+        row = row.reason("pause_interrupted_by_target_change");
+    }
+    if row.safety_traffic {
+        let (execution, evidence, detail) = execution(&row);
+        row.safety_execution = Some(execution);
+        row.safety_evidence = Some(evidence);
+        row.safety_reason = detail;
+    }
+    if let Some(reason) = gate_reason {
+        row.economic_preempted_by = Some(reason);
+        row = row.reason("safety_preempted").reason(reason);
+    }
+    row
+}

@@ -5,8 +5,8 @@ use std::time::Instant;
 use crate::dispatch::budget::{elapsed_ms, remaining_ms};
 use crate::dispatch::constants::FALLBACK_RETRY_MS;
 use crate::dispatch::{
-    DispatchContext, FallbackResult, PackCommand, WriteAck, WriteAttempt, WriteTask,
-    WriteTaskContext,
+    DispatchContext, DriveContext, FallbackResult, PackCommand, WriteAck, WriteAttempt,
+    WriteFuture, drive,
 };
 
 fn hold_command(command: &PackCommand) -> PackCommand {
@@ -30,10 +30,12 @@ pub fn write_fallback(
         offsets_ms: Vec::new(),
         elapsed_ms: 0,
     };
-    let tasks = WriteTaskContext {
+    let driver = DriveContext {
+        io: context.io,
+        clock: context.clock,
         late: context.late,
-        violations: context.violations,
-        workers: context.workers,
+        bound: context.bound,
+        max_polls: context.max_polls,
     };
     for offset in FALLBACK_RETRY_MS {
         let left = remaining_ms(started, budget_ms);
@@ -46,21 +48,14 @@ pub fn write_fallback(
         result.offsets_ms.push(offset);
         result.attempts += 1;
         let tx_id = context.io.begin(&hold.pack_id);
-        let remaining = remaining_ms(started, budget_ms);
-        let attempt =
-            WriteTask::start(context.io, &hold, tx_id, remaining, hold.generation, &tasks)
-                .collect();
-        match attempt {
-            WriteAttempt::Ack { ack, .. } => {
-                let accepted = ack.accepted();
-                result.ack = Some(ack);
-                if accepted {
-                    break;
-                }
+        let future = WriteFuture::start(context.io, &hold, tx_id, left);
+        let outcome = drive(vec![future], &driver);
+        if let Some(WriteAttempt::Ack { ack, .. }) = outcome.attempts.into_iter().next() {
+            let accepted = ack.accepted();
+            result.ack = Some(ack);
+            if accepted {
+                break;
             }
-            WriteAttempt::Timeout { .. }
-            | WriteAttempt::Superseded { .. }
-            | WriteAttempt::Failed { .. } => {}
         }
     }
     result.elapsed_ms = elapsed_ms(started);

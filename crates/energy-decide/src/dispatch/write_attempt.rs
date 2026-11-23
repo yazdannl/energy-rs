@@ -24,6 +24,13 @@ pub enum WriteAttempt {
         /// Elapsed milliseconds inside the budget.
         elapsed_ms: u64,
     },
+    /// Arbiter loop bound fired before this write reached its deadline.
+    BoundExceeded {
+        /// Monotonic generation left unresolved.
+        generation: u64,
+        /// Elapsed milliseconds inside the budget.
+        elapsed_ms: u64,
+    },
     /// Transport worker died without an answer.
     Failed {
         /// Typed reason.
@@ -40,6 +47,7 @@ impl WriteAttempt {
             Self::Ack { elapsed_ms, .. }
             | Self::Timeout { elapsed_ms }
             | Self::Superseded { elapsed_ms, .. }
+            | Self::BoundExceeded { elapsed_ms, .. }
             | Self::Failed { elapsed_ms, .. } => *elapsed_ms,
         }
     }

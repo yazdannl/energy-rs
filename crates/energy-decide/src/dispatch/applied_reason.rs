@@ -13,6 +13,8 @@ pub enum AppliedReason {
     EchoMissing,
     /// Read transport missed the flow report.
     ReadMiss,
+    /// Read-back evidence was stale, non-neutral or arrived while transport was active.
+    ReadbackRejected,
     /// The per-pack budget expired during transport.
     TransportDeadline,
     /// Completion arrived after its generation was superseded and was ignored.

@@ -14,9 +14,12 @@ pub const PARTIAL_PAUSE_MS: u64 = 120_000;
 pub const FALLBACK_RETRY_MS: [u64; 3] = [0, 2_000, 6_000];
 /// No-flow fault backoff.
 pub const NO_FLOW_BACKOFF_MS: u64 = 300_000;
-/// Worker termination bound: `2 x PACK_IO_BUDGET_MS` from the write start.
-/// Cancel is requested at the deadline; a worker still alive at this bound is a counted violation.
-pub const WORKER_TERMINATION_BOUND_MULTIPLIER: u64 = 2;
+/// Maximum arbiter polls in one tick; guards against a restart loop, not a leaked thread.
+pub const MAX_DRIVE_POLLS_PER_TICK: u64 = 4_096;
+/// Sleep between arbiter polls.
+pub const DRIVE_POLL_INTERVAL_MS: u64 = 1;
+/// Freshness bound for a read-back report and its echo, milliseconds.
+pub const READBACK_FRESHNESS_MS: u64 = 5_000;
 /// Upper SoC band in which a faultLevel-0 refusal is treated as a capability shortfall.
 /// Live evidence: three of four packs refused discharge at 31-34 % with device minSoc 10 %.
 pub const SHORTFALL_SOC_MAX_PCT: f64 = 40.0;
