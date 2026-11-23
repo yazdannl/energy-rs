@@ -28,4 +28,4 @@ pub use energy_core::safety::Authority;
 pub use energy_core::stream;
 pub use engine_handles::EngineHandles;
 pub use service::Service;
-pub use service_options::ServiceOptions;
+pub use service_options::{DEFAULT_HEALTH_STALE_AFTER, HEALTH_STARTUP_GRACE, ServiceOptions};

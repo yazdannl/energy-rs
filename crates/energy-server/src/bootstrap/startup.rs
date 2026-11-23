@@ -1,6 +1,7 @@
 //! Startup assembly: stores, Home Assistant, batteries, the engine and the background loops.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -78,7 +79,8 @@ impl Startup {
             Arc::clone(&ledger),
             Arc::clone(&prices.repository),
             prices.settlement(),
-            ServiceOptions::default(),
+            ServiceOptions::default()
+                .with_health_stale_after(Duration::from_secs(options.health_stale_after_s())),
         );
         let runtime: Arc<dyn RuntimeView> = Arc::clone(&cache) as Arc<dyn RuntimeView>;
         let engine = Arc::new(engine.with_stream(Arc::new(handles.snapshots.clone()), runtime));

@@ -20,21 +20,17 @@ use crate::control::pacer::Pacer;
 use crate::control::pending::Pending;
 use crate::control::state::Inner;
 use crate::control::watch::RESTART_WINDOW;
+use crate::control::write_bound::{POLL_BUSY_TIMEOUT, bounded_write};
 use crate::error::BatteryError;
 use crate::report::Report;
 use crate::transport::{DeviceIo, WriteAck, WriteRequest};
 
-/// How long a restarted or wedged device is left alone before the next write attempt.
-///
-/// A pack whose local API restarted needs minutes, not one control tick: re-writing while it is
-/// still coming back is what produced the 20 s command stream in the 2026-11-21 incident.
+/// How long a restarted or wedged device is left alone before the next write attempt. Re-writing a
+/// rebooting pack produced the 20 s command stream in the 2026-11-21 incident.
 pub const FAULT_BACKOFF: Duration = Duration::from_secs(300);
 
-/// Emergency neutralising holds a wedged device gets per wedge episode before it is left alone.
-///
-/// A hold writes no `acMode`, so it is the one write the protocol still allows on a wedged AC path:
-/// it takes the pack off the AC side instead of leaving it at the last setpoint. The budget keeps a
-/// firmware that ignores holds from turning the failsafe into a write loop.
+/// Emergency neutralising holds a wedged device gets per wedge episode before it is left alone. A
+/// hold writes no `acMode`; the budget keeps a firmware that ignores holds from looping.
 pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 
 /// Safety-response bound for preempting an unresolved command, separate from the longer echo window.
@@ -113,7 +109,11 @@ impl<T: DeviceIo> DeviceController<T> {
     /// A wedge or a restart surfaces a fault and pushes the pacer out by [`FAULT_BACKOFF`].
     pub async fn poll(&self) -> Result<Observation, BatteryError> {
         let (report, (confirmed, partial, fault, resolved_request)) = {
-            let _transaction = self.transaction.lock().await;
+            let _transaction = tokio::time::timeout(POLL_BUSY_TIMEOUT, self.transaction.lock())
+                .await
+                .map_err(|_| BatteryError::Invalid {
+                    reason: format!("device {} is writing; poll skipped", self.transport.sn()),
+                })?;
             let report = self.transport.report().await?;
             let observed = self.record(&report);
             (report, observed)
@@ -163,7 +163,7 @@ impl<T: DeviceIo> DeviceController<T> {
                 pending.request_id,
                 pending.command.properties(),
             );
-            let outcome = self.transport.write(request).await;
+            let outcome = bounded_write(self.transport.sn(), self.transport.write(request)).await;
             let ack = self.finish(&pending, outcome);
             (pending, ack)
         };

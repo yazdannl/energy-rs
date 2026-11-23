@@ -16,8 +16,8 @@ use anyhow::{Result, bail};
 use energy_core::safety::Authority;
 
 use crate::bootstrap::option_value::{
-    ManualBattery, PriceChoice, Transport, batteries, env_string, env_u16, parse_mode, parse_price,
-    read_file, transport,
+    ManualBattery, PriceChoice, Transport, batteries, env_string, env_u16, env_u64, parse_mode,
+    parse_price, read_file, transport,
 };
 
 /// Default ingress port from `energy_rs/config.yaml`.
@@ -30,6 +30,7 @@ pub struct Options {
     data_dir: PathBuf,
     port: u16,
     tick_seconds: u64,
+    health_stale_after_s: u64,
     mode: Authority,
     log_level: String,
     price: PriceChoice,
@@ -47,6 +48,7 @@ impl fmt::Debug for Options {
             .field("data_dir", &self.data_dir)
             .field("port", &self.port)
             .field("tick_seconds", &self.tick_seconds)
+            .field("health_stale_after_s", &self.health_stale_after_s)
             .field("mode", &self.mode)
             .field("log_level", &self.log_level)
             .field("price", &self.price)
@@ -77,6 +79,10 @@ impl Options {
         Ok(Self {
             port: env_u16("INGRESS_PORT").unwrap_or(DEFAULT_PORT),
             tick_seconds: file.tick_seconds.unwrap_or(1).clamp(1, 60),
+            health_stale_after_s: env_u64("ENERGY_RS_HEALTH_STALE_AFTER_S")
+                .or(file.health_stale_after_s)
+                .unwrap_or(120)
+                .clamp(30, 600),
             mode: parse_mode(
                 env_string("ENERGY_RS_MODE")
                     .as_deref()
@@ -123,6 +129,11 @@ impl Options {
     /// The control tick, seconds: the grid follow runs this often.
     pub fn tick_seconds(&self) -> u64 {
         self.tick_seconds
+    }
+
+    /// Health staleness threshold, seconds.
+    pub fn health_stale_after_s(&self) -> u64 {
+        self.health_stale_after_s
     }
 
     /// Set a different control tick.

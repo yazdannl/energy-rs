@@ -43,16 +43,19 @@ impl Engine {
     /// One tick, without the orphan recovery the caller adds on failure.
     async fn tick_inner(&self, now: i64) -> Result<TickOutcome, EngineError> {
         let token = self.gate.token();
+        self.set_phase("fleet.read");
         let mut view = self.fleet.view(now).await?;
         self.mark(now)?;
         // The dashboard's battery power entity is optional; without it the site model cannot
         // balance the house, so the fleet's own measurement closes it here.
         let pack_w = (!view.packs.is_empty()).then(|| view.power_w());
+        self.set_phase("meter.read");
         let meter = self.meter.reading().await.with_pack_power(pack_w);
         self.mark(now)?;
         self.refresh_policy(now, &view, &meter);
         self.wire(now, &mut view)?;
         self.mark(now)?;
+        self.set_phase("plan.solve");
         let hold = self.maybe_replan(now, &view).await?;
         let prepared = self.prepare(now, &view, hold)?;
         let input = TickInput {
@@ -68,14 +71,17 @@ impl Engine {
             selection: prepared.selection.as_ref(),
         };
         let sink = self.guarded(token, now);
+        self.set_phase("dispatch.write");
         let outcome = self.dispatcher.tick(&input, &sink).await;
         self.mark(now)?;
         self.record(&outcome, now)?;
         // Packs we own but could not command this tick are held before the tick is called done.
+        self.set_phase("dispatch.reconcile");
         self.reconcile(now, &outcome).await?;
         // And a pack that says it is doing something else is a control fault, not a transport one.
         self.check_readback(now, &outcome, &view)?;
         self.publish_tick(now, &view, &meter);
+        self.set_phase("idle");
         Ok(outcome)
     }
 

@@ -83,7 +83,9 @@ impl Fixture {
             Arc::clone(&ledger),
             Arc::new(prices),
             Settlement::new(energy_price::Contract::zonneplan_2026()),
-            ServiceOptions::default().with_heartbeat(heartbeat),
+            ServiceOptions::default()
+                .with_heartbeat(heartbeat)
+                .with_health_stale_after(Duration::from_hours(24)),
         );
         let pack_sn = "AB2000-ONE".to_owned();
         let fixture = Self {

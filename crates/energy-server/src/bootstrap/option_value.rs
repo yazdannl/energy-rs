@@ -59,6 +59,8 @@ pub(crate) struct OptionsFile {
     pub(crate) batteries: Option<String>,
     /// The control tick; the add-on option is optional so an older options file stays valid.
     pub(crate) tick_seconds: Option<u64>,
+    /// Health staleness threshold; absent means the 120 s default.
+    pub(crate) health_stale_after_s: Option<u64>,
 }
 
 /// One battery from the options `batteries` JSON string.
@@ -90,6 +92,10 @@ pub(crate) fn env_string(name: &str) -> Option<String> {
 }
 
 pub(crate) fn env_u16(name: &str) -> Option<u16> {
+    env_string(name).and_then(|value| value.parse().ok())
+}
+
+pub(crate) fn env_u64(name: &str) -> Option<u64> {
     env_string(name).and_then(|value| value.parse().ok())
 }
 
