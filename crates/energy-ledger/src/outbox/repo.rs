@@ -1,6 +1,5 @@
 //! Reads and publishes pending learning audit events.
 
-use std::fmt::Write as _;
 use std::sync::MutexGuard;
 
 use chrono::Utc;
@@ -9,7 +8,12 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, param
 
 use crate::error::LedgerError;
 use crate::event::EventLevel;
-use crate::outbox::{PendingLearningEvent, PublishOutcome, QuarantinedEvent};
+use crate::outbox::{PendingLearningEvent, PublishOutcome, QuarantinedEvent, RawValue};
+
+/// SQLite type tag followed by the original bytes for every outbox payload field.
+const RAW_COLUMNS: &str = "typeof(pack_id), CAST(pack_id AS BLOB),
+                           typeof(at), CAST(at AS BLOB),
+                           typeof(summary), CAST(summary AS BLOB)";
 
 /// Repository for `learning_outbox` and its quarantine table.
 pub struct LearningOutbox<'a> {
@@ -21,10 +25,10 @@ impl<'a> LearningOutbox<'a> {
         Self { conn }
     }
 
-    /// Pending rows, oldest first. Malformed rows are quarantined and skipped, not fatal.
+    /// Pending rows, oldest first. Malformed rows are claimed and quarantined, not fatal.
     pub fn pending(&self) -> Result<Vec<PendingLearningEvent>, LedgerError> {
         let mut valid = Vec::new();
-        let mut poison = Vec::new();
+        let mut malformed = Vec::new();
         {
             let mut statement = self
                 .conn
@@ -34,25 +38,21 @@ impl<'a> LearningOutbox<'a> {
                 let id = row.get(0)?;
                 match decode(row) {
                     Ok(event) => valid.push(event),
-                    Err(error) => poison.push(QuarantineInput::malformed(row, id, &error)),
+                    Err(_) => malformed.push(id),
                 }
             }
         }
-        if !poison.is_empty() {
-            let tx = self.conn.unchecked_transaction()?;
-            let now = Utc::now().timestamp();
-            for row in &poison {
-                quarantine(&tx, row, now)?;
-            }
-            tx.commit()?;
+        for id in malformed {
+            self.settle_malformed(id)?;
         }
         Ok(valid)
     }
 
-    /// Quarantined payloads, oldest first, for inspection after a row-specific failure.
+    /// Quarantined payloads, oldest first, with original SQLite types and bytes.
     pub fn quarantined(&self) -> Result<Vec<QuarantinedEvent>, LedgerError> {
         let mut statement = self.conn.prepare(
-            "SELECT id, source_id, pack_id, at, summary, raw_pack_id, raw_at, raw_summary,
+            "SELECT id, source_id,
+                    pack_id_type, pack_id_blob, at_type, at_blob, summary_type, summary_blob,
                     reason, quarantined_at
              FROM learning_outbox_quarantine ORDER BY id",
         )?;
@@ -60,12 +60,9 @@ impl<'a> LearningOutbox<'a> {
             Ok(QuarantinedEvent {
                 id: row.get(0)?,
                 source_id: row.get(1)?,
-                pack_id: row.get(2)?,
-                at: row.get(3)?,
-                summary: row.get(4)?,
-                raw_pack_id: row.get(5)?,
-                raw_at: row.get(6)?,
-                raw_summary: row.get(7)?,
+                pack_id: raw_value(row, 2)?,
+                at: raw_value(row, 4)?,
+                summary: raw_value(row, 6)?,
                 reason: row.get(8)?,
                 quarantined_at: row.get(9)?,
             })
@@ -84,79 +81,140 @@ impl<'a> LearningOutbox<'a> {
     /// comes from the claimed row, never from the caller's possibly stale copy.
     pub fn publish(&self, event: &PendingLearningEvent) -> Result<PublishOutcome, LedgerError> {
         let tx = self.conn.unchecked_transaction()?;
-        let claimed = tx
-            .query_row(
-                "DELETE FROM learning_outbox WHERE id = ?1
-                 RETURNING id, pack_id, at, summary",
-                params![event.id],
-                decode,
-            )
-            .optional()?;
-        let Some(claimed) = claimed else {
+        let Some(claimed) = claim(&tx, event.id)? else {
             tx.commit()?;
             return Ok(PublishOutcome::AlreadyClaimed);
         };
-        match tx.execute(
-            "INSERT INTO events (ts, level, kind, message)
-             VALUES (?1, ?2, 'learning.applied', ?3)",
-            params![claimed.at, EventLevel::Info.as_str(), claimed.summary],
-        ) {
-            Ok(_) => {
-                tx.commit()?;
-                Ok(PublishOutcome::Published)
-            }
+        let outcome = settle(&tx, &claimed, Utc::now().timestamp())?;
+        tx.commit()?;
+        Ok(outcome)
+    }
+
+    /// Re-read and claim one row that failed the first decode. A prior claim is a no-op.
+    fn settle_malformed(&self, id: i64) -> Result<(), LedgerError> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some(claimed) = claim(&tx, id)? {
+            let _ = settle(&tx, &claimed, Utc::now().timestamp())?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+/// One claimed row, preserved with SQLite storage types and original bytes.
+struct Claimed {
+    id: i64,
+    pack_id: RawValue,
+    at: RawValue,
+    summary: RawValue,
+}
+
+impl Claimed {
+    fn decode(&self) -> Result<PendingLearningEvent, rusqlite::Error> {
+        Ok(PendingLearningEvent::new(
+            self.id,
+            decode_text(&self.pack_id, "pack_id")?,
+            decode_integer(&self.at, "at")?,
+            decode_text(&self.summary, "summary")?,
+        ))
+    }
+}
+
+fn claim(tx: &Transaction<'_>, id: i64) -> Result<Option<Claimed>, LedgerError> {
+    let sql = format!("DELETE FROM learning_outbox WHERE id = ?1 RETURNING id, {RAW_COLUMNS}");
+    tx.query_row(&sql, params![id], |row| {
+        Ok(Claimed {
+            id: row.get(0)?,
+            pack_id: raw_value(row, 1)?,
+            at: raw_value(row, 3)?,
+            summary: raw_value(row, 5)?,
+        })
+    })
+    .optional()
+    .map_err(Into::into)
+}
+
+fn settle(
+    tx: &Transaction<'_>,
+    claimed: &Claimed,
+    now: i64,
+) -> Result<PublishOutcome, LedgerError> {
+    match claimed.decode() {
+        Ok(event) => match insert_event(tx, &event) {
+            Ok(_) => Ok(PublishOutcome::Published),
             Err(error) if row_poison(&error) => {
-                let bad = QuarantineInput::poisoned(&claimed, error.to_string());
-                quarantine(&tx, &bad, Utc::now().timestamp())?;
-                tx.commit()?;
+                let reason = error.to_string();
+                quarantine(tx, claimed, &reason, now)?;
                 Ok(PublishOutcome::Quarantined)
             }
             Err(error) => Err(error.into()),
+        },
+        Err(error) => {
+            let reason = error.to_string();
+            quarantine(tx, claimed, &reason, now)?;
+            Ok(PublishOutcome::Quarantined)
         }
     }
 }
 
-/// A payload that cannot be journalled, kept verbatim where possible.
-struct QuarantineInput {
-    source_id: i64,
-    pack_id: String,
-    at: i64,
-    summary: String,
-    raw_pack_id: String,
-    raw_at: String,
-    raw_summary: String,
-    reason: String,
+fn insert_event(
+    tx: &Transaction<'_>,
+    event: &PendingLearningEvent,
+) -> Result<usize, rusqlite::Error> {
+    tx.execute(
+        "INSERT INTO events (ts, level, kind, message)
+         VALUES (?1, ?2, 'learning.applied', ?3)",
+        params![event.at, EventLevel::Info.as_str(), event.summary],
+    )
 }
 
-impl QuarantineInput {
-    fn poisoned(event: &PendingLearningEvent, reason: String) -> Self {
-        Self {
-            source_id: event.id,
-            pack_id: event.pack_id.clone(),
-            at: event.at,
-            summary: event.summary.clone(),
-            raw_pack_id: event.pack_id.clone(),
-            raw_at: event.at.to_string(),
-            raw_summary: event.summary.clone(),
+fn quarantine(
+    tx: &Transaction<'_>,
+    claimed: &Claimed,
+    reason: &str,
+    now: i64,
+) -> Result<(), LedgerError> {
+    let inserted = tx.execute(
+        "INSERT INTO learning_outbox_quarantine
+            (source_id, pack_id_type, pack_id_blob, at_type, at_blob,
+             summary_type, summary_blob, reason, quarantined_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(source_id) DO NOTHING",
+        params![
+            claimed.id,
+            claimed.pack_id.storage_type,
+            claimed.pack_id.bytes,
+            claimed.at.storage_type,
+            claimed.at.bytes,
+            claimed.summary.storage_type,
+            claimed.summary.bytes,
             reason,
-        }
+            now
+        ],
+    )?;
+    if inserted > 0 {
+        tx.execute(
+            "INSERT INTO events (ts, level, kind, message)
+             VALUES (?1, ?2, 'learning.outbox_quarantined', ?3)",
+            params![
+                now,
+                EventLevel::Error.as_str(),
+                format!(
+                    "outbox row {} for {}: {}",
+                    claimed.id,
+                    claimed.pack_id.label(),
+                    reason
+                )
+            ],
+        )?;
     }
+    Ok(())
+}
 
-    fn malformed(row: &Row<'_>, source_id: i64, error: &rusqlite::Error) -> Self {
-        let pack_id = row.get_ref(1).map_or_else(|_| "null".to_owned(), raw);
-        let at = row.get_ref(2).map_or_else(|_| "null".to_owned(), raw);
-        let summary = row.get_ref(3).map_or_else(|_| "null".to_owned(), raw);
-        Self {
-            source_id,
-            pack_id: pack_id.clone(),
-            at: 0,
-            summary: summary.clone(),
-            raw_pack_id: pack_id,
-            raw_at: at,
-            raw_summary: summary,
-            reason: error.to_string(),
-        }
-    }
+fn raw_value(row: &Row<'_>, index: usize) -> Result<RawValue, rusqlite::Error> {
+    let storage_type: String = row.get(index)?;
+    let bytes: Option<Vec<u8>> = row.get(index + 1)?;
+    Ok(RawValue::new(storage_type, bytes))
 }
 
 fn decode(row: &Row<'_>) -> Result<PendingLearningEvent, rusqlite::Error> {
@@ -172,28 +230,45 @@ fn text(value: ValueRef<'_>, field: &str) -> Result<String, rusqlite::Error> {
         ValueRef::Text(bytes) => String::from_utf8(bytes.to_vec()).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
         }),
-        other => Err(rusqlite::Error::InvalidColumnType(
-            0,
-            field.to_owned(),
-            other.data_type(),
-        )),
+        other => Err(type_error(field, other.data_type())),
     }
 }
 
-fn raw(value: ValueRef<'_>) -> String {
-    match value {
-        ValueRef::Null => "null".to_owned(),
-        ValueRef::Integer(value) => value.to_string(),
-        ValueRef::Real(value) => value.to_string(),
-        ValueRef::Text(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-        ValueRef::Blob(bytes) => {
-            let mut hex = String::with_capacity(bytes.len() * 2);
-            for byte in bytes {
-                let _ = write!(&mut hex, "{byte:02x}");
-            }
-            format!("blob[{}]:{hex}", bytes.len())
-        }
+fn decode_text(value: &RawValue, field: &str) -> Result<String, rusqlite::Error> {
+    match value.storage_type.as_str() {
+        "text" => String::from_utf8(value.bytes.clone()).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+        }),
+        "integer" => Err(type_error(field, Type::Integer)),
+        "real" => Err(type_error(field, Type::Real)),
+        "blob" => Err(type_error(field, Type::Blob)),
+        "null" => Err(type_error(field, Type::Null)),
+        other => Err(rusqlite::Error::InvalidParameterName(other.to_owned())),
     }
+}
+
+fn decode_integer(value: &RawValue, field: &str) -> Result<i64, rusqlite::Error> {
+    if value.storage_type != "integer" {
+        return Err(type_error(field, storage_type(&value.storage_type)));
+    }
+    let text = String::from_utf8(value.bytes.clone()).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+    })?;
+    text.parse().map_err(|_| type_error(field, Type::Integer))
+}
+
+fn storage_type(tag: &str) -> Type {
+    match tag {
+        "integer" => Type::Integer,
+        "real" => Type::Real,
+        "text" => Type::Text,
+        "blob" => Type::Blob,
+        _ => Type::Null,
+    }
+}
+
+fn type_error(field: &str, kind: Type) -> rusqlite::Error {
+    rusqlite::Error::InvalidColumnType(0, field.to_owned(), kind)
 }
 
 fn row_poison(error: &rusqlite::Error) -> bool {
@@ -205,41 +280,4 @@ fn row_poison(error: &rusqlite::Error) -> bool {
         rusqlite::Error::IntegralValueOutOfRange(..) | rusqlite::Error::NulError(_) => true,
         _ => false,
     }
-}
-
-fn quarantine(tx: &Transaction<'_>, bad: &QuarantineInput, now: i64) -> Result<(), LedgerError> {
-    tx.execute(
-        "INSERT INTO learning_outbox_quarantine
-            (source_id, pack_id, at, summary, raw_pack_id, raw_at, raw_summary, reason,
-             quarantined_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
-            bad.source_id,
-            bad.pack_id,
-            bad.at,
-            bad.summary,
-            bad.raw_pack_id,
-            bad.raw_at,
-            bad.raw_summary,
-            bad.reason,
-            now
-        ],
-    )?;
-    tx.execute(
-        "DELETE FROM learning_outbox WHERE id = ?1",
-        params![bad.source_id],
-    )?;
-    tx.execute(
-        "INSERT INTO events (ts, level, kind, message)
-         VALUES (?1, ?2, 'learning.outbox_quarantined', ?3)",
-        params![
-            now,
-            EventLevel::Error.as_str(),
-            format!(
-                "outbox row {} for {}: {}",
-                bad.source_id, bad.pack_id, bad.reason
-            )
-        ],
-    )?;
-    Ok(())
 }

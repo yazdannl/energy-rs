@@ -1,10 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fs::remove_file;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
-use crate::db::Ledger;
+use crate::db::{Ledger, LedgerConfig};
 
 fn seed(ledger: &Ledger, sn: &str, at: i64, summary: &str) -> PendingLearningEvent {
     let id = ledger
@@ -20,6 +23,29 @@ fn seed(ledger: &Ledger, sn: &str, at: i64, summary: &str) -> PendingLearningEve
     PendingLearningEvent::new(id, sn.to_owned(), at, summary.to_owned())
 }
 
+fn shared_ledger(name: &str) -> (Arc<Ledger>, PathBuf) {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "energy-outbox-{name}-{}-{nanos}.db",
+        std::process::id()
+    ));
+    remove_file(&path).ok();
+    let ledger =
+        Arc::new(Ledger::open(&LedgerConfig::at(&path).with_busy_timeout(5_000)).expect("ledger"));
+    (ledger, path)
+}
+
+fn cleanup(path: &Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        remove_file(PathBuf::from(name)).ok();
+    }
+}
+
 fn learning_events(ledger: &Ledger) -> Vec<crate::event::Event> {
     ledger
         .events()
@@ -28,6 +54,17 @@ fn learning_events(ledger: &Ledger) -> Vec<crate::event::Event> {
         .expect("read events")
         .into_iter()
         .filter(|event| event.kind == "learning.applied")
+        .collect()
+}
+
+fn alert_events(ledger: &Ledger) -> Vec<crate::event::Event> {
+    ledger
+        .events()
+        .expect("events")
+        .recent(1000)
+        .expect("read events")
+        .into_iter()
+        .filter(|event| event.kind == "learning.outbox_quarantined")
         .collect()
 }
 
@@ -119,15 +156,48 @@ fn a_poison_row_is_quarantined_and_does_not_block_the_next_row() {
     };
     assert_eq!(quarantined.len(), 1);
     assert_eq!(quarantined[0].source_id, poison.id);
-    assert_eq!(quarantined[0].summary, "poison");
+    assert_eq!(quarantined[0].summary.as_text(), Some("poison".as_bytes()));
     assert!(quarantined[0].reason.contains("poison payload"));
-    let events = ledger.events().expect("events").recent(1000).expect("read");
-    assert!(events.iter().any(|event| {
-        event.kind == "learning.outbox_quarantined"
-            && event.message.contains(&format!("row {}", poison.id))
-    }));
+    assert!(
+        alert_events(&ledger)[0]
+            .message
+            .contains(&format!("row {}", poison.id))
+    );
     assert_eq!(learning_events(&ledger).len(), 1);
     assert_eq!(learning_events(&ledger)[0].message, "healthy");
+}
+
+#[test]
+fn invalid_utf8_and_null_are_reconstructed_from_the_quarantine() {
+    let ledger = Arc::new(Ledger::open_in_memory().expect("ledger"));
+    ledger
+        .lock()
+        .expect("connection")
+        .execute(
+            "INSERT INTO learning_outbox (pack_id, at, summary)
+             VALUES (CAST(X'FFFE' AS TEXT), 123, NULL)",
+            [],
+        )
+        .expect("seed invalid utf8 and null");
+    let (pending, quarantined) = {
+        let outbox = ledger.learning_outbox().expect("outbox");
+        (
+            outbox.pending().expect("pending"),
+            outbox.quarantined().expect("quarantine"),
+        )
+    };
+
+    assert_eq!(pending, Vec::<PendingLearningEvent>::new());
+    assert_eq!(quarantined.len(), 1);
+    let row = &quarantined[0];
+    assert_eq!(row.pack_id.storage_type, "text");
+    assert_eq!(row.pack_id.as_text(), Some([0xFF, 0xFE].as_slice()));
+    assert_eq!(row.at.storage_type, "integer");
+    assert_eq!(row.at.bytes, b"123".to_vec());
+    assert!(row.summary.is_null());
+    assert_eq!(row.summary.as_text(), None);
+    assert_eq!(row.summary.bytes, Vec::<u8>::new());
+    assert_eq!(alert_events(&ledger).len(), 1);
 }
 
 #[test]
@@ -144,18 +214,63 @@ fn a_malformed_row_is_quarantined_and_valid_rows_still_replay() {
         .expect("seed malformed row");
     let (pending, quarantined) = {
         let outbox = ledger.learning_outbox().expect("outbox");
-        let pending = outbox.pending().expect("pending");
-        (pending, outbox.quarantined().expect("quarantine"))
+        (
+            outbox.pending().expect("pending"),
+            outbox.quarantined().expect("quarantine"),
+        )
     };
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, valid.id);
     assert_eq!(quarantined.len(), 1);
-    assert_eq!(quarantined[0].raw_summary, "bad payload");
-    assert!(quarantined[0].raw_at.contains("blob[1]:00"));
-    let events = ledger.events().expect("events").recent(1000).expect("read");
-    assert!(
-        events
-            .iter()
-            .any(|event| event.kind == "learning.outbox_quarantined")
+    assert_eq!(
+        quarantined[0].summary.as_text(),
+        Some("bad payload".as_bytes())
     );
+    assert_eq!(quarantined[0].at.storage_type, "blob");
+    assert_eq!(quarantined[0].at.bytes, vec![0]);
+    assert_eq!(alert_events(&ledger).len(), 1);
+}
+
+#[test]
+fn two_connections_racing_on_a_malformed_row_quarantine_once() {
+    let (first, path) = shared_ledger("malformed-race");
+    let second = Arc::new(
+        Ledger::open(&LedgerConfig::at(&path).with_busy_timeout(5_000)).expect("second ledger"),
+    );
+    first
+        .lock()
+        .expect("connection")
+        .execute(
+            "INSERT INTO learning_outbox (pack_id, at, summary) VALUES ('SN-RACE', 100, NULL)",
+            [],
+        )
+        .expect("seed malformed row");
+
+    thread::scope(|scope| {
+        for ledger in [&first, &second] {
+            let ledger = Arc::clone(ledger);
+            scope.spawn(move || {
+                ledger
+                    .learning_outbox()
+                    .expect("outbox")
+                    .pending()
+                    .expect("pending");
+            });
+        }
+    });
+
+    let quarantined = first
+        .learning_outbox()
+        .expect("outbox")
+        .quarantined()
+        .expect("quarantine");
+    assert_eq!(quarantined.len(), 1, "exactly one row is quarantined");
+    let remaining: i64 = first
+        .lock()
+        .expect("connection")
+        .query_row("SELECT COUNT(*) FROM learning_outbox", [], |row| row.get(0))
+        .expect("count source rows");
+    assert_eq!(remaining, 0);
+    assert_eq!(alert_events(&first).len(), 1, "no duplicate alert");
+    cleanup(&path);
 }
