@@ -109,6 +109,7 @@ impl Dispatcher {
     /// A changed plan was not written; the prior command still owns the device.
     fn blocked_sent() -> Sent {
         Sent {
+            blocked_by_pending: true,
             superseded: Some("previous command pending".to_owned()),
             applied_w_reason: Some(AppliedPowerReason::SampleStale),
             error: Some("previous command still pending; new setpoint not written".to_owned()),

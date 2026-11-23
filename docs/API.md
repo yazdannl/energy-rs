@@ -322,6 +322,12 @@ not be verified because the device did not answer carries reason
 `hold_unverifiable_device_unreachable`, distinct from a device refusal. On ledger rows written
 before these fields existed, `written` is `null` and `flowMeasured` mirrors `verified`.
 
+Known hardware behaviour (observed 2026-11-23 17:45Z): at 31–34 % SoC, three packs stopped
+accepting a commanded 800 W discharge (`pack ignored its command`, `written=false`) and a fourth
+current-limited to 176 W, despite each device reporting a 10 % minimum SoC. This is a low-SoC
+taper/refusal in the pack model, not a controller fault for 0.15.x to "fix"; the rewrite should
+expect it when predicting available discharge power.
+
 ### `GET /savings?period=...`
 
 Measured accounting from `savings_daily`, never from planned values. `day` is today (local),

@@ -106,6 +106,9 @@ impl Dispatcher {
                         input.now,
                         "send exceeded the end-to-end pack budget",
                     );
+                    // The caller-side timeout may cancel the sink before its own handler marks the
+                    // controller, so the uncertainty marking must happen here too.
+                    sink.mark_uncertain(&budgeted_plan.pack_id, "dispatch");
                     return row::finish(self, budgeted_plan, row::deadline_sent());
                 };
                 report

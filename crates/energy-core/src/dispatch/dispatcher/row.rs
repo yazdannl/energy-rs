@@ -25,10 +25,7 @@ pub(super) fn finish(dispatcher: &Dispatcher, plan: Planned, mut sent: Sent) -> 
         applied_w: sent.applied_w,
         flow_measured: sent.flow_measured,
         applied_w_reason,
-        reason: if let Some(phase) = &sent.timeout {
-            sent.error = Some(format!(
-                "send timed out in {phase}; device state uncertain; verified hold attempted"
-            ));
+        reason: if sent.timeout.is_some() {
             Reason::SendTimedOut
         } else if sent.blocked_by_pending {
             Reason::PreviousCommandPending
@@ -54,6 +51,10 @@ pub(super) fn deadline_sent() -> Sent {
     Sent {
         timeout: Some("dispatch".to_owned()),
         applied_w_reason: Some(AppliedPowerReason::ReadFailed),
+        error: Some(
+            "send exceeded the end-to-end pack budget; device state uncertain; no hold attempted by this tick"
+                .to_owned(),
+        ),
         ..Sent::none()
     }
 }

@@ -144,6 +144,15 @@ fn phase_name(phase: u8) -> &'static str {
 }
 
 impl<T: DeviceIo> CommandSink for BatterySink<T> {
+    fn mark_uncertain(&self, pack_id: &str, phase: &str) {
+        if let Some(controller) = self.devices.get(pack_id) {
+            mark_uncertain_write(
+                controller,
+                format!("{phase} exceeded the {PACK_IO_BUDGET:?} pack budget"),
+            );
+        }
+    }
+
     fn write(&self, pack_id: &str, watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
         let command = command_for(watts);
         Box::pin(self.send(pack_id.to_owned(), command, None, 0))

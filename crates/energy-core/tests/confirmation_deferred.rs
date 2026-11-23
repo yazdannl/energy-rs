@@ -11,8 +11,8 @@
 
 mod support;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -91,9 +91,19 @@ impl DeviceIo for NeverConfirms {
 }
 
 /// A sink whose transport never returns: the enclosing per-pack deadline must fire.
-struct HangingSink;
+struct HangingSink {
+    marked: Mutex<Vec<String>>,
+}
 
 impl CommandSink for HangingSink {
+    fn mark_uncertain(&self, pack_id: &str, phase: &str) {
+        assert_eq!(
+            phase, "dispatch",
+            "the caller-side deadline names its phase"
+        );
+        self.marked.lock().unwrap().push(pack_id.to_owned());
+    }
+
     fn write(&self, _pack_id: &str, _watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
         Box::pin(async {
             tokio::time::sleep(Duration::from_secs(120)).await;
@@ -229,7 +239,10 @@ async fn a_per_pack_deadline_is_reported_as_uncertain_not_accepted() {
     };
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
     let started = tokio::time::Instant::now();
-    let outcome = dispatcher.tick(&input, &HangingSink).await;
+    let sink = HangingSink {
+        marked: Mutex::new(Vec::new()),
+    };
+    let outcome = dispatcher.tick(&input, &sink).await;
     assert_eq!(
         started.elapsed(),
         energy_battery::control::PACK_IO_BUDGET,
@@ -246,7 +259,64 @@ async fn a_per_pack_deadline_is_reported_as_uncertain_not_accepted() {
         "the phase must be named: {row:?}"
     );
     assert!(
+        !row.error
+            .as_deref()
+            .is_some_and(|error| error.contains("verified hold attempted")),
+        "no recovery was attempted inside a cancelled send: {row:?}"
+    );
+    assert!(
+        sink.marked.lock().unwrap().contains(&SLOW_SN.to_owned()),
+        "the caller-side deadline must mark every cancelled pack uncertain"
+    );
+    assert!(
         dispatcher.faults().blocking(SLOW_SN, NOW),
         "the uncertain command must arm backoff"
+    );
+}
+
+/// The blocked flag must survive into the published row, not fall back to the plan reason.
+#[tokio::test]
+async fn a_blocked_receipt_names_the_blocked_command_in_the_row() {
+    struct BlockedSink;
+
+    impl CommandSink for BlockedSink {
+        fn write(
+            &self,
+            _pack_id: &str,
+            _watts: f64,
+        ) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+            Box::pin(async { Ok(WriteReceipt::blocked_by_pending()) })
+        }
+
+        fn hold(&self, _pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+            Box::pin(async { Ok(WriteReceipt::verified(0.0)) })
+        }
+    }
+
+    let (_, fleet, plan, overrides) = fixture().await;
+    let meter = MeterReading::default();
+    let input = TickInput {
+        now: NOW,
+        mode: Authority::Auto,
+        plan: Some(&plan),
+        fleet: &fleet,
+        meter: &meter,
+        latches: &[],
+        overrides: &overrides,
+        stale: false,
+        progress: None,
+        selection: None,
+    };
+    let outcome = Dispatcher::new(SafetyLimits::default(), true, 10)
+        .tick(&input, &BlockedSink)
+        .await;
+    let row = outcome.report(SLOW_SN).expect("a row per pack");
+    assert_eq!(row.reason, Reason::PreviousCommandPending, "{row:?}");
+    assert!(!row.written && !row.verified, "{row:?}");
+    assert!(
+        row.error
+            .as_deref()
+            .is_some_and(|error| error.contains("previous command")),
+        "{row:?}"
     );
 }
