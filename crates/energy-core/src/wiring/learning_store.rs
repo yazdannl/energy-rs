@@ -83,10 +83,13 @@ impl LearningStore for LedgerLearningStore {
     }
 
     fn publish_event(&self, event: &LearningEvent) -> Result<(), BatteryError> {
+        // A duplicate claim or a quarantined row is not a pass failure: the audit payload is
+        // either already journalled or preserved for inspection.
         self.ledger
             .learning_outbox()
             .map_err(|error| store(&error))?
             .publish(&pending(event))
+            .map(|_| ())
             .map_err(|error| store(&error))
     }
 }

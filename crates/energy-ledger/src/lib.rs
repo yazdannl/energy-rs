@@ -21,6 +21,7 @@
 //! | `meta` | schema version and run metadata |
 //! | `settings` / `settings_history` | current settings plus the as-of history |
 //! | `learning_outbox` | learning audit rows committed with their profile until journalled |
+//! | `learning_outbox_quarantine` | poisoned audit payloads kept for inspection |
 //!
 //! Price tables (`price_publications`, `price_slots`) belong to `energy-price`; forecast caches
 //! belong to `energy-forecast`. The ledger never creates, migrates or writes them, so the two
@@ -76,7 +77,7 @@ pub use dispatch::DispatchEntry;
 pub use error::LedgerError;
 pub use event::{Event, EventLevel};
 pub use measurement::{Measurement, RollupReport, Sample, SampleKind, Tier};
-pub use outbox::{LearningOutbox, PendingLearningEvent};
+pub use outbox::{LearningOutbox, PendingLearningEvent, PublishOutcome, QuarantinedEvent};
 pub use pack::{Pack, PackState};
 pub use plan::{Plan, PlanSlot};
 pub use retention::{RetentionPolicy, RetentionReport};

@@ -175,7 +175,7 @@ impl Ledger {
         self.run_retention(Utc::now().timestamp())
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, Connection>, LedgerError> {
+    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>, LedgerError> {
         self.conn.lock().map_err(|_| LedgerError::Poisoned)
     }
 }
