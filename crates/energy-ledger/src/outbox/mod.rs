@@ -13,4 +13,6 @@ pub use raw::RawValue;
 pub use repo::LearningOutbox;
 
 #[cfg(test)]
+mod raw_tests;
+#[cfg(test)]
 mod repo_tests;

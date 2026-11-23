@@ -10,10 +10,19 @@ use crate::error::LedgerError;
 use crate::event::EventLevel;
 use crate::outbox::{PendingLearningEvent, PublishOutcome, QuarantinedEvent, RawValue};
 
-/// SQLite type tag followed by the original bytes for every outbox payload field.
-const RAW_COLUMNS: &str = "typeof(pack_id), CAST(pack_id AS BLOB),
-                           typeof(at), CAST(at AS BLOB),
-                           typeof(summary), CAST(summary AS BLOB)";
+/// SQLite type tag followed by lossless bytes for every outbox payload field.
+///
+/// REALs use `printf('%!.17g')`, which round-trips IEEE-754 doubles; `CAST(real AS BLOB)` would
+/// only keep SQLite's shorter text rendering.
+const RAW_COLUMNS: &str = "typeof(pack_id),
+    CASE WHEN typeof(pack_id) = 'real' THEN CAST(printf('%!.17g', pack_id) AS BLOB)
+         ELSE CAST(pack_id AS BLOB) END,
+    typeof(at),
+    CASE WHEN typeof(at) = 'real' THEN CAST(printf('%!.17g', at) AS BLOB)
+         ELSE CAST(at AS BLOB) END,
+    typeof(summary),
+    CASE WHEN typeof(summary) = 'real' THEN CAST(printf('%!.17g', summary) AS BLOB)
+         ELSE CAST(summary AS BLOB) END";
 
 /// Repository for `learning_outbox` and its quarantine table.
 pub struct LearningOutbox<'a> {

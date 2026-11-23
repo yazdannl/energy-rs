@@ -39,6 +39,17 @@ impl RawValue {
         (self.storage_type == "text").then_some(self.bytes.as_slice())
     }
 
+    /// The original IEEE-754 double when this was a REAL.
+    ///
+    /// REAL bytes are stored as `printf('%!.17g')` text, so this parser reconstructs the exact
+    /// original value.
+    pub fn as_real(&self) -> Option<f64> {
+        if self.storage_type != "real" {
+            return None;
+        }
+        std::str::from_utf8(&self.bytes).ok()?.parse().ok()
+    }
+
     /// Whether this was a genuine SQL NULL.
     pub fn is_null(&self) -> bool {
         self.storage_type == "null"
