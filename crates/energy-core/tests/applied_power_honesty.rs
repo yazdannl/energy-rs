@@ -5,7 +5,9 @@
     clippy::expect_used,
     clippy::panic,
     clippy::float_cmp,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines
 )]
 
 mod support;
@@ -20,31 +22,63 @@ use energy_battery::{
     WriteRequest, parse_report,
 };
 use energy_core::dispatch::{
-    AppliedPowerReason, BatterySink, Dispatcher, FleetView, MeterReading, Overrides, TickInput,
+    AppliedPowerReason, BatterySink, Dispatcher, FleetView, MeterReading, Overrides, PackReport,
+    TickInput,
 };
 use energy_core::safety::{Authority, SafetyLimits};
 use serde_json::json;
 use support::fakes::{NOW, pack, plan};
 
 const SN: &str = "SN-A";
+const FRESHNESS: Duration = Duration::from_secs(30);
+const STALE_AGE_S: i64 = 60;
+
+/// A report echo: input limit, output limit, grid input, home output.
+type Echo = (i64, i64, i64, i64);
+
+/// Which dispatcher command this device should receive.
+#[derive(Clone, Copy)]
+enum Case {
+    /// A full 400 W charge: fresh flow is 400 W.
+    Charge,
+    /// A 400 W charge echoed at 396 W with 20 W flowing: a genuine partial observation.
+    Partial,
+    /// A 0 W hold: fresh power is genuinely idle.
+    Hold,
+}
 
 struct ScriptedDevice {
     message_id: Mutex<u32>,
+    echo: Mutex<Echo>,
     age_s: i64,
+    partial: bool,
     fail_reads: AtomicBool,
+    refuse_write: AtomicBool,
 }
 
 impl ScriptedDevice {
     fn new(age_s: i64) -> Self {
         Self {
             message_id: Mutex::new(0),
+            echo: Mutex::new((0, 0, 0, 0)),
             age_s,
+            partial: false,
             fail_reads: AtomicBool::new(false),
+            refuse_write: AtomicBool::new(false),
         }
+    }
+
+    fn partial(mut self) -> Self {
+        self.partial = true;
+        self
     }
 
     fn fail_reads(&self) {
         self.fail_reads.store(true, Ordering::Relaxed);
+    }
+
+    fn refuse_write(&self) {
+        self.refuse_write.store(true, Ordering::Relaxed);
     }
 }
 
@@ -65,6 +99,7 @@ impl DeviceIo for ScriptedDevice {
         }
         let mut id = self.message_id.lock().expect("message id");
         *id += 1;
+        let (input_limit, output_limit, grid_w, home_w) = *self.echo.lock().expect("echo");
         let document = json!({
             "timestamp": Utc::now().timestamp() - self.age_s,
             "messageId": *id,
@@ -75,9 +110,10 @@ impl DeviceIo for ScriptedDevice {
                 "acMode": 1,
                 "acStatus": 2,
                 "dcStatus": 1,
-                "inputLimit": 400,
-                "outputLimit": 0,
-                "gridInputPower": 400,
+                "inputLimit": input_limit,
+                "outputLimit": output_limit,
+                "gridInputPower": grid_w,
+                "outputHomePower": home_w,
                 "chargeMaxLimit": 1000,
                 "inverseMaxPower": 800
             },
@@ -92,7 +128,28 @@ impl DeviceIo for ScriptedDevice {
         })
     }
 
-    fn write(&self, _: WriteRequest) -> IoFuture<'_, Result<WriteAck, BatteryError>> {
+    fn write(&self, request: WriteRequest) -> IoFuture<'_, Result<WriteAck, BatteryError>> {
+        if self.refuse_write.swap(false, Ordering::Relaxed) {
+            return Box::pin(async {
+                Err(BatteryError::Rejected {
+                    code: 400,
+                    message: "device refused the write".to_owned(),
+                })
+            });
+        }
+        let properties = request.properties();
+        let input = i64::from(properties.input_limit().unwrap_or(0));
+        let output = i64::from(properties.output_limit().unwrap_or(0));
+        let echo = if input == 0 && output == 0 {
+            (0, 0, 0, 0)
+        } else if self.partial {
+            (input - 4, output, 20, 0)
+        } else if input > 0 {
+            (input, output, 400, 0)
+        } else {
+            (input, output, 0, 300)
+        };
+        *self.echo.lock().expect("echo") = echo;
         Box::pin(async {
             Ok(WriteAck {
                 timestamp: None,
@@ -104,11 +161,11 @@ impl DeviceIo for ScriptedDevice {
     }
 }
 
-async fn tick(
+async fn tick_case(
     device: &std::sync::Arc<ScriptedDevice>,
-    freshness: Duration,
     fail_after_prime: bool,
-) -> (energy_core::dispatch::PackReport, f64) {
+    case: Case,
+) -> (PackReport, f64) {
     let controller = std::sync::Arc::new(DeviceController::new(
         std::sync::Arc::clone(device),
         ControlLimits::unlimited(),
@@ -118,10 +175,14 @@ async fn tick(
         device.fail_reads();
     }
     let sink = std::sync::Arc::new(
-        BatterySink::new(vec![std::sync::Arc::clone(&controller)], freshness)
+        BatterySink::new(vec![std::sync::Arc::clone(&controller)], FRESHNESS)
             .with_confirm_window(Duration::from_millis(100)),
     );
-    let plan = plan(NOW, 0.4, 0.96);
+    let power_kw = match case {
+        Case::Hold => 0.0,
+        Case::Charge | Case::Partial => 0.4,
+    };
+    let plan = plan(NOW, power_kw, 0.96);
     let fleet = FleetView::new(vec![pack(SN, 50.0)]);
     let meter = MeterReading {
         grid_w: Some(403.792),
@@ -148,21 +209,22 @@ async fn tick(
     )
 }
 
+fn assert_unmeasured(report: &PackReport, reason: AppliedPowerReason) {
+    assert_eq!(report.applied_w, 0.0);
+    assert!(!report.flow_measured);
+    assert_eq!(report.applied_w_reason, Some(reason));
+}
+
 #[tokio::test]
 async fn a_stale_nonzero_sample_has_null_applied_w_and_sample_stale_reason() {
-    let device = std::sync::Arc::new(ScriptedDevice::new(60));
-    let (report, independent_grid_w) = tick(&device, Duration::from_secs(30), false).await;
+    let device = std::sync::Arc::new(ScriptedDevice::new(STALE_AGE_S));
+    let (report, independent_grid_w) = tick_case(&device, false, Case::Charge).await;
 
     assert!(
         independent_grid_w.abs() > 1.0,
         "an independent meter sees real power"
     );
-    assert_eq!(report.applied_w, 0.0);
-    assert!(!report.flow_measured);
-    assert_eq!(
-        report.applied_w_reason,
-        Some(AppliedPowerReason::SampleStale)
-    );
+    assert_unmeasured(&report, AppliedPowerReason::SampleStale);
     assert!(
         report.verified,
         "the echo landed; only the sample was stale"
@@ -172,20 +234,81 @@ async fn a_stale_nonzero_sample_has_null_applied_w_and_sample_stale_reason() {
 #[tokio::test]
 async fn a_failed_read_has_null_applied_w_and_read_failed_reason() {
     let device = std::sync::Arc::new(ScriptedDevice::new(0));
-    let (report, _) = tick(&device, Duration::from_secs(30), true).await;
+    let (report, _) = tick_case(&device, true, Case::Charge).await;
 
-    assert_eq!(report.applied_w, 0.0);
-    assert!(!report.flow_measured);
-    assert_eq!(
-        report.applied_w_reason,
-        Some(AppliedPowerReason::ReadFailed)
-    );
+    assert_unmeasured(&report, AppliedPowerReason::ReadFailed);
     assert!(
         report
             .error
             .as_deref()
             .is_some_and(|error| error.contains("request failed")),
         "the row must name the failed read: {:?}",
+        report.error
+    );
+}
+
+#[tokio::test]
+async fn a_stale_partial_observation_has_null_applied_w_and_sample_stale_reason() {
+    let device = std::sync::Arc::new(ScriptedDevice::new(STALE_AGE_S).partial());
+    let (report, independent_grid_w) = tick_case(&device, false, Case::Partial).await;
+
+    assert!(independent_grid_w.abs() > 1.0);
+    assert_unmeasured(&report, AppliedPowerReason::SampleStale);
+    assert!(
+        report
+            .error
+            .as_deref()
+            .is_none_or(|error| !error.contains("NoFlow")),
+        "partial flow is not a failed start: {:?}",
+        report.error
+    );
+}
+
+#[tokio::test]
+async fn a_stale_hold_has_null_applied_w_and_sample_stale_reason() {
+    let device = std::sync::Arc::new(ScriptedDevice::new(STALE_AGE_S));
+    let (report, _) = tick_case(&device, false, Case::Hold).await;
+
+    assert_unmeasured(&report, AppliedPowerReason::SampleStale);
+    assert!(
+        report.verified,
+        "the hold echo landed; the sample was stale"
+    );
+}
+
+#[tokio::test]
+async fn a_measured_fail_safe_hold_has_no_applied_power_reason() {
+    let device = std::sync::Arc::new(ScriptedDevice::new(0));
+    device.refuse_write();
+    let (report, _) = tick_case(&device, false, Case::Charge).await;
+
+    assert!(report.fail_safe);
+    assert!(report.flow_measured);
+    assert_eq!(report.applied_w_reason, None);
+    assert!(
+        report
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("fail-safe hold")),
+        "the earlier refusal belongs in the error: {:?}",
+        report.error
+    );
+}
+
+#[tokio::test]
+async fn a_stale_fail_safe_hold_has_null_applied_w_and_sample_stale_reason() {
+    let device = std::sync::Arc::new(ScriptedDevice::new(STALE_AGE_S));
+    device.refuse_write();
+    let (report, _) = tick_case(&device, false, Case::Charge).await;
+
+    assert_unmeasured(&report, AppliedPowerReason::SampleStale);
+    assert!(report.fail_safe);
+    assert!(
+        report
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("fail-safe hold")),
+        "the original refusal stays in the error: {:?}",
         report.error
     );
 }

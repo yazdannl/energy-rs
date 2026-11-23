@@ -9,9 +9,10 @@
 
 mod support;
 
+use axum::http::Method;
 use chrono::{DateTime, SecondsFormat, Utc};
 use energy_ledger::DispatchEntry;
-use support::{Fixture, get};
+use support::{Fixture, get, send_text};
 
 fn stamp(epoch: i64) -> String {
     DateTime::from_timestamp(epoch, 0)
@@ -228,6 +229,91 @@ async fn a_stale_dispatch_row_has_null_applied_w_while_the_meter_reports_power()
         snapshot.meter.expect("meter").grid_w.abs() > 1.0,
         "an independent meter still reports real power"
     );
+}
+
+#[tokio::test]
+async fn a_serialized_dispatch_row_has_applied_w_literal_null() {
+    let fixture = Fixture::new();
+    let pack = fixture
+        .ledger
+        .packs()
+        .expect("packs")
+        .all()
+        .expect("rows")
+        .first()
+        .expect("a pack")
+        .id;
+    let row = DispatchEntry::new(
+        Utc::now().timestamp(),
+        Some(pack),
+        403.792,
+        0.0,
+        "watchdog_hold",
+        "auto",
+    )
+    .with_applied_w_reason("sample_stale")
+    .failed("device did not answer");
+    fixture
+        .ledger
+        .dispatch()
+        .expect("dispatch")
+        .insert(&row)
+        .expect("stale row");
+
+    let (status, body) = send_text(
+        &fixture.router(),
+        Method::GET,
+        "/api/v1/dispatch?limit=1",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(
+        body.contains("\"appliedW\":null"),
+        "a consumer must see JSON null, not a number: {body}"
+    );
+    assert!(body.contains("\"flowMeasured\":false"), "{body}");
+    assert!(
+        body.contains("\"appliedWReason\":\"sample_stale\""),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn a_genuinely_measured_zero_stays_numeric_zero() {
+    let fixture = Fixture::new();
+    let pack = fixture
+        .ledger
+        .packs()
+        .expect("packs")
+        .all()
+        .expect("rows")
+        .first()
+        .expect("a pack")
+        .id;
+    let row = DispatchEntry::new(Utc::now().timestamp(), Some(pack), 0.0, 0.0, "hold", "auto")
+        .verified(0.0);
+    fixture
+        .ledger
+        .dispatch()
+        .expect("dispatch")
+        .insert(&row)
+        .expect("measured zero row");
+
+    let (status, body) = send_text(
+        &fixture.router(),
+        Method::GET,
+        "/api/v1/dispatch?limit=1",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(
+        body.contains("\"appliedW\":0"),
+        "measured zero is a JSON number: {body}"
+    );
+    assert!(body.contains("\"flowMeasured\":true"), "{body}");
+    assert!(!body.contains("\"appliedW\":null"), "{body}");
 }
 
 #[tokio::test]

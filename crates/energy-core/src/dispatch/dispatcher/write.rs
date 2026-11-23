@@ -37,10 +37,9 @@ impl Dispatcher {
             },
             // Real but low flow is a completed episode, not a fault: keep ownership, make no hold,
             // and pause ordinary writes so a current-limited pack is not re-commanded every tick.
-            Ok(receipt) if receipt.partial => Sent {
-                flow_measured: true,
-                ..self.curtailed(progress, pack_id, receipt.applied_w, context.now)
-            },
+            Ok(receipt) if receipt.partial => {
+                self.curtailed(progress, pack_id, &receipt, context.now)
+            }
             Ok(receipt) => {
                 // Progress means work happened: a failed write is the watchdog's business, not a
                 // heartbeat.
@@ -83,19 +82,25 @@ impl Dispatcher {
         &self,
         progress: Option<&dyn Progress>,
         pack_id: &str,
-        applied_w: f64,
+        receipt: &WriteReceipt,
         now: i64,
     ) -> Sent {
         advance(progress, now);
-        let cause = format!(
-            "pack is current-limited at {:.0} W; keeping the command",
-            applied_w.abs()
-        );
+        let cause = if receipt.flow_measured {
+            format!(
+                "pack is current-limited at {:.0} W; keeping the command",
+                receipt.applied_w.abs()
+            )
+        } else {
+            "partial command; flow unknown".to_owned()
+        };
         self.faults
             .arm_pause(pack_id, now, &cause, CURTAILMENT_PAUSE_S);
         Sent {
             written: true,
-            applied_w,
+            flow_measured: receipt.flow_measured,
+            applied_w: receipt.applied_w,
+            applied_w_reason: receipt_reason(receipt, None),
             ..Sent::none()
         }
     }
@@ -168,15 +173,15 @@ impl Dispatcher {
 }
 
 /// Why a receipt carries no measured watts: a fresh-sample failure unless a read already failed.
+/// A receipt only exists after a successful read, so its unmeasured watts are stale/unusable —
+/// not a read failure. Preserve an earlier read failure only when the hold is also unmeasured.
 fn receipt_reason(
     receipt: &WriteReceipt,
     fallback: Option<AppliedPowerReason>,
 ) -> Option<AppliedPowerReason> {
-    fallback.or(if receipt.flow_measured {
+    if receipt.flow_measured {
         None
-    } else if receipt.verified {
-        Some(AppliedPowerReason::SampleStale)
     } else {
-        Some(AppliedPowerReason::ReadFailed)
-    })
+        fallback.or(Some(AppliedPowerReason::SampleStale))
+    }
 }
