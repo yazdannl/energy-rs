@@ -8,6 +8,7 @@ members = [
     "crates/energy-battery",
     "crates/energy-ledger",
     "crates/energy-core",
+    "crates/energy-decide",
     "crates/energy-server",
 ]
 
@@ -65,6 +66,7 @@ doc_markdown = "allow"
 # Internal crates (layered: core -> server, everything below is a leaf).
 energy-battery = { path = "crates/energy-battery" }
 energy-core = { path = "crates/energy-core" }
+energy-decide = { path = "crates/energy-decide" }
 energy-forecast = { path = "crates/energy-forecast" }
 energy-ha = { path = "crates/energy-ha" }
 energy-ledger = { path = "crates/energy-ledger" }

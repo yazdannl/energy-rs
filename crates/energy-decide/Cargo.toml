@@ -1,0 +1,16 @@
+[package]
+name = "energy-decide"
+description = "Pure-Rust decision core: horizon, optimizer, plan assembly and dispatch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

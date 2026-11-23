@@ -1,0 +1,47 @@
+//! M1: turn a price book and grid-source input into a typed horizon.
+
+pub mod acked_regime;
+pub mod assemble;
+pub mod attempt;
+pub mod budget;
+pub mod coverage;
+pub mod empty_reason;
+pub mod grid_series;
+pub mod grid_source;
+pub mod input;
+pub mod notice_log;
+pub mod operator_override;
+pub mod outcome;
+pub mod price_slot;
+pub mod refusal;
+pub mod regime;
+pub mod schedule;
+pub mod settlement;
+pub mod settlement_reason;
+pub mod source_coverage;
+pub mod source_outcome;
+pub mod sum;
+pub mod typed;
+
+pub use acked_regime::AcknowledgedRegime;
+pub use assemble::assemble_horizon;
+pub use attempt::HorizonAttempt;
+pub use budget::BudgetState;
+pub use coverage::Coverage;
+pub use empty_reason::EmptyReason;
+pub use grid_series::GridSeries;
+pub use grid_source::GridSource;
+pub use input::HorizonInput;
+pub use notice_log::NoticeLog;
+pub use operator_override::OperatorOverride;
+pub use outcome::HorizonOutcome;
+pub use price_slot::PriceSlot;
+pub use refusal::HorizonRefusal;
+pub use regime::NetMeteringRegime;
+pub use schedule::{NetMeteringSchedule, build_schedule};
+pub use settlement::{SlotSettlement, local_year, netting_boundary_utc, settle_slot};
+pub use settlement_reason::SettlementReason;
+pub use source_coverage::GridSourceCoverage;
+pub use source_outcome::SourceOutcome;
+pub use sum::sum_grid_sources;
+pub use typed::Horizon;
