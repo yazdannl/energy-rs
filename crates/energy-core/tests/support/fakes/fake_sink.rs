@@ -18,6 +18,7 @@ use std::time::Duration;
 use energy_battery::ControlFault;
 use energy_core::dispatch::{BoxFuture, CommandSink, Progress, SinkError, WriteReceipt};
 
+use super::NOW;
 use super::sent::Sent;
 
 /// A hook that runs at the instant of the transport write.
@@ -37,6 +38,7 @@ pub struct FakeSink {
     hold_delays: Mutex<BTreeMap<String, Duration>>,
     stuck_holds: Mutex<BTreeSet<String>>,
     fenced_holds: Mutex<BTreeSet<String>>,
+    hold_errors: Mutex<BTreeMap<String, SinkError>>,
     hold_observer: Mutex<Option<Observer>>,
     /// Return this typed fault for the pack's next write (then clear it).
     faults: Mutex<BTreeMap<String, ControlFault>>,
@@ -56,6 +58,7 @@ impl Default for FakeSink {
             hold_delays: Mutex::new(BTreeMap::new()),
             stuck_holds: Mutex::new(BTreeSet::new()),
             fenced_holds: Mutex::new(BTreeSet::new()),
+            hold_errors: Mutex::new(BTreeMap::new()),
             hold_observer: Mutex::new(None),
             faults: Mutex::new(BTreeMap::new()),
         }
@@ -102,6 +105,14 @@ impl FakeSink {
             .lock()
             .expect("sink stuck holds")
             .insert(pack_id.to_owned());
+    }
+
+    /// Return a typed error for this pack's hold, to distinguish a dead transport from a refusal.
+    pub fn fail_hold(&self, pack_id: &str, error: SinkError) {
+        self.hold_errors
+            .lock()
+            .expect("sink hold errors")
+            .insert(pack_id.to_owned(), error);
     }
 
     /// This pack's hold is refused by the transport's generation check: no write, no echo.
@@ -229,13 +240,18 @@ impl CommandSink for FakeSink {
             if curtail > 0 {
                 return Ok(WriteReceipt::partial(
                     curtail.min(watts.abs() as i64) as f64 * watts.signum(),
-                ));
+                )
+                .with_measurement(NOW));
             }
             Ok(WriteReceipt {
                 applied_w: watts,
                 verified,
                 partial: false,
                 superseded: false,
+                flow_measured: true,
+                measured_at: Some(NOW),
+                confirmation_pending: false,
+                blocked_by_pending: false,
             })
         })
     }
@@ -270,6 +286,12 @@ impl CommandSink for FakeSink {
             .expect("sink fenced holds")
             .contains(pack_id);
         let unverified = self.unverified_holds.load(Ordering::Relaxed);
+        let hold_error = self
+            .hold_errors
+            .lock()
+            .expect("sink hold errors")
+            .get(pack_id)
+            .cloned();
         let pack_id = pack_id.to_owned();
         Box::pin(async move {
             if !delay.is_zero() {
@@ -281,6 +303,9 @@ impl CommandSink for FakeSink {
             if fenced {
                 return Err(SinkError::Fenced { pack_id });
             }
+            if let Some(error) = hold_error {
+                return Err(error);
+            }
             if pack_id == "SN-FAIL" {
                 return Err(SinkError::UnknownPack { pack_id });
             }
@@ -289,6 +314,10 @@ impl CommandSink for FakeSink {
                 verified: !unverified,
                 partial: false,
                 superseded: false,
+                flow_measured: true,
+                measured_at: Some(NOW),
+                confirmation_pending: false,
+                blocked_by_pending: false,
             })
         })
     }

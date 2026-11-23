@@ -10,7 +10,7 @@
 
 mod support;
 
-use energy_core::dispatch::{PackFlow, PackReading};
+use energy_core::dispatch::{AppliedPowerReason, PackFlow, PackReading};
 use energy_core::safety::Authority;
 
 use support::fakes::{NOW, pack, plan};
@@ -124,6 +124,10 @@ async fn a_stale_or_unavailable_pack_reports_unknown_flow_not_zero_delivery() {
         let report = outcome.report("SN-A").expect("pack row");
         assert_eq!(report.applied_w, 0.0);
         assert!(!report.flow_measured);
+        assert_eq!(
+            report.applied_w_reason,
+            Some(AppliedPowerReason::SampleStale)
+        );
         assert!(!report.written);
         assert!(!report.verified);
         assert!(
@@ -133,6 +137,16 @@ async fn a_stale_or_unavailable_pack_reports_unknown_flow_not_zero_delivery() {
             "staleness must be named: {:?}",
             report.error
         );
+        let row = h
+            .ledger
+            .dispatch()
+            .expect("dispatch")
+            .range(BACKOFF_AT, BACKOFF_AT + 1)
+            .expect("rows")
+            .into_iter()
+            .find(|row| row.applied_w_reason.as_deref() == Some("sample_stale"))
+            .expect("row naming the unknown sample");
+        assert_eq!(row.applied_w, 0.0);
     }
 }
 

@@ -17,6 +17,13 @@ pub trait CommandSink: Send + Sync {
     /// Send the neutral hold (both limits 0, no `acMode`) to one pack.
     fn hold(&self, pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>>;
 
+    /// Mark a command whose enclosing deadline expired before the sink could finish.
+    ///
+    /// The real sink turns this into the controller's uncertain-write fault, which blocks ordinary
+    /// writes until a verified hold. A deadline on the caller side must not lose this marking just
+    /// because it cancelled the sink's own timeout handler first.
+    fn mark_uncertain(&self, _pack_id: &str, _phase: &str) {}
+
     /// Write, with the tick's heartbeat so a bounded echo wait can mark progress.
     ///
     /// A sink with no intermediate wait keeps the default (one plain write); the dispatcher marks

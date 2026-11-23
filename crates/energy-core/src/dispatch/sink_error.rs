@@ -20,6 +20,22 @@ pub enum SinkError {
         /// Human-readable cause.
         reason: String,
     },
+    /// The device could not answer at all: a transport or read failure, not a refusal.
+    #[error("pack {pack_id}: device unreachable: {reason}")]
+    DeviceUnreachable {
+        /// The pack that could not be reached.
+        pack_id: String,
+        /// Human-readable transport cause.
+        reason: String,
+    },
+    /// The end-to-end per-pack budget expired; the command may or may not have landed.
+    #[error("pack {pack_id}: timed out in {phase}; device state is uncertain")]
+    Timeout {
+        /// The pack whose command timed out.
+        pack_id: String,
+        /// The phase that exhausted the budget: `apply` or `echo`.
+        phase: String,
+    },
     /// The write reached the device, but a read miss prevented echo confirmation.
     ///
     /// Not a fault: the pack stays latched and no backoff is armed, because a slow read says

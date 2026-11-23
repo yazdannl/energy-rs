@@ -50,12 +50,20 @@ pub enum Reason {
     CellVoltageEmergencyCharge,
     /// The plan is missing, expired or too old; the tick holds instead of keeping a setpoint.
     StaleInput,
+    /// A write was accepted; flow confirmation is deferred to the next fleet read.
+    ConfirmationPending,
+    /// A changed plan was not written because the previous command is still pending.
+    PreviousCommandPending,
+    /// The end-to-end per-pack budget expired; the device state is uncertain.
+    SendTimedOut,
     /// A device write failed (transport, echo or mode fault).
     DriverError,
     /// A device is backing off after a fault, so the tick sends it nothing.
     FaultBackoff,
     /// The watchdog saw no loop progress for three ticks and held the pack.
     WatchdogHold,
+    /// A hold could not be verified because the device did not answer, not because it refused.
+    HoldUnverifiableDeviceUnreachable,
     /// An operator override set this setpoint.
     ManualOverride,
     /// The full-charge maintenance window holds this pack at neutral; the log carries the
@@ -97,9 +105,13 @@ impl Reason {
             Self::CellVoltageGuard => "cell_voltage_guard",
             Self::CellVoltageEmergencyCharge => "cell_voltage_emergency_charge",
             Self::StaleInput => "stale_input",
+            Self::ConfirmationPending => "confirmation_pending",
+            Self::PreviousCommandPending => "previous_command_pending",
+            Self::SendTimedOut => "send_timed_out",
             Self::DriverError => "driver_error",
             Self::FaultBackoff => "fault_backoff",
             Self::WatchdogHold => "watchdog_hold",
+            Self::HoldUnverifiableDeviceUnreachable => "hold_unverifiable_device_unreachable",
             Self::ManualOverride => "manual_override",
             Self::MaintenanceHold => "maintenance_hold",
             Self::BootHold => "boot_hold",

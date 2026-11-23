@@ -20,6 +20,8 @@ pub struct DispatchEntry {
     pub written: Option<bool>,
     /// Whether `applied_w` is a fresh measurement rather than an unknown zero.
     pub flow_measured: bool,
+    /// Why a row has no measured watts: `sample_stale` or `read_failed`.
+    pub applied_w_reason: Option<String>,
     pub error: Option<String>,
     /// Free-form note for the operator (why a maintenance hold happened, the balance current).
     pub note: Option<String>,
@@ -45,6 +47,7 @@ impl DispatchEntry {
             verified: false,
             written: None,
             flow_measured: false,
+            applied_w_reason: None,
             error: None,
             note: None,
         }
@@ -54,6 +57,7 @@ impl DispatchEntry {
     pub fn verified(mut self, applied_w: f64) -> Self {
         self.applied_w = applied_w;
         self.verified = true;
+        self.flow_measured = true;
         self.error = None;
         self
     }
@@ -67,6 +71,12 @@ impl DispatchEntry {
     #[must_use]
     pub fn flow_measured(mut self, measured: bool) -> Self {
         self.flow_measured = measured;
+        self
+    }
+
+    #[must_use]
+    pub fn with_applied_w_reason(mut self, reason: impl Into<String>) -> Self {
+        self.applied_w_reason = Some(reason.into());
         self
     }
 
@@ -98,6 +108,7 @@ impl DispatchEntry {
             note: row.get(9)?,
             written: row.get(10)?,
             flow_measured: row.get::<_, Option<i64>>(11)?.unwrap_or_default() != 0,
+            applied_w_reason: row.get(12)?,
         })
     }
 }

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use energy_battery::{ECHO_CONFIRM_WINDOW, MIN_WRITE_SPACING};
-use energy_core::dispatch::PackReading;
+use energy_core::dispatch::{PackReading, SinkError};
 use energy_core::engine::{Engine, PACK_HOLD_BUDGET};
 use energy_core::safety::Authority;
 use energy_ledger::EventLevel;
@@ -165,6 +165,68 @@ async fn an_unconfirmed_pack_is_reported_per_pack_without_delaying_the_others() 
         })
         .count();
     assert_eq!(failed, 1, "the dispatch row also names the unverified hold");
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unreachable_hold_is_journalled_distinctly_from_a_refused_hold() {
+    let h = driven().await;
+    h.sink.fail_hold(
+        "SN-A",
+        SinkError::DeviceUnreachable {
+            pack_id: "SN-A".to_owned(),
+            reason: "device report request failed".to_owned(),
+        },
+    );
+    h.sink.fail_hold(
+        "SN-B",
+        SinkError::Device {
+            pack_id: "SN-B".to_owned(),
+            reason: "device refused the hold".to_owned(),
+        },
+    );
+
+    let report = h.engine.stop(NOW + 10, "sigterm").await.expect("report");
+    assert_eq!(report.unverified().len(), 2);
+
+    let rows = h
+        .ledger
+        .dispatch()
+        .expect("dispatch")
+        .range(NOW, NOW + 11)
+        .expect("rows");
+    let unreachable = rows
+        .iter()
+        .find(|row| {
+            row.error
+                .as_deref()
+                .is_some_and(|error| error.contains("SN-A") && error.contains("hold failed"))
+        })
+        .expect("unreachable hold row");
+    assert_eq!(unreachable.reason, "hold_unverifiable_device_unreachable");
+    assert_eq!(unreachable.applied_w_reason.as_deref(), Some("read_failed"));
+    assert!(
+        unreachable
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("request failed"))
+    );
+
+    let refused = rows
+        .iter()
+        .find(|row| {
+            row.error
+                .as_deref()
+                .is_some_and(|error| error.contains("SN-B") && error.contains("hold failed"))
+        })
+        .expect("refused hold row");
+    assert_eq!(refused.reason, "shutdown_hold");
+    assert_eq!(refused.applied_w_reason, None);
+    assert!(
+        refused
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("device refused"))
+    );
 }
 
 #[tokio::test(start_paused = true)]

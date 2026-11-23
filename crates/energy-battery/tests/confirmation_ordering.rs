@@ -203,7 +203,7 @@ async fn a_delayed_read_spans_a_burst_and_still_recovers() {
     })
     .unwrap();
     let observation = controller
-        .poll_confirming(Duration::from_secs(6), || {})
+        .poll_confirming(Duration::from_secs(10), || {})
         .await
         .unwrap();
     assert_eq!(observation.confirmed, Some(Command::Charge { watts: 300 }));

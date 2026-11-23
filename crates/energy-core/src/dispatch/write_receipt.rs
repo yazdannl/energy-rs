@@ -2,12 +2,15 @@
 
 /// The result of one command, as far as the device has proven it.
 ///
-/// `verified` requires both the echo and measured flow in the commanded direction (a hold only
-/// needs its zero-limit echo). `applied_w` is the pack's own measurement, not the clamped setpoint:
-/// an accepted write whose AC path never carried power is never reported as applied.
+/// `verified` is the echo check only: the device accepted the command. `flow_measured` is the
+/// independent question — did a fresh sample actually carry power in the commanded direction (or
+/// show idle for a hold)? An echo without a fresh sample is never turned into applied watts.
+// The command-echo flags are independent evidence, not a state machine; the measurement verdict
+// below decides which watts may be published.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WriteReceipt {
-    /// The watts the pack measured flowing, W (positive charging); `0.0` when unverified.
+    /// The watts the fresh sample measured flowing, W (positive charging); `0.0` when unmeasured.
     pub applied_w: f64,
     /// Whether the device confirmed the command with its next report.
     pub verified: bool,
@@ -15,6 +18,14 @@ pub struct WriteReceipt {
     pub partial: bool,
     /// A safety hold replaced this command while it waited; not a device fault, no retry needed.
     pub superseded: bool,
+    /// Whether `applied_w` came from a sample younger than the freshness bound.
+    pub flow_measured: bool,
+    /// Device clock of the sample that supplied `applied_w`, when there was one.
+    pub measured_at: Option<i64>,
+    /// The write was accepted but flow confirmation is deferred to the next fleet read.
+    pub confirmation_pending: bool,
+    /// A newer setpoint was blocked because an earlier command is still pending.
+    pub blocked_by_pending: bool,
 }
 
 impl WriteReceipt {
@@ -25,6 +36,10 @@ impl WriteReceipt {
             verified: true,
             partial: false,
             superseded: false,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: false,
+            blocked_by_pending: false,
         }
     }
 
@@ -35,6 +50,10 @@ impl WriteReceipt {
             verified: false,
             partial: true,
             superseded: false,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: false,
+            blocked_by_pending: false,
         }
     }
 
@@ -45,6 +64,10 @@ impl WriteReceipt {
             verified: false,
             partial: false,
             superseded: false,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: false,
+            blocked_by_pending: false,
         }
     }
 
@@ -55,6 +78,46 @@ impl WriteReceipt {
             verified: false,
             partial: false,
             superseded: true,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: false,
+            blocked_by_pending: false,
         }
+    }
+
+    /// A write the transport accepted; its flow is checked by the next tick's read, not now.
+    pub const fn pending() -> Self {
+        Self {
+            applied_w: 0.0,
+            verified: false,
+            partial: false,
+            superseded: false,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: true,
+            blocked_by_pending: false,
+        }
+    }
+
+    /// A changed plan was not written: the previous command still owns the device.
+    pub const fn blocked_by_pending() -> Self {
+        Self {
+            applied_w: 0.0,
+            verified: false,
+            partial: false,
+            superseded: false,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: false,
+            blocked_by_pending: true,
+        }
+    }
+
+    /// Attach the fresh sample that supplied the watts, making `applied_w` measurable downstream.
+    #[must_use]
+    pub const fn with_measurement(mut self, sample_at: i64) -> Self {
+        self.flow_measured = true;
+        self.measured_at = Some(sample_at);
+        self
     }
 }

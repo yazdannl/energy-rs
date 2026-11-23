@@ -1,9 +1,12 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
 mod backoff;
+mod row;
 mod write;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::dispatch::grid_telemetry;
 use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
@@ -38,11 +41,16 @@ pub struct Dispatcher {
     last_commands: Mutex<backoff::LastCommands>,
 }
 
-/// Per-send context: the tick clock and whether this command bypasses fault backoff.
+/// One end-to-end per-pack budget, shared with every direct sink caller. It covers apply, echo
+/// and the fail-safe hold together and stays below the 120 s health-staleness threshold.
+const PACK_SEND_BUDGET: Duration = energy_battery::control::PACK_IO_BUDGET;
+
+/// Per-send context: the tick clock, bypass flag, and whether fail-safe recovery started.
 #[derive(Clone, Copy)]
-struct SendContext {
+struct SendContext<'a> {
     now: i64,
     safety_traffic: bool,
+    recovery_started: &'a AtomicBool,
 }
 
 impl Dispatcher {
@@ -85,9 +93,39 @@ impl Dispatcher {
         outcome.target_w = frame.target_w;
         outcome.grid_limit = frame.grid_limit;
         outcome.fleet_clamp = fleet_limit;
-        for plan in plans {
-            outcome.packs.push(self.send_plan(&frame, plan, sink).await);
-        }
+        // One unreachable device must not hold the other three hostage. Every pack is an
+        // independent future; `join_all` keeps fleet order while their bounded writes overlap.
+        // Each sink still bounds its own transport, and a non-hold write no longer awaits flow.
+        let reports = futures_util::future::join_all(plans.into_iter().map(|plan| {
+            let frame = &frame;
+            async move {
+                let budgeted_plan = plan.clone();
+                let recovery_started = AtomicBool::new(false);
+                let Ok(report) = tokio::time::timeout(
+                    PACK_SEND_BUDGET,
+                    self.send_plan(frame, plan, sink, &recovery_started),
+                )
+                .await
+                else {
+                    self.faults.arm(
+                        &budgeted_plan.pack_id,
+                        input.now,
+                        "send exceeded the end-to-end pack budget",
+                    );
+                    // The caller-side timeout may cancel the sink before its own handler marks the
+                    // controller, so the uncertainty marking must happen here too.
+                    sink.mark_uncertain(&budgeted_plan.pack_id, "dispatch");
+                    return row::finish(
+                        self,
+                        budgeted_plan,
+                        row::deadline_sent(recovery_started.load(Ordering::Relaxed)),
+                    );
+                };
+                report
+            }
+        }))
+        .await;
+        outcome.packs.extend(reports);
         outcome
     }
 
@@ -227,8 +265,9 @@ impl Dispatcher {
         frame: &TickFrame<'_>,
         plan: Planned,
         sink: &dyn CommandSink,
+        recovery_started: &AtomicBool,
     ) -> PackReport {
-        let mut sent = if plan.send {
+        let sent = if plan.send {
             // A verified cell-safety write is not proof the transport recovered: it bypasses the
             // backoff, so it must not clear the fault that is still suppressing ordinary writes.
             let safety_traffic = matches!(
@@ -247,28 +286,13 @@ impl Dispatcher {
                 SendContext {
                     now: frame.now,
                     safety_traffic,
+                    recovery_started,
                 },
             )
             .await
         } else {
             Sent::none()
         };
-        backoff::finish(&self.last_commands, &plan, &mut sent);
-        PackReport {
-            pack_id: plan.pack_id,
-            ledger_id: plan.ledger_id,
-            requested_w: plan.requested_w,
-            intended_w: plan.command_w,
-            applied_w: sent.applied_w,
-            flow_measured: sent.flow_measured,
-            reason: plan.reason,
-            intended_reason: plan.intended_reason,
-            written: sent.written,
-            verified: sent.verified,
-            fail_safe: sent.fail_safe,
-            superseded: sent.superseded,
-            error: sent.error,
-            note: plan.note,
-        }
+        row::finish(self, plan, sent)
     }
 }

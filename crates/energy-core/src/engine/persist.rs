@@ -99,6 +99,9 @@ impl Engine {
         )
         .written(report.written)
         .flow_measured(report.flow_measured);
+        if let Some(reason) = report.applied_w_reason {
+            entry = entry.with_applied_w_reason(reason.as_str());
+        }
         if let Some(note) = &report.note {
             entry = entry.with_note(note.clone());
         }

@@ -5,6 +5,7 @@
 //! decision; this module must not.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use energy_core::dispatch::{BatteryFleet, BatterySink, CommandSink, DeviceFleet, PackCatalog};
 use energy_core::engine::{Engine, EngineConfig, PlanSource};
@@ -40,7 +41,10 @@ pub fn fleet_ports(
             catalog,
             stale_after_s,
         )),
-        Arc::new(BatterySink::new(fleet.controllers.clone())),
+        Arc::new(BatterySink::new(
+            fleet.controllers.clone(),
+            Duration::from_secs_f64(stale_after_s.max(0.0)),
+        )),
     )
 }
 

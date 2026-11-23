@@ -96,16 +96,20 @@ async fn a_tick_during_the_flow_wait_keeps_the_charge_alive() {
         DeviceController::new(io.clone(), ControlLimits::unlimited()).with_spacing(Duration::ZERO),
     );
     controller.poll().await.expect("baseline");
-    let sink =
-        BatterySink::new(vec![Arc::clone(&controller)]).with_confirm_window(Duration::from_secs(2));
+    let sink = BatterySink::new(vec![Arc::clone(&controller)], Duration::MAX)
+        .with_confirm_window(Duration::from_secs(2));
 
     // The second tick asks for the same command while the first is still in the flow window.
     let (first, second) = tokio::join!(sink.write(SN, 300.0), sink.write(SN, 300.0));
     let first = first.expect("no device fault for the in-flight write");
     let second = second.expect("no device fault for the in-flight write");
     assert!(
-        first.verified || second.verified,
-        "the shared flow wait must confirm once: {first:?} {second:?}"
+        first.confirmation_pending || first.verified,
+        "the first writer owns the command: {first:?}"
+    );
+    assert!(
+        second.blocked_by_pending,
+        "the repeated command must be honest about the prior pending write: {second:?}"
     );
     assert!(
         !(first.superseded && second.superseded),

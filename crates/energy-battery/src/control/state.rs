@@ -105,7 +105,7 @@ impl Inner {
     }
 
     /// Record a fault as both the current episode and the durable history.
-    fn note_fault(&mut self, fault: ControlFault) {
+    pub(super) fn note_fault(&mut self, fault: ControlFault) {
         self.last_fault = Some(fault.clone());
         self.active_fault = Some(fault);
     }

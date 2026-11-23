@@ -313,13 +313,32 @@ Newest dispatch attempts first over the last 7 days.
   "entries": [{ "at": "...", "packSn": "AB2000-ONE", "requestedW": -400.0,
                 "appliedW": -395.0, "reason": "dispatch", "mode": "auto",
                 "verified": true, "written": true, "flowMeasured": true,
-                "error": null }] }
+                "appliedWReason": null, "error": null }] }
 ```
 
-`verified` is the device echo check; `written` says whether this tick sent a command, so a
-`fault_backoff` row can still carry the pack's measured `appliedW`. `flowMeasured: false` means
-`appliedW` is unknown, not zero delivery. On ledger rows written before this field existed,
-`written` is `null` and `flowMeasured` mirrors `verified`.
+`verified` is the device echo check only; it is not proof of flow. A non-hold write is accepted
+without waiting out the 45 s AC ramp: its row carries reason `confirmation_pending` and no measured
+watts, and the next fleet read resolves the echo and any continuing flow. `written` says whether
+this tick sent a command, so a `fault_backoff` row can still carry the pack's measured `appliedW`.
+`appliedW` is `null` whenever `flowMeasured` is false: an unmeasured value is never published as
+zero delivery. `flowMeasured` requires a sample younger than the configured pack freshness bound
+with power in the commanded direction (or genuine idle for a hold), not merely a matching echo.
+If a changed plan arrives while the previous command is still pending, the new setpoint is **not**
+written: the row carries reason `previous_command_pending`, `written: false`, and no applied watts.
+A command that exhausts the one 20 s end-to-end pack budget is never reported as accepted: the row
+carries reason `send_timed_out`, `written: false`, and an error naming the expired phase; the pack is
+marked uncertain and only a verified fail-safe hold may clear it before ordinary writes resume.
+`appliedWReason` then says `sample_stale` (missing/old pack sample) or `read_failed` (transport read
+failed) on new rows, so a checker can tell "measured zero" from "could not measure". A hold whose echo could
+not be verified because the device did not answer carries reason
+`hold_unverifiable_device_unreachable`, distinct from a device refusal. On ledger rows written
+before these fields existed, `written` is `null` and `flowMeasured` mirrors `verified`.
+
+Known hardware behaviour (observed 2026-11-23 17:45Z): at 31–34 % SoC, three packs stopped
+accepting a commanded 800 W discharge (`pack ignored its command`, `written=false`) and a fourth
+current-limited to 176 W, despite each device reporting a 10 % minimum SoC. This is a low-SoC
+taper/refusal in the pack model, not a controller fault for 0.15.x to "fix"; the rewrite should
+expect it when predicting available discharge power.
 
 ### `GET /savings?period=...`
 

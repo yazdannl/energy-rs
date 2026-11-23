@@ -40,7 +40,10 @@ struct EntryDto {
     at: Timestamp,
     pack_sn: Option<String>,
     requested_w: f64,
-    applied_w: f64,
+    /// `null` when no fresh measurement exists; never an assumed zero.
+    applied_w: Option<f64>,
+    /// Why the watts are unknown: `sample_stale` or `read_failed`.
+    applied_w_reason: Option<String>,
     reason: String,
     mode: String,
     verified: bool,
@@ -65,7 +68,8 @@ fn entry_dto(entry: &DispatchEntry, serials: &BTreeMap<i64, String>) -> Result<E
         at: Timestamp::from_epoch(entry.ts)?,
         pack_sn: entry.pack_id.and_then(|id| serials.get(&id).cloned()),
         requested_w: watts(entry.requested_w),
-        applied_w: watts(entry.applied_w),
+        applied_w: entry.flow_measured.then(|| watts(entry.applied_w)),
+        applied_w_reason: entry.applied_w_reason.clone(),
         reason: entry.reason.clone(),
         mode: entry.mode.clone(),
         verified: entry.verified,
@@ -112,4 +116,37 @@ pub(crate) async fn dispatch(
         count: entries.len(),
         entries,
     }))
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn dto(entry: &DispatchEntry) -> EntryDto {
+        entry_dto(entry, &BTreeMap::new()).expect("dto")
+    }
+
+    #[test]
+    fn unmeasured_applied_w_serializes_as_null_not_zero() {
+        let entry = DispatchEntry::new(1_700_000_000, None, 403.792, 0.0, "watchdog_hold", "auto")
+            .with_applied_w_reason("sample_stale")
+            .failed("hold not verified");
+        let json = serde_json::to_value(dto(&entry)).expect("json");
+        assert!(json["appliedW"].is_null(), "unmeasured watts must be null");
+        assert_eq!(json["flowMeasured"], false);
+        assert_eq!(json["appliedWReason"], "sample_stale");
+        let raw = serde_json::to_string(&dto(&entry)).expect("raw json");
+        assert!(raw.contains("\"appliedW\":null"), "{raw}");
+        assert!(!raw.contains("\"appliedW\":0"), "{raw}");
+    }
+
+    #[test]
+    fn a_genuinely_measured_zero_stays_numeric_zero() {
+        let entry = DispatchEntry::new(1_700_000_000, None, 0.0, 0.0, "hold", "auto").verified(0.0);
+        let json = serde_json::to_value(dto(&entry)).expect("json");
+        assert!(json["appliedW"].is_number(), "measured zero is a number");
+        assert_eq!(json["appliedW"].as_f64(), Some(0.0));
+        assert_eq!(json["flowMeasured"], true);
+    }
 }
