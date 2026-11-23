@@ -74,6 +74,87 @@ fn a_session_crossing_the_extraction_floor_is_preserved_once() {
 }
 
 #[test]
+fn a_gap_shifted_floor_rewrites_the_whole_crossing_run() {
+    let (ledger, id, store, now, policy) = seed_boundary_pack("SN-GAP-CROSS");
+    let start = now - 7600;
+    let end = start + 1800;
+    let samples = charge_run_samples(id, start, end, 20.0);
+    ledger
+        .measurements()
+        .expect("measurements")
+        .write_many(&samples)
+        .expect("seed crossing run");
+    ledger
+        .sessions()
+        .expect("sessions")
+        .extract(id, Tier::OneMinute, start - 60, end + 60, &policy.rules)
+        .expect("seed stored run");
+    seed_profile_with_clock(&store, "SN-GAP-CROSS", start - 120, now - 60, now - 7200);
+
+    let from = now - policy.window_seconds();
+    let stored = ledger
+        .sessions()
+        .expect("sessions")
+        .for_pack(id, from, now + 1)
+        .expect("stored");
+    assert_eq!(stored.len(), 1);
+    let previous = store.load("SN-GAP-CROSS").expect("load").expect("profile");
+    let extracted_from = floor::extraction_floor(&policy, now, from, &stored, Some(&previous));
+    assert_eq!(
+        extracted_from, start,
+        "the final floor must include the whole crossing run"
+    );
+
+    run(&ledger, &store, now, &policy).expect("scheduled relearn");
+    let sessions = window_sessions(&ledger, id, now, &policy);
+    assert_eq!(
+        sessions.len(),
+        1,
+        "no left-truncated duplicate tail: {sessions:?}"
+    );
+    assert_eq!(sessions[0].started_at, start);
+    assert_eq!(sessions[0].ended_at, end);
+}
+
+#[test]
+fn a_run_starting_at_the_horizon_floor_is_preserved_once() {
+    let (ledger, id, store, now, policy) = seed_boundary_pack("SN-FROM-CROSS");
+    let from = now - policy.window_seconds();
+    let start = from;
+    let end = start + 1800;
+    ledger
+        .measurements()
+        .expect("measurements")
+        .write_many(&charge_run_samples(id, start, end, 20.0))
+        .expect("seed horizon run");
+    ledger
+        .sessions()
+        .expect("sessions")
+        .extract(id, Tier::OneMinute, start - 60, end + 60, &policy.rules)
+        .expect("seed stored run");
+    seed_profile_with_clock(&store, "SN-FROM-CROSS", start - 120, now - 60, start - 3600);
+
+    let stored = ledger
+        .sessions()
+        .expect("sessions")
+        .for_pack(id, from, now + 1)
+        .expect("stored");
+    let previous = store.load("SN-FROM-CROSS").expect("load").expect("profile");
+    let extracted_from = floor::extraction_floor(&policy, now, from, &stored, Some(&previous));
+    assert_eq!(extracted_from, from, "the horizon clamp stays in force");
+
+    run(&ledger, &store, now, &policy).expect("scheduled relearn");
+    let sessions = window_sessions(&ledger, id, now, &policy);
+    assert_eq!(
+        sessions.len(),
+        1,
+        "the boundary run must stay whole: {sessions:?}"
+    );
+    assert_eq!(sessions[0].started_at, from);
+    assert_eq!(sessions[0].ended_at, end);
+}
+
+#[test]
 fn an_old_unresolved_run_is_revisited_with_a_recent_attempt_timestamp() {
     let (ledger, id, store, now, policy) = seed_boundary_pack("SN-OLD-UNRESOLVED");
     let start = now - 3 * 3600;
@@ -151,6 +232,21 @@ fn seed_boundary_pack(sn: &str) -> (Arc<Ledger>, i64, LedgerLearningStore, i64, 
         1_700_000_000,
         SessionPolicy::new(300, 24),
     )
+}
+
+fn charge_run_samples(id: i64, start: i64, end: i64, soc_start: f64) -> Vec<Sample> {
+    let mut samples = vec![Sample::new(id, start - 60, 0.0, Some(soc_start))];
+    let minutes = (end - start) / 60;
+    samples.extend((0..minutes).map(|minute| {
+        Sample::new(
+            id,
+            start + minute * 60,
+            900.0,
+            Some(soc_start + minute as f64 * 40.0 / minutes as f64),
+        )
+    }));
+    samples.push(Sample::new(id, end, 0.0, Some(soc_start + 40.0)));
+    samples
 }
 
 fn window_sessions(ledger: &Ledger, id: i64, now: i64, policy: &SessionPolicy) -> Vec<Session> {

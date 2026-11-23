@@ -186,16 +186,10 @@ impl Engine {
             self.config.session_window_hours,
         );
         if crate::wiring::sessions::due(now, state.last_session_check, policy.check_seconds()) {
-            let reports =
+            // Learning profiles carry their `learning.applied` outbox row and publish it before
+            // returning, so a failed event write is replayed on the next pass instead of lost.
+            let _reports =
                 crate::wiring::sessions::run(&self.ledger, &self.learning_store, now, &policy)?;
-            for report in &reports {
-                self.event(
-                    now,
-                    energy_ledger::EventLevel::Info,
-                    "learning.applied",
-                    report.summary(),
-                )?;
-            }
             state.last_session_check = Some(now);
         }
         let changed = crate::wiring::cells::evaluate(

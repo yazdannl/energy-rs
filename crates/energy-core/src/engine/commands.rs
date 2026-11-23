@@ -84,9 +84,6 @@ impl Engine {
             &policy,
             pack,
         )?;
-        for report in &reports {
-            self.event(now, EventLevel::Info, "learning.applied", report.summary())?;
-        }
         self.event(
             now,
             EventLevel::Info,

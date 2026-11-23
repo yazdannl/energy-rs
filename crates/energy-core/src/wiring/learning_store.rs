@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use energy_battery::BatteryError;
-use energy_battery::learning::{LearningProfile, LearningStore};
-use energy_ledger::{Ledger, LedgerError};
+use energy_battery::learning::{LearningEvent, LearningProfile, LearningStore};
+use energy_ledger::{Ledger, LedgerError, PendingLearningEvent};
 
 /// A [`LearningStore`] over the ledger's key/value settings.
 ///
@@ -43,15 +43,75 @@ impl LearningStore for LedgerLearningStore {
     }
 
     fn save(&self, profile: &LearningProfile) -> Result<(), BatteryError> {
-        let json = serde_json::to_string(profile).map_err(|error| BatteryError::Invalid {
-            reason: format!("learning profile serialisation failed: {error}"),
-        })?;
+        let json = encode(profile)?;
         self.ledger
             .settings()
             .map_err(|error| store(&error))?
             .set(&Self::key(&profile.pack_id), &json, Utc::now().timestamp())
             .map_err(|error| store(&error))?;
         Ok(())
+    }
+
+    fn save_with_event(
+        &self,
+        profile: &LearningProfile,
+        event: LearningEvent,
+    ) -> Result<LearningEvent, BatteryError> {
+        let json = encode(profile)?;
+        let id = self
+            .ledger
+            .settings()
+            .map_err(|error| store(&error))?
+            .set_with_learning_event(
+                &Self::key(&profile.pack_id),
+                &json,
+                Utc::now().timestamp(),
+                &pending(&event),
+            )
+            .map_err(|error| store(&error))?;
+        Ok(LearningEvent { id, ..event })
+    }
+
+    fn pending_events(&self) -> Result<Vec<LearningEvent>, BatteryError> {
+        let pending = self
+            .ledger
+            .learning_outbox()
+            .map_err(|error| store(&error))?
+            .pending()
+            .map_err(|error| store(&error))?;
+        Ok(pending.iter().map(event).collect())
+    }
+
+    fn publish_event(&self, event: &LearningEvent) -> Result<(), BatteryError> {
+        self.ledger
+            .learning_outbox()
+            .map_err(|error| store(&error))?
+            .publish(&pending(event))
+            .map_err(|error| store(&error))
+    }
+}
+
+fn encode(profile: &LearningProfile) -> Result<String, BatteryError> {
+    serde_json::to_string(profile).map_err(|error| BatteryError::Invalid {
+        reason: format!("learning profile serialisation failed: {error}"),
+    })
+}
+
+fn pending(event: &LearningEvent) -> PendingLearningEvent {
+    PendingLearningEvent::new(
+        event.id,
+        event.pack_id.clone(),
+        event.at,
+        event.summary.clone(),
+    )
+}
+
+fn event(pending: &PendingLearningEvent) -> LearningEvent {
+    LearningEvent {
+        id: pending.id,
+        pack_id: pending.pack_id.clone(),
+        at: pending.at,
+        summary: pending.summary.clone(),
     }
 }
 

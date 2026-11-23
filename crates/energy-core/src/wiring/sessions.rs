@@ -1,10 +1,8 @@
 //! Session re-extraction and capacity relearning after a completed run.
 
-use energy_battery::control::Direction as BatteryDirection;
 use energy_battery::learning::{
-    CapacityBounds, CapacityPool, LearningProfile, LearningReport, LearningStore, SessionRecord,
+    CapacityBounds, CapacityPool, LearningEvent, LearningProfile, LearningReport, LearningStore,
 };
-use energy_ledger::session::Direction as LedgerDirection;
 use energy_ledger::{Ledger, Session, SessionRules, Tier};
 
 use crate::engine::instant;
@@ -85,6 +83,11 @@ fn scan(
     only: Option<&str>,
     completed_only: bool,
 ) -> Result<Vec<LearningReport>, WiringError> {
+    // Replay before touching profiles: an event that was committed with an earlier profile is
+    // still owed to the journal even if this pass later skips that pack or fails on another one.
+    for event in store.pending_events()? {
+        store.publish_event(&event)?;
+    }
     let states = collect_states(ledger, store, now, policy)?;
     let pool = pool::fleet_pool(&states, now);
     let mut reports = Vec::new();
@@ -141,7 +144,7 @@ fn collect_states(
         let complete = sessions.iter().filter(|session| usable(session)).count();
         let records = sessions
             .iter()
-            .map(|session| record(session, &pack.sn))
+            .map(|session| record::map(session, &pack.sn))
             .collect();
         let bounds = CapacityBounds::new(pack.label_capacity_kwh, pack.reported_capacity_kwh);
         states.push(pool::PackState {
@@ -157,12 +160,13 @@ fn collect_states(
     Ok(states)
 }
 
-/// Publish the pack row first, then commit the profile.
+/// Publish the pack row, commit the profile with its pending audit row, then journal the event.
 ///
-/// The profile is the commit point: its clocks decide whether a pack needs another pass. If the
-/// row write fails, nothing has advanced; if the profile write fails, the row is already correct but
-/// the old profile still grants an immediate retry. Both writes are idempotent, so the retry simply
-/// rewrites the same row and then commits the profile.
+/// The profile-plus-outbox commit is the commit point: its clocks decide whether a pack needs
+/// another pass, and its outbox row survives a failed journal write. If the row write fails, nothing
+/// has advanced; if the profile write fails, the row is already correct but the old profile still
+/// grants an immediate retry. Both writes are idempotent, so the retry simply rewrites the same row
+/// and then commits the profile again.
 fn learn_and_publish(
     ledger: &Ledger,
     store: &dyn LearningStore,
@@ -179,8 +183,10 @@ fn learn_and_publish(
         instant(now),
     );
     let profile = LearningProfile::from_report(&report);
+    let event = LearningEvent::new(state.sn.clone(), now, report.summary());
     store_row(ledger, state.id, &report, report.measured_at.timestamp())?;
-    store.save(&profile)?;
+    let event = store.save_with_event(&profile, event)?;
+    store.publish_event(&event)?;
     Ok(report)
 }
 
@@ -251,37 +257,17 @@ fn store_row(
     Ok(())
 }
 
-/// Map one ledger session into the learner's plain record.
-///
-/// Invalid runs are *kept* as records with their direction, time bounds and a refusal marker.
-/// Dropping them upstream would erase a direction change: a discarded discharge between two
-/// charges would let the learner merge the charges and book stored energy as a loss.
-fn record(session: &Session, pack_sn: &str) -> SessionRecord {
-    SessionRecord {
-        pack_id: pack_sn.to_owned(),
-        direction: match session.direction {
-            LedgerDirection::Charge => BatteryDirection::Charge,
-            LedgerDirection::Discharge => BatteryDirection::Discharge,
-        },
-        started_at: instant(session.started_at),
-        ended_at: instant(session.ended_at),
-        soc_start_pct: session.soc_start.unwrap_or(f64::NAN),
-        soc_end_pct: session.soc_end.unwrap_or(f64::NAN),
-        energy_ac_kwh: session.energy_ac_kwh,
-        duration_s: session.duration_s as f64,
-        sample_count: u32::try_from(session.sample_count).unwrap_or(u32::MAX),
-        complete: session.complete && session.invalidated_reason.is_none(),
-    }
-}
-
 mod floor;
 mod pool;
+mod record;
 mod skip;
 
 #[cfg(test)]
 mod attempt_tests;
 #[cfg(test)]
 mod boundary_tests;
+#[cfg(test)]
+mod event_tests;
 #[cfg(test)]
 mod failure_tests;
 #[cfg(test)]

@@ -10,9 +10,10 @@ use super::SessionPolicy;
 /// Sessions are rewritten only when their *start* lies in the extraction window, so a run that was
 /// open when first scanned has to be revisited from its start once its trailing hold arrives.
 /// Every unresolved run inside the learning horizon is revisited, not only one with a recent end:
-/// a closing sample can land long after a gap. A run crossing the floor is also rewritten whole so
-/// re-extraction cannot leave a duplicate tail. A cold ledger gets one bounded backfill, and a gap
-/// since the last *learning* pass forces a backfill even when skips kept refreshing the attempt.
+/// a closing sample can land long after a gap. Crossings are resolved against the **final** floor,
+/// after the horizon clamp and the open/gap adjustments, so re-extraction never leaves a duplicate
+/// tail. A cold ledger gets one bounded backfill, and a gap since the last *learning* pass forces a
+/// backfill even when skips kept refreshing the attempt.
 pub(super) fn extraction_floor(
     policy: &SessionPolicy,
     now: i64,
@@ -34,21 +35,31 @@ pub(super) fn extraction_floor(
         .filter(|session| !session.complete && session.invalidated_reason.is_none())
         .map(|session| session.started_at.saturating_sub(60))
         .min();
-    // A complete run that straddles this floor must be rewritten whole. Re-extracting only its
-    // tail would keep the original row and add a second, left-unbounded fragment for the same run.
-    let crossing = stored
-        .iter()
-        .filter(|session| session.started_at < recent && session.ended_at > recent)
-        .map(|session| session.started_at.saturating_sub(60))
-        .min();
     let gap = previous
         .and_then(|profile| profile.efficiency_diagnostics.last_learning_at)
         .filter(|at| now.saturating_sub(at.timestamp()) > policy.extract_seconds())
         .map(|at| at.timestamp().saturating_sub(60));
-    [Some(recent), open, crossing, gap]
+    let mut floor = [Some(recent), open, gap]
         .into_iter()
         .flatten()
         .min()
         .unwrap_or(recent)
-        .max(from)
+        .max(from);
+    // Resolve crossings against the final boundary. DELETE matches only starts inside the window,
+    // so a run that starts before this floor and ends after it would survive and extraction would
+    // insert its tail as a second session. Lower the floor to that run's start and repeat: the new
+    // floor can expose an older overlapping run. Stored rows all start inside the horizon, so the
+    // clamp still holds and each step strictly lowers the floor.
+    while let Some(start) = stored
+        .iter()
+        .filter(|session| session.started_at < floor && session.ended_at > floor)
+        .map(|session| session.started_at.max(from))
+        .min()
+    {
+        if start >= floor {
+            break;
+        }
+        floor = start;
+    }
+    floor
 }

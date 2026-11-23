@@ -6,9 +6,10 @@
 
 use std::sync::MutexGuard;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::error::LedgerError;
+use crate::outbox::PendingLearningEvent;
 
 /// Repository for `settings` and `settings_history`.
 pub struct Settings<'a> {
@@ -43,18 +44,31 @@ impl<'a> Settings<'a> {
             return Ok(());
         }
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
-             ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value, updated_at = excluded.updated_at",
-            params![key, value, at],
-        )?;
-        tx.execute(
-            "INSERT INTO settings_history (key, value, valid_from) VALUES (?1, ?2, ?3)",
-            params![key, value, at],
-        )?;
+        write_setting(&tx, key, value, at, true)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Set a key and stage one learning audit row in the same transaction.
+    ///
+    /// Returns the outbox row id the caller must use when it later publishes the event.
+    pub fn set_with_learning_event(
+        &self,
+        key: &str,
+        value: &str,
+        at: i64,
+        event: &PendingLearningEvent,
+    ) -> Result<i64, LedgerError> {
+        let changed = self.get(key)?.as_deref() != Some(value);
+        let tx = self.conn.unchecked_transaction()?;
+        write_setting(&tx, key, value, at, changed)?;
+        tx.execute(
+            "INSERT INTO learning_outbox (pack_id, at, summary) VALUES (?1, ?2, ?3)",
+            params![event.pack_id, event.at, event.summary],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
     }
 
     /// Remove a key; `true` when it existed. History is kept, so a removal is visible as-of.
@@ -79,4 +93,31 @@ impl<'a> Settings<'a> {
             .optional()?;
         Ok(value)
     }
+}
+
+fn write_setting(
+    tx: &Transaction<'_>,
+    key: &str,
+    value: &str,
+    at: i64,
+    changed: bool,
+) -> Result<(), LedgerError> {
+    if !changed {
+        tx.execute(
+            "UPDATE settings SET updated_at = MAX(updated_at, ?2) WHERE key = ?1",
+            params![key, at],
+        )?;
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value, updated_at = excluded.updated_at",
+        params![key, value, at],
+    )?;
+    tx.execute(
+        "INSERT INTO settings_history (key, value, valid_from) VALUES (?1, ?2, ?3)",
+        params![key, value, at],
+    )?;
+    Ok(())
 }

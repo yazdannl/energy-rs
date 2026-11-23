@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use super::*;
 use crate::wiring::LedgerLearningStore;
-use energy_battery::learning::{CapacityBounds, DEFAULT_ROUND_TRIP, LearningReport};
+use energy_battery::control::Direction as BatteryDirection;
+use energy_battery::learning::{CapacityBounds, DEFAULT_ROUND_TRIP, LearningReport, SessionRecord};
+use energy_ledger::session::Direction as LedgerDirection;
 use energy_ledger::{Pack, Sample};
 
 #[test]

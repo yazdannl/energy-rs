@@ -17,6 +17,7 @@ use crate::dispatch::DispatchLog;
 use crate::error::LedgerError;
 use crate::event::Events;
 use crate::measurement::Measurements;
+use crate::outbox::LearningOutbox;
 use crate::pack::Packs;
 use crate::plan::Plans;
 use crate::retention::{RetentionPolicy, RetentionReport};
@@ -129,6 +130,10 @@ impl Ledger {
 
     pub fn events(&self) -> Result<Events<'_>, LedgerError> {
         Ok(Events::new(self.lock()?))
+    }
+
+    pub fn learning_outbox(&self) -> Result<LearningOutbox<'_>, LedgerError> {
+        Ok(LearningOutbox::new(self.lock()?))
     }
 
     pub fn savings(&self) -> Result<Savings<'_>, LedgerError> {
