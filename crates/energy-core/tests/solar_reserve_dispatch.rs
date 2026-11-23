@@ -1,6 +1,5 @@
-//! Dispatch-time proof of the solar-reserve verdict: the release follows the plan's remaining
-//! forecast, maintenance is exempt from the reserve bound only, and the import ceiling still caps
-//! the *sum* of planner and maintenance charge.
+//! Dispatch-time proof of the solar-reserve verdict: forecast-driven release, narrow maintenance
+//! exemption, import-ceiling sum, telemetry holds and exact-zero safety bounds.
 
 #![allow(
     clippy::unwrap_used,
@@ -61,11 +60,13 @@ struct TickCase<'a> {
     stale: bool,
 }
 
-async fn tick(case: TickCase<'_>) -> (energy_core::dispatch::TickOutcome, FakeSink) {
-    let dispatcher = Dispatcher::new(case.limits.clone(), true, 10);
+async fn run(
+    dispatcher: &Dispatcher,
+    sink: &FakeSink,
+    case: TickCase<'_>,
+) -> energy_core::dispatch::TickOutcome {
     let fleet = FleetView::new(case.packs);
     let latches = Vec::new();
-    let sink = FakeSink::new();
     let input = TickInput {
         now: case.now,
         mode: Authority::Auto,
@@ -78,13 +79,67 @@ async fn tick(case: TickCase<'_>) -> (energy_core::dispatch::TickOutcome, FakeSi
         progress: None,
         selection: None,
     };
-    let outcome = dispatcher.tick(&input, &sink).await;
+    dispatcher.tick(&input, sink).await
+}
+
+async fn tick(case: TickCase<'_>) -> (energy_core::dispatch::TickOutcome, FakeSink) {
+    let dispatcher = Dispatcher::new(case.limits.clone(), true, 10);
+    let sink = FakeSink::new();
+    let outcome = run(&dispatcher, &sink, case).await;
     (outcome, sink)
 }
 
-/// A pack above the 10 % solar ceiling: 94 % of 1.92 kWh = 1.8048 kWh, ceiling 1.728 kWh.
 fn high_pack() -> PackReading {
     pack("SN-A", 94.0)
+}
+
+struct Curtailed {
+    dispatcher: Dispatcher,
+    sink: FakeSink,
+    overrides: Overrides,
+    cause: String,
+    episode: Option<i64>,
+}
+
+async fn curtailed(plan: &Plan) -> Curtailed {
+    let limits = limits(0.0);
+    let dispatcher = Dispatcher::new(limits.clone(), true, 10);
+    let sink = FakeSink::new();
+    let overrides = Overrides::new(vec![ManualOverride::manual(
+        "SN-A",
+        OverrideAction::Charge { watts: 800.0 },
+        NOW + 600,
+    )]);
+    sink.curtail(45);
+    run(
+        &dispatcher,
+        &sink,
+        TickCase {
+            plan: Some(plan),
+            packs: vec![high_pack()],
+            overrides: &overrides,
+            limits: &limits,
+            meter: &meter(1.5),
+            now: NOW + 5,
+            stale: false,
+        },
+    )
+    .await;
+    assert_eq!(sink.writes(), vec![800.0], "the standing charge");
+    assert_eq!(sink.holds(), 0);
+    let cause = dispatcher
+        .faults()
+        .blocker("SN-A", NOW + 10)
+        .expect("a curtailment pause");
+    assert!(cause.contains("current-limited"), "{cause}");
+    let episode = dispatcher.faults().episode_start("SN-A");
+    Curtailed {
+        dispatcher,
+        sink,
+        overrides,
+        cause,
+        episode,
+    }
 }
 
 #[tokio::test]
@@ -318,4 +373,127 @@ async fn only_a_due_balance_may_charge_past_max_soc_pct() {
         "balancing was bounded by the normal SoC ceiling: {balance:?}"
     );
     assert_ne!(balance.intended_reason, Reason::SocCeiling);
+}
+
+#[tokio::test]
+async fn a_curtailed_charge_holds_when_pv_telemetry_goes_missing() {
+    let plan = forecast_plan(1.0, 0.0, 1.5, 1.8048);
+    let limits = limits(0.0);
+    let state = curtailed(&plan).await;
+
+    state.sink.curtail(0);
+    let lost = MeterReading {
+        pv_kw: None,
+        ..meter(1.5)
+    };
+    let outcome = run(
+        &state.dispatcher,
+        &state.sink,
+        TickCase {
+            plan: Some(&plan),
+            packs: vec![high_pack()],
+            overrides: &state.overrides,
+            limits: &limits,
+            meter: &lost,
+            now: NOW + 20,
+            stale: false,
+        },
+    )
+    .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.intended_w, 0.0, "the final command must be a hold");
+    assert_eq!(report.reason, Reason::SolarPvTelemetryMissing);
+    assert_eq!(report.intended_reason, Reason::SolarPvTelemetryMissing);
+    assert_eq!(state.sink.holds(), 1, "the hold must actually be sent");
+    assert!(
+        state.sink.writes().iter().all(|watts| *watts > 0.0),
+        "no charge or discharge reached the pack"
+    );
+    assert_eq!(
+        state
+            .dispatcher
+            .faults()
+            .blocker("SN-A", NOW + 25)
+            .as_deref(),
+        Some(state.cause.as_str()),
+        "the pre-existing pause survives the safety hold"
+    );
+    assert_eq!(
+        state.dispatcher.faults().episode_start("SN-A"),
+        state.episode
+    );
+}
+
+#[tokio::test]
+async fn a_curtailed_charge_holds_when_load_telemetry_goes_missing() {
+    let plan = forecast_plan(1.0, 0.0, 1.5, 1.8048);
+    let limits = limits(0.0);
+    let state = curtailed(&plan).await;
+
+    state.sink.curtail(0);
+    let lost = MeterReading {
+        load_kw: None,
+        ..meter(1.5)
+    };
+    let outcome = run(
+        &state.dispatcher,
+        &state.sink,
+        TickCase {
+            plan: Some(&plan),
+            packs: vec![high_pack()],
+            overrides: &state.overrides,
+            limits: &limits,
+            meter: &lost,
+            now: NOW + 20,
+            stale: false,
+        },
+    )
+    .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.intended_w, 0.0, "the final command must be a hold");
+    assert_eq!(report.reason, Reason::SolarLoadTelemetryMissing);
+    assert_eq!(report.intended_reason, Reason::SolarLoadTelemetryMissing);
+    assert_eq!(state.sink.holds(), 1, "the hold must actually be sent");
+    assert!(
+        state.sink.writes().iter().all(|watts| *watts > 0.0),
+        "no charge or discharge reached the pack"
+    );
+    assert_eq!(
+        state
+            .dispatcher
+            .faults()
+            .blocker("SN-A", NOW + 25)
+            .as_deref(),
+        Some(state.cause.as_str()),
+        "the pre-existing pause survives the safety hold"
+    );
+    assert_eq!(
+        state.dispatcher.faults().episode_start("SN-A"),
+        state.episode
+    );
+}
+
+#[tokio::test]
+async fn missing_pv_telemetry_never_becomes_a_discharge_on_a_negative_bound() {
+    let plan = forecast_plan(1.0, 0.0, 1.5, 1.8048);
+    let lost = MeterReading {
+        pv_kw: None,
+        grid_w: Some(1000.0),
+        ..meter(1.5)
+    };
+    let (outcome, sink) = tick(TickCase {
+        plan: Some(&plan),
+        packs: vec![high_pack()],
+        overrides: &Overrides::none(),
+        limits: &limits(100.0),
+        meter: &lost,
+        now: NOW + 5,
+        stale: false,
+    })
+    .await;
+    let report = outcome.report("SN-A").expect("report");
+    assert_eq!(report.intended_w, 0.0);
+    assert_eq!(report.reason, Reason::SolarPvTelemetryMissing);
+    assert!(sink.writes().is_empty(), "no discharge may be written");
+    assert_eq!(sink.holds(), 1);
 }

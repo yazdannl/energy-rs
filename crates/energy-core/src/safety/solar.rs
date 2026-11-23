@@ -12,8 +12,10 @@ impl Ladder<'_> {
     ///
     /// A due seven-day balance is exempt from this bound only: the device limit, physical SoC
     /// ceiling, plan trajectory and grid/import ceilings still apply. When the reserve is armed and
-    /// the pack is above the threshold, missing or non-finite PV/load telemetry blocks the charge
-    /// with a named reason instead of silently consuming the reserve.
+    /// the pack is above the threshold, missing or non-finite PV/load telemetry clamps the feasible
+    /// interval to exactly 0 W and names the reason. Both bounds are pinned: another bound (for
+    /// example a negative import room) may make the interval infeasible, but can never turn a
+    /// missing-input hold into a discharge.
     pub(crate) fn solar_ceiling(&mut self) {
         if self.request.maintenance_full_charge
             || !self.request.solar_reserve_armed
@@ -50,6 +52,7 @@ impl Ladder<'_> {
             };
             self.solar_missing = Some(reason);
             self.soc_hi = 0.0;
+            self.soc_lo = 0.0;
             return;
         }
         let (Some(pv), Some(load)) = (pv, load) else {

@@ -7,7 +7,9 @@ use std::sync::Mutex;
 
 use crate::dispatch::grid_telemetry;
 use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
-use crate::dispatch::pack_context::{cell_safety, measured, reason_for, requested_watts};
+use crate::dispatch::pack_context::{
+    cell_safety, measured, reason_for, requested_watts, telemetry_hold,
+};
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
     CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading, PackReport, Planned,
@@ -193,9 +195,10 @@ impl Dispatcher {
         let intended = decide(&context, &request, reading, latch, true);
         let backoff_cause = self.faults.blocker(pack_id, context.now);
         let backoff = backoff_cause.is_some();
-        // Cell-latch holds/emergency charges and a measured import-ceiling correction are safety
-        // traffic: backoff never suppresses them, whatever caused the backoff.
-        let safety = cell_safety(latch, decision.allowed_w, context.mode);
+        // Cell holds, import-ceiling corrections and armed solar-telemetry holds are safety
+        // traffic: backoff never suppresses them, and their fault state still backs off later writes.
+        let safety =
+            cell_safety(latch, decision.allowed_w, context.mode).or(telemetry_hold(&decision));
         let vector = reading.available && (safety.is_some() || guarded || !backoff);
         Planned {
             pack_id: pack_id.to_owned(),
@@ -233,6 +236,8 @@ impl Dispatcher {
                 Reason::CellVoltageGuard
                     | Reason::CellVoltageEmergencyCharge
                     | Reason::GridImportCeiling
+                    | Reason::SolarPvTelemetryMissing
+                    | Reason::SolarLoadTelemetryMissing
             );
             self.send(
                 frame.progress,

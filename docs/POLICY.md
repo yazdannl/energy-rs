@@ -153,7 +153,9 @@ seven-day balance is exempt from this bound only; every device, SoC and grid cei
 That balance is the one bounded exception to `max_soc_pct`: cell balancing needs a genuine 100 %
 charge, and only a scheduled due-balance request may use it. A full pack, an export limit, a cell
 latch or an unavailable device is never a reason to release the reserve; the last two are handled by
-the existing per-pack guards. Missing PV/load telemetry fails closed with a named reason.
+the existing per-pack guards. Missing PV/load telemetry fails closed with a named reason: the
+feasible interval is pinned to exactly 0 W, the hold bypasses control backoff like a cell-guard
+write, and the pre-existing fault state still backs off the next ordinary command.
 Early on a sunny day the ceiling is low; as the day passes it rises and by
 evening grid charging may fill the pack. Overnight it already holds tomorrow's surplus, so a sunny
 winter day still allows cheap night charging for the part tomorrow's PV does not need. `cap(t)` is

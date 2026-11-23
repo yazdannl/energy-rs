@@ -96,6 +96,16 @@ pub(crate) fn cell_safety(
     }
 }
 
+/// An armed solar-telemetry refusal is a safety hold, not an economic clamp.
+pub(crate) fn telemetry_hold(decision: &SafetyDecision) -> Option<Reason> {
+    let primary = decision.primary();
+    matches!(
+        primary,
+        Reason::SolarPvTelemetryMissing | Reason::SolarLoadTelemetryMissing
+    )
+    .then_some(primary)
+}
+
 /// The binding reason for what this pack's row reports.
 pub(crate) fn reason_for(
     context: &PackContext<'_>,
