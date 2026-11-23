@@ -8,6 +8,14 @@ use crate::control::direction::Direction;
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ControlFault {
     #[error(
+        "uncertain_write: device {sn} request {request_id} timed out ({detail}); the device may have accepted it, send and verify a hold before writing again"
+    )]
+    UncertainWrite {
+        sn: String,
+        request_id: u32,
+        detail: String,
+    },
+    #[error(
         "device {sn} reports acMode {ac_mode}: the AC path is wedged, stop writing and power-cycle it"
     )]
     Wedged { sn: String, ac_mode: i32 },

@@ -20,37 +20,27 @@ use crate::control::pacer::Pacer;
 use crate::control::pending::Pending;
 use crate::control::state::Inner;
 use crate::control::watch::RESTART_WINDOW;
-use crate::control::write_bound::{POLL_BUSY_TIMEOUT, bounded_write};
+use crate::control::write_bound::{
+    POLL_BUSY_TIMEOUT, WRITE_TRANSACTION_TIMEOUT, bounded_report, bounded_write,
+};
+use crate::control::write_guard::PendingGuard;
 use crate::error::BatteryError;
 use crate::report::Report;
 use crate::transport::{DeviceIo, WriteAck, WriteRequest};
 
-/// How long a restarted or wedged device is left alone before the next write attempt. Re-writing a
-/// rebooting pack produced the 20 s command stream in the 2026-11-21 incident.
+/// Backoff after a restart/wedge; re-writing a rebooting pack caused the 2026-11-21 write storm.
 pub const FAULT_BACKOFF: Duration = Duration::from_secs(300);
 
-/// Emergency neutralising holds a wedged device gets per wedge episode before it is left alone. A
-/// hold writes no `acMode`; the budget keeps a firmware that ignores holds from looping.
+/// Emergency holds per wedge episode; a hold writes no `acMode`, and this bounds ignored holds.
 pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 
-/// Safety-response bound for preempting an unresolved command, separate from the longer echo window.
-/// The preempted waiter resolves as superseded, not as a fault, so the hold is not repeated.
+/// Safety preemption bound for an unresolved command; the waiter resolves as superseded.
 pub const SAFETY_HOLD_WINDOW: Duration = Duration::from_secs(2);
 
-/// The control plane for one device.
-///
-/// Reads are always allowed; writes are refused until the device has been read at least once.
-///
-/// Ordering is the safety property, and it is enforced per device:
-///
-/// * a write takes the pacer's single in-flight slot **first**, and only then re-reads the state,
-///   re-clamps against the live maximum and transmits;
-/// * the clamped command is installed as [`Pending`] before the request leaves, and no second writer
-///   may replace it while unresolved — except a hold, which preempts it after [`SAFETY_HOLD_WINDOW`];
-/// * a poll (fetch + fold) and a write (validate + install + transmit) never interleave;
-/// * only a report newer than the pre-write report can confirm a command, with wrap-safe counters;
-/// * every pending command has a bounded resolution path: [`poll_confirming`](Self::poll_confirming)
-///   expires it at a hard deadline, and a hold preempts it at the safety bound.
+/// The control plane for one device. Writes need a prior read. Ordering is the safety property:
+/// the pacer slot is claimed before validation, pending is installed before the write leaves, polls
+/// and writes never interleave, only a newer report confirms, and every command has a bounded exit
+/// via [`poll_confirming`](Self::poll_confirming) or a preempting hold.
 pub struct DeviceController<T: DeviceIo> {
     transport: T,
     limits: ControlLimits,
@@ -73,7 +63,6 @@ impl<T: DeviceIo> DeviceController<T> {
         }
     }
 
-    /// Override the write spacing (tests; production keeps the 2 s floor).
     #[must_use]
     pub fn with_spacing(mut self, spacing: Duration) -> Self {
         self.pacer = Pacer::new(spacing);
@@ -114,7 +103,7 @@ impl<T: DeviceIo> DeviceController<T> {
                 .map_err(|_| BatteryError::Invalid {
                     reason: format!("device {} is writing; poll skipped", self.transport.sn()),
                 })?;
-            let report = self.transport.report().await?;
+            let report = bounded_report(self.transport.sn(), self.transport.report()).await?;
             let observed = self.record(&report);
             (report, observed)
         };
@@ -130,14 +119,6 @@ impl<T: DeviceIo> DeviceController<T> {
         ))
     }
 
-    /// Poll until the command this call was created for is resolved or `window` expires.
-    ///
-    /// Every read is bounded by the same hard deadline; `on_progress` marks progress while a read
-    /// is in flight, and a report after the deadline is never accepted. One read stays pinned across
-    /// heartbeat beats. Duplicates, stalled reads and read misses are retried inside the window and
-    /// end as a read miss, never as a fault. The waiter is bound to its
-    /// [`request_id`](Pending::request_id): it never resolves a command that replaced the one it
-    /// started with, and reports such a replacement as superseded rather than as a fault.
     pub async fn poll_confirming(
         &self,
         window: Duration,
@@ -146,24 +127,32 @@ impl<T: DeviceIo> DeviceController<T> {
         confirmation::wait(self, window, &on_progress).await
     }
 
-    /// Pace, revalidate, clamp, send and remember one command.
-    ///
-    /// A hold has safety priority: after [`SAFETY_HOLD_WINDOW`] it cancels an unresolved command
-    /// instead of waiting for its echo. Other commands keep the one-write-at-a-time rule.
     pub async fn apply(&self, command: Command) -> Result<Applied, BatteryError> {
         let claim = self.pacer.claim().await;
         if command.is_hold() {
             confirmation::clear_for_hold(self).await;
         }
         let (pending, ack) = {
-            let _transaction = self.transaction.lock().await;
+            let _transaction =
+                tokio::time::timeout(WRITE_TRANSACTION_TIMEOUT, self.transaction.lock())
+                    .await
+                    .map_err(|_| BatteryError::Invalid {
+                        reason: format!("device {} is reading; write skipped", self.transport.sn()),
+                    })?;
             let pending = self.prepare(command)?;
+            let mut guard = PendingGuard::new(self, pending.request_id);
             let request = WriteRequest::new(
                 self.transport.sn().to_owned(),
                 pending.request_id,
                 pending.command.properties(),
             );
-            let outcome = bounded_write(self.transport.sn(), self.transport.write(request)).await;
+            let outcome = bounded_write(
+                self.transport.sn(),
+                pending.request_id,
+                self.transport.write(request),
+            )
+            .await;
+            guard.disarm();
             let ack = self.finish(&pending, outcome);
             (pending, ack)
         };
@@ -174,20 +163,17 @@ impl<T: DeviceIo> DeviceController<T> {
         })
     }
 
-    /// Atomically clear an expired command for a safety hold; see [`Inner::clear_pending_for_hold`].
     pub(super) fn clear_pending_for_hold(&self, deadline: Instant) -> Option<Duration> {
         self.lock()
             .and_then(|mut inner| inner.clear_pending_for_hold(Instant::now(), deadline))
     }
 
-    /// Cancel exactly the command this waiter owns, without touching a replacement.
     pub(super) fn cancel(&self, request_id: u32) {
         if let Some(mut inner) = self.lock() {
             inner.cancel(request_id);
         }
     }
 
-    /// Expire exactly the command this waiter owns, keeping the typed fault for the journal.
     pub(super) fn record_timeout(
         &self,
         request_id: u32,
@@ -197,12 +183,17 @@ impl<T: DeviceIo> DeviceController<T> {
             .and_then(|mut inner| inner.expire(request_id, fallback))
     }
 
-    /// Revalidate and reserve the command, with the write slot already held.
     fn prepare(&self, command: Command) -> Result<Pending, BatteryError> {
         let mut inner = self.lock().ok_or_else(|| BatteryError::Invalid {
             reason: format!("device {} state is poisoned", self.transport.sn()),
         })?;
         let sn = self.transport.sn().to_owned();
+        match &inner.active_fault {
+            Some(fault @ ControlFault::UncertainWrite { .. }) if !command.is_hold() => {
+                return Err(BatteryError::Fault(fault.clone()));
+            }
+            _ => {}
+        }
         if inner.pending.is_some() {
             return Err(BatteryError::Unconfirmed { sn });
         }
@@ -247,7 +238,6 @@ impl<T: DeviceIo> DeviceController<T> {
         pending
     }
 
-    /// Close the write: an ack's counter is unwrapped from the baseline, including across 0.
     fn finish(
         &self,
         pending: &Pending,
@@ -271,7 +261,16 @@ impl<T: DeviceIo> DeviceController<T> {
             }
             Err(error) => {
                 if inner.pending.as_ref().is_some_and(ours) {
-                    inner.pending = None;
+                    if let BatteryError::Fault(fault @ ControlFault::UncertainWrite { .. }) = &error
+                    {
+                        if let Some(sent) = inner.pending.as_mut() {
+                            sent.inconclusive = Some(fault.clone());
+                        }
+                        inner.last_fault = Some(fault.clone());
+                        inner.active_fault = Some(fault.clone());
+                    } else {
+                        inner.pending = None;
+                    }
                 }
                 Err(error)
             }

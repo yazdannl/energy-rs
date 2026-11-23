@@ -44,6 +44,7 @@ pub mod pending;
 pub(super) mod state;
 pub mod watch;
 mod write_bound;
+mod write_guard;
 
 pub use applied::Applied;
 pub use clamp::{Ceiling, ceiling_for, clamp_command, clamp_watts};
@@ -62,4 +63,4 @@ pub use observation::Observation;
 pub use pace_claim::PaceClaim;
 pub use pacer::{MIN_WRITE_SPACING, Pacer};
 pub use pending::Pending;
-pub use write_bound::WRITE_TRANSPORT_TIMEOUT;
+pub use write_bound::{READ_TRANSPORT_TIMEOUT, WRITE_TRANSACTION_TIMEOUT, WRITE_TRANSPORT_TIMEOUT};

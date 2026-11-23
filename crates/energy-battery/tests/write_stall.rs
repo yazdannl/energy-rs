@@ -79,27 +79,29 @@ async fn a_never_acknowledged_write_cannot_block_polling_or_a_hold() {
         .await
         .expect("prime poll must not hang")
         .expect("prime the report");
-    eprintln!("primed");
+    let cached = controller.last_report().expect("cached report");
 
     let writer = Arc::clone(&controller);
     let write = tokio::spawn(async move { writer.apply(Command::Charge { watts: 300 }).await });
     tokio::time::timeout(Duration::from_secs(2), started.notified())
         .await
         .expect("write must start");
-    eprintln!("write started");
 
-    eprintln!("polling during write");
+    let busy = tokio::time::timeout(Duration::from_secs(1), controller.poll())
+        .await
+        .expect("poll during a stalled write must return promptly");
     assert!(
-        tokio::time::timeout(Duration::from_secs(1), controller.poll())
-            .await
-            .is_ok(),
-        "a stalled write froze the sampler"
+        matches!(busy, Err(BatteryError::Invalid { ref reason }) if reason.contains("writing")),
+        "a busy poll must be a typed skip, not a device error: {busy:?}"
+    );
+    assert_eq!(
+        controller.last_report(),
+        Some(cached),
+        "busy poll lost the cache"
     );
 
-    eprintln!("poll during write done");
     let holder = Arc::clone(&controller);
     let hold = tokio::spawn(async move { holder.apply(Command::Hold).await });
-    eprintln!("issuing hold");
     let held = tokio::time::timeout(Duration::from_secs(8), hold)
         .await
         .expect("a safety hold must not wait behind a stalled write")
@@ -111,6 +113,9 @@ async fn a_never_acknowledged_write_cannot_block_polling_or_a_hold() {
         "hold must actually be written"
     );
 
-    eprintln!("hold done");
+    let fresh = tokio::time::timeout(Duration::from_secs(2), controller.poll())
+        .await
+        .expect("sampling must resume after the write deadline");
+    assert!(fresh.is_ok(), "fresh poll failed: {:?}", fresh.err());
     write.abort();
 }

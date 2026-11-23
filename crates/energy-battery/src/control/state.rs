@@ -114,6 +114,7 @@ impl Inner {
     fn note_recovery(&mut self, command: Command) {
         let recovered = match &self.active_fault {
             Some(ControlFault::NoFlow { .. }) => !command.is_hold(),
+            Some(ControlFault::UncertainWrite { .. }) => command.is_hold(),
             Some(ControlFault::Restarted { .. } | ControlFault::Wedged { .. }) => true,
             _ => false,
         };

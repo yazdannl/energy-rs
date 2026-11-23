@@ -96,10 +96,14 @@ or no pack has been sampled for that long, the endpoint answers **HTTP 503**:
 ```
 
 `reason` is `tick_stalled` or `sampler_stalled`; the matching `since` field names when the signal
-last moved. A 503 makes the Supervisor restart the add-on, so a frozen loop cannot leave a stale
-command standing for hours. The check is suppressed for the first 90 s after boot; there is no other
-legitimate operation that long in this engine. `status`/`version` remain the stable watchdog
-contract; the other fields are additive. `lastTickAt` is `null` until the first tick publishes.
+last moved. A missing first tick, or a configured fleet with no first sample, is stalled once the grace
+expires; an empty fleet is not a sampler failure. A write that timed out after the device may have
+accepted it does not degrade liveness by itself, but adds `reason: "uncertain_write"` to a 200 health
+response; dispatch stays blocked until a safety hold is sent and echoed. A 503 makes the Supervisor
+restart the add-on, so a frozen loop cannot leave a stale command standing for hours. The check is
+suppressed for the first 90 s after boot; there is no other legitimate operation that long in this
+engine. `status`/`version` remain the stable watchdog contract; the other fields are additive.
+`lastTickAt` is `null` until the first tick publishes.
 
 ### `GET /site`
 
