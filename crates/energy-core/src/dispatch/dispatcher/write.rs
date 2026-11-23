@@ -1,5 +1,7 @@
 //! The write side of the tick: one command, one bounded fail-safe hold.
 
+use std::sync::atomic::Ordering;
+
 use energy_battery::ControlFault;
 
 use crate::dispatch::sent::Sent;
@@ -18,7 +20,7 @@ impl Dispatcher {
         pack_id: &str,
         watts: f64,
         sink: &dyn CommandSink,
-        context: SendContext,
+        context: SendContext<'_>,
     ) -> Sent {
         // The heartbeat goes into the sink so the write/confirmation wait can mark every
         // successful transport step, not just the tick boundaries around it.
@@ -31,10 +33,7 @@ impl Dispatcher {
         };
         match result {
             Ok(receipt) => self.receipt_sent(progress, pack_id, receipt, context),
-            Err(error) => {
-                self.failure(progress, pack_id, error, sink, context.now)
-                    .await
-            }
+            Err(error) => self.failure(progress, pack_id, error, sink, context).await,
         }
     }
 
@@ -43,7 +42,7 @@ impl Dispatcher {
         progress: Option<&dyn Progress>,
         pack_id: &str,
         receipt: WriteReceipt,
-        context: SendContext,
+        context: SendContext<'_>,
     ) -> Sent {
         if receipt.confirmation_pending {
             return Self::pending_sent();
@@ -80,7 +79,7 @@ impl Dispatcher {
         pack_id: &str,
         error: SinkError,
         sink: &dyn CommandSink,
-        now: i64,
+        context: SendContext<'_>,
     ) -> Sent {
         match error {
             SinkError::Fenced { .. } => Sent {
@@ -98,11 +97,16 @@ impl Dispatcher {
                     pack_id: pack_id.to_owned(),
                     phase: phase.clone(),
                 };
-                let mut sent = self.fail_safe(progress, now, pack_id, &error, sink).await;
+                let mut sent = self
+                    .fail_safe(progress, pack_id, &error, sink, context)
+                    .await;
                 sent.timeout = Some(phase);
                 sent
             }
-            error => self.fail_safe(progress, now, pack_id, &error, sink).await,
+            error => {
+                self.fail_safe(progress, pack_id, &error, sink, context)
+                    .await
+            }
         }
     }
 
@@ -156,22 +160,19 @@ impl Dispatcher {
         }
     }
 
-    /// One real hold after a fault, then back off (survey §7 trap 10).
     async fn fail_safe(
         &self,
         progress: Option<&dyn Progress>,
-        now: i64,
         pack_id: &str,
         error: &SinkError,
         sink: &dyn CommandSink,
+        context: SendContext<'_>,
     ) -> Sent {
+        context.recovery_started.store(true, Ordering::Relaxed);
+        let now = context.now;
         let cause = error.to_string();
-        let fault = match error {
-            SinkError::Fault { fault, .. } => Some(&**fault),
-            _ => None,
-        };
-        let restarted = matches!(fault, Some(ControlFault::Restarted { .. }));
-        let no_flow = matches!(fault, Some(ControlFault::NoFlow { .. }));
+        let restarted = matches!(error, SinkError::Fault { fault, .. } if matches!(**fault, ControlFault::Restarted { .. }));
+        let no_flow = matches!(error, SinkError::Fault { fault, .. } if matches!(**fault, ControlFault::NoFlow { .. }));
         if restarted || no_flow {
             self.faults.arm_long(pack_id, now, &cause);
         } else {
@@ -192,8 +193,6 @@ impl Dispatcher {
             };
         }
         match sink.hold_with_progress(pack_id, progress, now).await {
-            // The hold was sent but its own readback missed. It is already the one hold this fault
-            // gets: do not loop into another hold or extend the backoff.
             Err(SinkError::ReadUnverified { reason, .. }) => Sent {
                 written: true,
                 verified: false,

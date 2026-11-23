@@ -259,9 +259,9 @@ async fn a_per_pack_deadline_is_reported_as_uncertain_not_accepted() {
         "the phase must be named: {row:?}"
     );
     assert!(
-        !row.error
+        row.error
             .as_deref()
-            .is_some_and(|error| error.contains("verified hold attempted")),
+            .is_some_and(|error| error.contains("no recovery attempted")),
         "no recovery was attempted inside a cancelled send: {row:?}"
     );
     assert!(
@@ -318,5 +318,61 @@ async fn a_blocked_receipt_names_the_blocked_command_in_the_row() {
             .as_deref()
             .is_some_and(|error| error.contains("previous command")),
         "{row:?}"
+    );
+}
+
+/// If fail-safe recovery began before the outer deadline cancelled it, the row must not claim that
+/// nothing was attempted; the hold's outcome is genuinely unknown.
+#[tokio::test(start_paused = true)]
+async fn a_deadline_during_recovery_reports_an_unknown_outcome() {
+    struct RecoveryHangingSink;
+
+    impl CommandSink for RecoveryHangingSink {
+        fn write(
+            &self,
+            pack_id: &str,
+            _watts: f64,
+        ) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+            let pack_id = pack_id.to_owned();
+            Box::pin(async move {
+                Err(SinkError::DeviceUnreachable {
+                    pack_id,
+                    reason: "scripted write failure".to_owned(),
+                })
+            })
+        }
+
+        fn hold(&self, _pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(120)).await;
+                Ok(WriteReceipt::verified(0.0))
+            })
+        }
+    }
+
+    let (_, fleet, plan, overrides) = fixture().await;
+    let meter = MeterReading::default();
+    let input = TickInput {
+        now: NOW,
+        mode: Authority::Auto,
+        plan: Some(&plan),
+        fleet: &fleet,
+        meter: &meter,
+        latches: &[],
+        overrides: &overrides,
+        stale: false,
+        progress: None,
+        selection: None,
+    };
+    let outcome = Dispatcher::new(SafetyLimits::default(), true, 10)
+        .tick(&input, &RecoveryHangingSink)
+        .await;
+    let row = outcome.report(SLOW_SN).expect("a row per pack");
+    assert_eq!(row.reason, Reason::SendTimedOut, "{row:?}");
+    assert!(
+        row.error
+            .as_deref()
+            .is_some_and(|error| error.contains("recovery started, outcome unknown")),
+        "the recovery state must be honest: {row:?}"
     );
 }

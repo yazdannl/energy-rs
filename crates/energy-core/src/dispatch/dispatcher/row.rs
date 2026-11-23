@@ -47,14 +47,18 @@ pub(super) fn finish(dispatcher: &Dispatcher, plan: Planned, mut sent: Sent) -> 
 /// A send that outlived its budget: the command may have landed, so no accepted write is claimed.
 /// The controller was already marked uncertain by the sink and the dispatcher's fail-safe hold is
 /// the only reconciliation before ordinary writes are allowed again.
-pub(super) fn deadline_sent() -> Sent {
+pub(super) fn deadline_sent(recovery_started: bool) -> Sent {
+    let state = if recovery_started {
+        "recovery started, outcome unknown"
+    } else {
+        "no recovery attempted"
+    };
     Sent {
         timeout: Some("dispatch".to_owned()),
         applied_w_reason: Some(AppliedPowerReason::ReadFailed),
-        error: Some(
-            "send exceeded the end-to-end pack budget; device state uncertain; no hold attempted by this tick"
-                .to_owned(),
-        ),
+        error: Some(format!(
+            "send exceeded the end-to-end pack budget; device state uncertain; {state}"
+        )),
         ..Sent::none()
     }
 }

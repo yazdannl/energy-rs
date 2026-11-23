@@ -5,6 +5,7 @@ mod row;
 mod write;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::dispatch::grid_telemetry;
@@ -44,11 +45,12 @@ pub struct Dispatcher {
 /// and the fail-safe hold together and stays below the 120 s health-staleness threshold.
 const PACK_SEND_BUDGET: Duration = energy_battery::control::PACK_IO_BUDGET;
 
-/// Per-send context: the tick clock and whether this command bypasses fault backoff.
+/// Per-send context: the tick clock, bypass flag, and whether fail-safe recovery started.
 #[derive(Clone, Copy)]
-struct SendContext {
+struct SendContext<'a> {
     now: i64,
     safety_traffic: bool,
+    recovery_started: &'a AtomicBool,
 }
 
 impl Dispatcher {
@@ -98,8 +100,12 @@ impl Dispatcher {
             let frame = &frame;
             async move {
                 let budgeted_plan = plan.clone();
-                let Ok(report) =
-                    tokio::time::timeout(PACK_SEND_BUDGET, self.send_plan(frame, plan, sink)).await
+                let recovery_started = AtomicBool::new(false);
+                let Ok(report) = tokio::time::timeout(
+                    PACK_SEND_BUDGET,
+                    self.send_plan(frame, plan, sink, &recovery_started),
+                )
+                .await
                 else {
                     self.faults.arm(
                         &budgeted_plan.pack_id,
@@ -109,7 +115,11 @@ impl Dispatcher {
                     // The caller-side timeout may cancel the sink before its own handler marks the
                     // controller, so the uncertainty marking must happen here too.
                     sink.mark_uncertain(&budgeted_plan.pack_id, "dispatch");
-                    return row::finish(self, budgeted_plan, row::deadline_sent());
+                    return row::finish(
+                        self,
+                        budgeted_plan,
+                        row::deadline_sent(recovery_started.load(Ordering::Relaxed)),
+                    );
                 };
                 report
             }
@@ -255,6 +265,7 @@ impl Dispatcher {
         frame: &TickFrame<'_>,
         plan: Planned,
         sink: &dyn CommandSink,
+        recovery_started: &AtomicBool,
     ) -> PackReport {
         let sent = if plan.send {
             // A verified cell-safety write is not proof the transport recovered: it bypasses the
@@ -275,6 +286,7 @@ impl Dispatcher {
                 SendContext {
                     now: frame.now,
                     safety_traffic,
+                    recovery_started,
                 },
             )
             .await
