@@ -3,7 +3,6 @@
 use energy_battery::control::Direction as BatteryDirection;
 use energy_battery::learning::{
     CapacityBounds, CapacityPool, LearningProfile, LearningReport, LearningStore, SessionRecord,
-    relearn_with_pool,
 };
 use energy_ledger::session::Direction as LedgerDirection;
 use energy_ledger::{Ledger, Session, SessionRules, Tier};
@@ -75,6 +74,9 @@ pub(crate) fn relearn_now(
 }
 
 /// The shared pass: extract, pool identical labels, then learn the selected packs.
+///
+/// The pool is built from *every* pack's current window, including packs that are skipped or
+/// excluded by a targeted relearn. Pool membership is an evidence property, not a scheduling one.
 fn scan(
     ledger: &Ledger,
     store: &dyn LearningStore,
@@ -83,39 +85,50 @@ fn scan(
     only: Option<&str>,
     completed_only: bool,
 ) -> Result<Vec<LearningReport>, WiringError> {
-    let inputs = collect_inputs(ledger, store, now, policy, only, completed_only)?;
-    let peers: Vec<(f64, &[SessionRecord])> = inputs
-        .iter()
-        .map(|input| (input.2.label_kwh, input.3.as_slice()))
-        .collect();
-    let pool = CapacityPool::from_sessions(&peers, instant(now));
-    let mut reports = Vec::with_capacity(inputs.len());
-    for (sn, id, bounds, records) in inputs {
-        let report = relearn_with_pool(store, &sn, &records, &bounds, Some(&pool), instant(now))?;
-        store_row(ledger, id, &report, report.measured_at.timestamp())?;
-        reports.push(report);
+    let states = collect_states(ledger, store, now, policy)?;
+    let pool = pool::fleet_pool(&states, now);
+    let mut reports = Vec::new();
+    for state in states {
+        if only.is_some_and(|sn| sn != state.sn) {
+            continue;
+        }
+        if completed_only
+            && let Some(blocker) = skip_reason(
+                &state.sessions,
+                state.complete,
+                state.previous.as_ref(),
+                now,
+                policy,
+            )
+        {
+            let skipped = skip::SkippedPass {
+                sn: &state.sn,
+                now,
+                sessions_in_window: state.sessions.len(),
+                sessions_complete: state.complete,
+                blocker,
+            };
+            skip::note_skipped(store, state.previous, &state.bounds, skipped)?;
+            continue;
+        }
+        if state.records.is_empty() {
+            continue;
+        }
+        reports.push(learn_and_publish(ledger, store, &state, &pool, now)?);
     }
     Ok(reports)
 }
 
-/// One pack's inputs: serial, row id, bounds and the window's session records.
-type PackInput = (String, i64, CapacityBounds, Vec<SessionRecord>);
-
-/// Extract and load the window for every selected pack before any pack is learned.
-fn collect_inputs(
+/// Extract every pack before any skip or target filter is applied.
+fn collect_states(
     ledger: &Ledger,
     store: &dyn LearningStore,
     now: i64,
     policy: &SessionPolicy,
-    only: Option<&str>,
-    completed_only: bool,
-) -> Result<Vec<PackInput>, WiringError> {
+) -> Result<Vec<pool::PackState>, WiringError> {
     let packs = ledger.packs()?.all()?;
-    let mut inputs = Vec::new();
+    let mut states = Vec::with_capacity(packs.len());
     for pack in &packs {
-        if only.is_some_and(|sn| sn != pack.sn) {
-            continue;
-        }
         let from = now.saturating_sub(policy.window_seconds());
         let to = now.saturating_add(1);
         let previous = store.load(&pack.sn)?;
@@ -126,31 +139,49 @@ fn collect_inputs(
             .extract(pack.id, Tier::OneMinute, extract_from, to, &policy.rules)?;
         let sessions = ledger.sessions()?.for_pack(pack.id, from, to)?;
         let complete = sessions.iter().filter(|session| usable(session)).count();
-        if completed_only
-            && let Some(blocker) = skip_reason(&sessions, complete, previous.as_ref(), now, policy)
-        {
-            let bounds = CapacityBounds::new(pack.label_capacity_kwh, pack.reported_capacity_kwh);
-            let skipped = skip::SkippedPass {
-                sn: &pack.sn,
-                now,
-                sessions_in_window: sessions.len(),
-                sessions_complete: complete,
-                blocker,
-            };
-            skip::note_skipped(store, previous, &bounds, skipped)?;
-            continue;
-        }
-        let records: Vec<SessionRecord> = sessions
+        let records = sessions
             .iter()
             .map(|session| record(session, &pack.sn))
             .collect();
-        if records.is_empty() {
-            continue;
-        }
         let bounds = CapacityBounds::new(pack.label_capacity_kwh, pack.reported_capacity_kwh);
-        inputs.push((pack.sn.clone(), pack.id, bounds, records));
+        states.push(pool::PackState {
+            sn: pack.sn.clone(),
+            id: pack.id,
+            bounds,
+            sessions,
+            records,
+            complete,
+            previous,
+        });
     }
-    Ok(inputs)
+    Ok(states)
+}
+
+/// Publish the pack row first, then commit the profile.
+///
+/// The profile is the commit point: its clocks decide whether a pack needs another pass. If the
+/// row write fails, nothing has advanced; if the profile write fails, the row is already correct but
+/// the old profile still grants an immediate retry. Both writes are idempotent, so the retry simply
+/// rewrites the same row and then commits the profile.
+fn learn_and_publish(
+    ledger: &Ledger,
+    store: &dyn LearningStore,
+    state: &pool::PackState,
+    pool: &CapacityPool,
+    now: i64,
+) -> Result<LearningReport, WiringError> {
+    let report = LearningReport::learn_with_pool(
+        &state.sn,
+        &state.records,
+        &state.bounds,
+        state.previous.as_ref(),
+        Some(pool),
+        instant(now),
+    );
+    let profile = LearningProfile::from_report(&report);
+    store_row(ledger, state.id, &report, report.measured_at.timestamp())?;
+    store.save(&profile)?;
+    Ok(report)
 }
 
 fn usable(session: &Session) -> bool {
@@ -244,6 +275,7 @@ fn record(session: &Session, pack_sn: &str) -> SessionRecord {
 }
 
 mod floor;
+mod pool;
 mod skip;
 
 #[cfg(test)]
@@ -251,7 +283,11 @@ mod attempt_tests;
 #[cfg(test)]
 mod boundary_tests;
 #[cfg(test)]
+mod failure_tests;
+#[cfg(test)]
 mod legacy_tests;
+#[cfg(test)]
+mod pooling_tests;
 #[cfg(test)]
 mod scheduled_tests;
 #[cfg(test)]
