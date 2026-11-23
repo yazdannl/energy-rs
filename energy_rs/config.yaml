@@ -21,7 +21,8 @@ panel_admin: true
 homeassistant_api: true
 hassio_api: false
 # The health endpoint answers 200 while the HTTP server lives and never calls Home Assistant, so a
-# Core restart does not restart this add-on.
+# Core restart does not restart this add-on. A stalled tick or sampler makes it answer 503, which
+# DOES restart the add-on; the endpoint must stay trivial (no HA, no packs, no ledger, no locks).
 watchdog: "http://[HOST]:[PORT:8099]/api/v1/health"
 # SQLite/WAL in /data: stop before a backup instead of copying a hot WAL.
 backup: cold
@@ -40,12 +41,14 @@ options:
   log_level: info
   price_provider: auto
   tick_seconds: 1
+  health_stale_after_s: 120
   batteries: "[]"
 schema:
   mode: list(advisory|dry_run|auto)
   log_level: list(trace|debug|info|warn|error)
   price_provider: list(auto|zonneplan|ha_sensor)
   tick_seconds: int(1,60)
+  health_stale_after_s: int(30,600)
   scan: bool?
   zonneplan_refresh_token: password?
   price_entity: str?

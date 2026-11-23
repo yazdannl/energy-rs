@@ -83,7 +83,9 @@ impl Fixture {
             Arc::clone(&ledger),
             Arc::new(prices),
             Settlement::new(energy_price::Contract::zonneplan_2026()),
-            ServiceOptions::default().with_heartbeat(heartbeat),
+            ServiceOptions::default()
+                .with_heartbeat(heartbeat)
+                .with_health_stale_after(Duration::from_hours(24)),
         );
         let pack_sn = "AB2000-ONE".to_owned();
         let fixture = Self {
@@ -389,6 +391,7 @@ fn standard_snapshot(base: i64, plan_id: i64, sn: &str) -> EngineSnapshot {
         site: site_snapshot(),
         plan: Some(plan_snapshot(base, plan_id)),
         packs: vec![pack_snapshot(sn, base)],
+        configured_packs: 1,
         meter: Some(MeterSnapshot {
             at: base,
             grid_w: 250.0,

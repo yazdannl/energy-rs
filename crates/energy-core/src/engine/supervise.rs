@@ -33,17 +33,20 @@ impl Engine {
     /// The generation is fenced *before* the hold, so a tick that is still in flight can no longer
     /// write the setpoint this hold supersedes.
     pub async fn supervise(&self, now: i64) -> Result<bool, EngineError> {
-        let stalled = self.lock()?.watchdog.stalled(now);
+        let (stalled, phase) = {
+            let state = self.lock()?;
+            (state.watchdog.stalled(now), state.tick_phase)
+        };
         let mode = self.gate.mode();
         let mut held = false;
         if stalled {
             self.lock()?.watchdog.mark(now);
-            let mut detail = format!("nothing written in {} mode", mode.slug());
+            let mut detail = format!("nothing written in {} mode, phase {phase}", mode.slug());
             if mode.may_write() {
                 self.gate.fence();
                 let report = self.hold_all(now, Reason::WatchdogHold, None).await?;
                 held = true;
-                detail = report.summary();
+                detail = format!("phase {phase}; {}", report.summary());
             }
             self.event(
                 now,

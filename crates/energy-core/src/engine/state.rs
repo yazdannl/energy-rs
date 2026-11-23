@@ -28,6 +28,8 @@ pub(crate) struct EngineState {
     pub(crate) selection: Option<energy_ledger::selection::SelectionRow>,
     pub(crate) overrides: Vec<ManualOverride>,
     pub(crate) watchdog: Watchdog,
+    /// The await phase the tick loop is in, for stall diagnostics.
+    pub(crate) tick_phase: &'static str,
     pub(crate) cells: CellVoltageGuard,
     pub(crate) last_minute: Option<i64>,
     pub(crate) last_session_check: Option<i64>,

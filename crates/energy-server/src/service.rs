@@ -9,7 +9,7 @@
 //! (`api::blocking`); this struct only holds the handles.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use energy_core::safety::Authority;
 use energy_core::stream::SnapshotPublisher;
@@ -32,6 +32,10 @@ pub struct Service {
     snapshots: WatchPublisher,
     commands: mpsc::Sender<EngineCommand>,
     heartbeat: Duration,
+    health_stale_after: Duration,
+    /// Process boot wall clock and monotonic anchor; the health check never takes a lock.
+    booted_at: i64,
+    boot_instant: Instant,
     refresh: Arc<Notify>,
 }
 
@@ -49,6 +53,7 @@ impl Service {
     ) -> (Arc<Self>, EngineHandles) {
         let snapshots = WatchPublisher::empty();
         let (commands, command_rx) = mpsc::channel(COMMAND_QUEUE);
+        let booted_at = chrono::Utc::now().timestamp();
         let service = Arc::new(Self {
             ledger,
             prices,
@@ -56,6 +61,9 @@ impl Service {
             snapshots: snapshots.clone(),
             commands,
             heartbeat: options.heartbeat,
+            health_stale_after: options.health_stale_after,
+            booted_at,
+            boot_instant: Instant::now(),
             refresh: Arc::new(Notify::new()),
         });
         (service, EngineHandles::new(snapshots, command_rx))
@@ -104,6 +112,16 @@ impl Service {
     /// The configured SSE heartbeat interval.
     pub fn heartbeat(&self) -> Duration {
         self.heartbeat
+    }
+
+    /// Age at which a missing tick or pack sample degrades health.
+    pub fn health_stale_after(&self) -> Duration {
+        self.health_stale_after
+    }
+
+    /// `(boot wall clock, monotonic boot instant)` for the startup grace window.
+    pub fn boot(&self) -> (i64, Instant) {
+        (self.booted_at, self.boot_instant)
     }
 
     /// Queue one command for the engine.

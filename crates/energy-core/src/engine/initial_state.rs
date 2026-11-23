@@ -18,6 +18,7 @@ pub(super) fn initial_state(config: &EngineConfig, _now: i64) -> EngineState {
         selection: None,
         overrides: Vec::new(),
         watchdog: Watchdog::with_stall_after(config.stall_after_s()),
+        tick_phase: "boot",
         cells: CellVoltageGuard::new(),
         last_minute: None,
         last_session_check: None,

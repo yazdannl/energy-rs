@@ -240,6 +240,13 @@ impl Engine {
         Ok(self.lock()?.latch.clone())
     }
 
+    /// Record which await the tick loop is inside; the guard logs it when progress stops.
+    pub(crate) fn set_phase(&self, phase: &'static str) {
+        if let Ok(mut state) = self.lock() {
+            state.tick_phase = phase;
+        }
+    }
+
     /// Mark loop progress; the watchdog only ever moves forward.
     pub(crate) fn mark(&self, now: i64) -> Result<(), EngineError> {
         self.lock()?.watchdog.mark(now);

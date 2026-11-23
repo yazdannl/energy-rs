@@ -20,6 +20,8 @@ pub struct EngineSnapshot {
     pub plan: Option<PlanSnapshot>,
     /// Per-pack state, learned profile, latch and manual override.
     pub packs: Vec<PackSnapshot>,
+    /// Number of packs known to the ledger, including ones the fleet has not sampled yet.
+    pub configured_packs: usize,
     /// Live grid/PV/load power, when HA published a fresh reading.
     pub meter: Option<MeterSnapshot>,
     /// The forecast totals this slot's plan was built on.

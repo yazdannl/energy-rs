@@ -56,7 +56,7 @@ are safe to surface in the UI.
 
 | method | path | query / body | success | errors |
 |---|---|---|---|---|
-| GET | `/api/v1/health` | — | 200 `health` | — |
+| GET | `/api/v1/health` | — | 200 `health` | 503 `health` (stalled) |
 | GET | `/api/v1/site` | — | 200 `site` | — |
 | GET | `/api/v1/packs` | — | 200 `packs` | — |
 | PATCH | `/api/v1/packs/{sn}` | `{alias}` | 200 `{sn, alias}` | 400, 404, 422 |
@@ -77,14 +77,34 @@ are safe to surface in the UI.
 
 ### `GET /health`
 
-Liveness for the Supervisor watchdog. It touches no database and no Home Assistant.
+The Supervisor watchdog's liveness signal (`config.yaml: watchdog`). It reads only the last
+published in-memory snapshot and two boot stamps: no Home Assistant, no packs, no ledger and no
+engine lock, so it stays answerable while the tick loop is stuck. Keep it that way.
+
+Healthy:
 
 ```json
 { "status": "ok", "version": "0.1.0", "mode": "dry_run", "lastTickAt": "2026-01-01T12:00:00Z" }
 ```
 
-`status`/`version` are the stable watchdog contract; `mode` and `lastTickAt` are additive.
-`lastTickAt` is `null` until the engine publishes its first snapshot (it does so after every tick).
+When the engine has not completed a tick for `health_stale_after_s` (default 120 s, add-on setting),
+or no pack has been sampled for that long, the endpoint answers **HTTP 503**:
+
+```json
+{ "status": "degraded", "reason": "tick_stalled", "ageSeconds": 121,
+  "tickStalledSince": "2026-01-01T11:58:00Z", "lastTickAt": "2026-01-01T11:58:00Z" }
+```
+
+`reason` is `tick_stalled` or `sampler_stalled`; the matching `since` field names when the signal
+last moved. A missing first tick, or a configured fleet with no first sample, is stalled once the grace
+expires. Fleet membership comes from the ledger's `configuredPacks` count carried in the snapshot,
+so "configured but publishing zero packs" is a sampler stall; a genuinely empty fleet is healthy. A write that timed out after the device may have
+accepted it does not degrade liveness by itself, but adds `reason: "uncertain_write"` to a 200 health
+response; dispatch stays blocked until a safety hold is sent and echoed. A 503 makes the Supervisor
+restart the add-on, so a frozen loop cannot leave a stale command standing for hours. The check is
+suppressed for the first 90 s after boot; there is no other legitimate operation that long in this
+engine. `status`/`version` remain the stable watchdog contract; the other fields are additive.
+`lastTickAt` is `null` until the first tick publishes.
 
 ### `GET /site`
 
