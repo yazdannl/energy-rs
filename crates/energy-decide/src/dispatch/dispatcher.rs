@@ -1,13 +1,14 @@
 //! M4 dispatch: ask both ports, write concurrently under one budget, report honestly.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::dispatch::ack_row;
 use crate::dispatch::constants::NO_FLOW_BACKOFF_MS;
 use crate::dispatch::preparation::{Preparation, prepare};
 use crate::dispatch::{
-    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowReport, Observer,
-    PackIo, RetryClock, SafetyGate, SlotRequest, WriteAuthority, WriteTask,
+    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowReport,
+    LateWrite, Observer, PackCommand, PackIo, RetryClock, SafetyExecution, SafetyGate, SlotRequest,
+    WriteAuthority, WriteTask,
 };
 
 /// Dispatcher with injected consumer ports; it owns no safety or authority decision.
@@ -17,18 +18,13 @@ pub struct Dispatcher<S: SafetyGate, A: WriteAuthority, C: RetryClock> {
     authority: A,
     clock: C,
     budget_ms: u64,
+    late: Arc<Mutex<Vec<LateWrite>>>,
 }
 
 impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
     /// Build a dispatcher with an explicit per-pack budget in milliseconds.
     pub fn new(io: impl PackIo, safety: S, authority: A, clock: C, budget_ms: u64) -> Self {
-        Self {
-            io: Arc::new(io),
-            safety,
-            authority,
-            clock,
-            budget_ms,
-        }
+        Self::new_with_shared(Arc::new(io), safety, authority, clock, budget_ms)
     }
 
     /// Build a dispatcher over a shared transport so tests can observe it.
@@ -45,6 +41,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             authority,
             clock,
             budget_ms,
+            late: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -59,6 +56,15 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         )
     }
 
+    /// Late completions from superseded write generations, drained by the caller.
+    pub fn take_late_writes(&self) -> Vec<LateWrite> {
+        let mut log = self
+            .late
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::take(&mut *log)
+    }
+
     /// Start every pack's write before collecting any receipt.
     pub fn dispatch_slot(
         &self,
@@ -66,7 +72,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         requests: &[SlotRequest],
         now_ms: i64,
     ) -> Vec<DispatchRow> {
-        let preparations: Vec<Preparation> = requests
+        let mut preparations: Vec<Preparation> = requests
             .iter()
             .map(|request| {
                 prepare(
@@ -80,20 +86,23 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             })
             .collect();
         let mut tasks = Vec::new();
-        let mut tx_ids = Vec::new();
-        for preparation in &preparations {
+        for preparation in &mut preparations {
             if let Preparation::Write(write) = preparation {
-                let tx_id = self.io.begin(&write.command.pack_id);
-                tx_ids.push(tx_id);
+                let pack = state.pack(&write.command.pack_id);
+                pack.generation = pack.generation.saturating_add(1);
+                write.command.generation = pack.generation;
+                write.tx_id = self.io.begin(&write.command.pack_id);
                 tasks.push(WriteTask::start(
                     &self.io,
                     &write.command,
-                    tx_id,
+                    write.tx_id,
                     self.budget_ms,
+                    pack.generation,
+                    &self.late,
                 ));
             }
         }
-        self.collect(state, preparations, tasks, &tx_ids, now_ms)
+        self.collect(state, preparations, tasks, now_ms)
     }
 
     /// Collect bounded writes and apply their effects to state.
@@ -102,28 +111,22 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         state: &mut DispatchState,
         preparations: Vec<Preparation>,
         mut tasks: Vec<WriteTask>,
-        tx_ids: &[u64],
         now_ms: i64,
     ) -> Vec<DispatchRow> {
         let mut rows = Vec::with_capacity(preparations.len());
-        let mut next = 0;
         for preparation in preparations {
             match preparation {
                 Preparation::Row(row) => rows.push(row),
                 Preparation::Write(write) => {
-                    let task = tasks.remove(0);
-                    let attempt = task.collect();
-                    let tx_id = tx_ids[next];
-                    next += 1;
-                    self.io.release(&write.command.pack_id, tx_id);
-                    let mut effect = ack_row::from_attempt(
-                        &self.io,
-                        &self.clock,
-                        attempt,
-                        &write.command,
-                        self.budget_ms,
+                    let attempt = tasks.remove(0).collect();
+                    let context = ack_row::AttemptContext {
+                        io: &self.io,
+                        clock: &self.clock,
+                        late: &self.late,
+                        budget_ms: self.budget_ms,
                         now_ms,
-                    );
+                    };
+                    let mut effect = ack_row::from_attempt(&context, attempt, &write.command);
                     Self::apply_effect(state, &write.command, &mut effect, now_ms);
                     rows.push(Self::gate_row(
                         effect.row,
@@ -143,7 +146,11 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         now_ms: i64,
     ) {
         let pack = state.pack(&command.pack_id);
+        pack.last_command = Some(command.clone());
         pack.pending = effect.pending.take();
+        if effect.generation_bumped {
+            pack.generation = pack.generation.saturating_add(1);
+        }
         if let Some(reason) = effect.uncertain_reason {
             pack.uncertain = true;
             pack.uncertain_reason = Some(reason);
@@ -154,6 +161,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         }
     }
 
+    /// Annotate economic preemption without hiding the safety command's own outcome.
     fn gate_row(
         mut row: DispatchRow,
         gate_reason: Option<&'static str>,
@@ -162,17 +170,56 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         if interrupted {
             row = row.reason("pause_interrupted_by_target_change");
         }
-        match gate_reason {
-            Some(reason) => {
-                row.outcome = DispatchOutcome::Skipped;
-                row.evidence_kind = EvidenceKind::PortDecision;
-                row.reason("safety_preempted").reason(reason)
-            }
-            None => row,
+        if row.safety_traffic {
+            let (execution, evidence, detail) = Self::safety_execution(&row);
+            row.safety_execution = Some(execution);
+            row.safety_evidence = Some(evidence);
+            row.safety_reason = detail;
         }
+        if let Some(reason) = gate_reason {
+            row.economic_preempted_by = Some(reason);
+            row = row.reason("safety_preempted").reason(reason);
+        }
+        row
     }
 
-    /// Read one flow report; a read miss stays null with a typed reason.
+    fn safety_execution(
+        row: &DispatchRow,
+    ) -> (SafetyExecution, EvidenceKind, Option<&'static str>) {
+        if row.reasons.contains(&"write_deadline_mid_transport")
+            || row.reasons.contains(&"late_after_deadline_superseded")
+        {
+            return (
+                SafetyExecution::TimedOut,
+                EvidenceKind::NoMeasurement,
+                Some("write_deadline_mid_transport"),
+            );
+        }
+        if row.outcome == DispatchOutcome::Rejected {
+            return (
+                SafetyExecution::Rejected,
+                EvidenceKind::PortDecision,
+                row.reasons.first().copied(),
+            );
+        }
+        if row.outcome == DispatchOutcome::Uncertain {
+            return (
+                SafetyExecution::Failed,
+                EvidenceKind::NoMeasurement,
+                Some("controller_uncertain"),
+            );
+        }
+        if row.echo_matched {
+            return (
+                SafetyExecution::Echoed,
+                EvidenceKind::CommandVerification,
+                None,
+            );
+        }
+        (SafetyExecution::Accepted, EvidenceKind::PortDecision, None)
+    }
+
+    /// Read one flow report; a read miss keeps tracked command identity and uncertainty.
     pub fn read_flow(
         &self,
         state: &mut DispatchState,
@@ -181,24 +228,46 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         deadline_ms: u64,
     ) -> DispatchRow {
         let Some(report) = self.io.read(pack_id, deadline_ms) else {
-            let command = crate::dispatch::PackCommand {
+            return Self::read_miss_row(state, pack_id, now_ms);
+        };
+        self.observe(state, &report, now_ms)
+    }
+
+    fn read_miss_row(state: &DispatchState, pack_id: &str, now_ms: i64) -> DispatchRow {
+        let pack = state.get(pack_id);
+        let command = pack
+            .and_then(|value| value.last_command.clone())
+            .unwrap_or(PackCommand {
                 pack_id: pack_id.to_owned(),
                 requested_w: 0.0,
                 issued_at_ms: now_ms,
+                generation: 0,
                 fence_id: None,
                 safety_traffic: false,
-            };
-            let mut row =
-                DispatchRow::base(&command, crate::dispatch::constants::PACK_IO_BUDGET_MS)
-                    .outcome(
-                        DispatchOutcome::ConfirmationPending,
-                        EvidenceKind::NoMeasurement,
-                    )
-                    .reason("read_miss");
-            row.applied_reason = AppliedReason::ReadMiss;
-            return row;
-        };
-        self.observe(state, &report, now_ms)
+            });
+        let uncertain = pack.is_some_and(|value| value.uncertain);
+        let pending = pack.is_some_and(|value| value.pending.is_some());
+        let mut row = DispatchRow::base(&command, crate::dispatch::constants::PACK_IO_BUDGET_MS)
+            .outcome(
+                if uncertain {
+                    DispatchOutcome::Uncertain
+                } else if pending {
+                    DispatchOutcome::ConfirmationPending
+                } else {
+                    DispatchOutcome::Deferred
+                },
+                EvidenceKind::NoMeasurement,
+            )
+            .reason("read_miss");
+        row.applied_reason = AppliedReason::ReadMiss;
+        row.controller_uncertain = uncertain;
+        if uncertain {
+            row = row.reason("controller_uncertain");
+        }
+        if !pending && !uncertain {
+            row = row.reason("no_pending_command");
+        }
+        row
     }
 
     /// Fold a later report; no waiting occurs in this call.
@@ -208,6 +277,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         report: &FlowReport,
         now_ms: i64,
     ) -> DispatchRow {
-        Observer::new(&self.io, &self.clock, self.budget_ms).observe(state, report, now_ms)
+        Observer::new(&self.io, &self.clock, &self.late, self.budget_ms)
+            .observe(state, report, now_ms)
     }
 }

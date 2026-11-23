@@ -36,11 +36,26 @@ pub enum ConfirmationVerdict {
 }
 
 fn is_shortfall(command_w: f64, report: &FlowReport, class: FlowClass) -> bool {
-    command_w.abs() > 30.0
+    command_w < 0.0
+        && command_w.abs() > 30.0
         && !report.faulted()
         && report.above_device_min_soc()
         && report.soc_pct <= SHORTFALL_SOC_MAX_PCT
         && matches!(class, FlowClass::PartialFlow | FlowClass::NoFlow)
+}
+
+fn shortfall_or(
+    pending: &PendingConfirmation,
+    report: &FlowReport,
+    class: FlowClass,
+    measured_w: f64,
+    fallback: ConfirmationVerdict,
+) -> ConfirmationVerdict {
+    if is_shortfall(pending.command_w, report, class) {
+        ConfirmationVerdict::Shortfall { measured_w }
+    } else {
+        fallback
+    }
 }
 
 fn note_band(pending: &mut PendingConfirmation, now_ms: i64) {
@@ -63,11 +78,6 @@ pub fn fold(
         report.measured_w,
         status_direction(report.ac_status, report.dc_status),
     );
-    if is_shortfall(pending.command_w, report, class) {
-        return ConfirmationVerdict::Shortfall {
-            measured_w: report.measured_w,
-        };
-    }
     match class {
         FlowClass::FullFlow | FlowClass::HoldVerified => {
             note_band(pending, now_ms);
@@ -83,12 +93,22 @@ pub fn fold(
                 }
             }
         }
-        FlowClass::PartialFlow => {
-            partial_verdict(pending, now_ms, report.measured_w, class, ramp_max_ms)
-        }
-        FlowClass::NoFlow => {
-            no_flow_verdict(pending, now_ms, report.measured_w, class, ramp_max_ms)
-        }
+        FlowClass::PartialFlow => partial_verdict(
+            pending,
+            report,
+            now_ms,
+            report.measured_w,
+            class,
+            ramp_max_ms,
+        ),
+        FlowClass::NoFlow => no_flow_verdict(
+            pending,
+            report,
+            now_ms,
+            report.measured_w,
+            class,
+            ramp_max_ms,
+        ),
         other => ConfirmationVerdict::Anomaly {
             class: other,
             measured_w: report.measured_w,
@@ -98,6 +118,7 @@ pub fn fold(
 
 fn partial_verdict(
     pending: &mut PendingConfirmation,
+    report: &FlowReport,
     now_ms: i64,
     measured_w: f64,
     class: FlowClass,
@@ -105,7 +126,13 @@ fn partial_verdict(
 ) -> ConfirmationVerdict {
     let allowance = i64::try_from(ramp_max_ms).unwrap_or(i64::MAX);
     if pending.ramp_ended() || now_ms >= pending.issued_at_ms.saturating_add(allowance) {
-        ConfirmationVerdict::Anomaly { class, measured_w }
+        shortfall_or(
+            pending,
+            report,
+            class,
+            measured_w,
+            ConfirmationVerdict::Anomaly { class, measured_w },
+        )
     } else {
         ConfirmationVerdict::Pending {
             class,
@@ -116,6 +143,7 @@ fn partial_verdict(
 
 fn no_flow_verdict(
     pending: &mut PendingConfirmation,
+    report: &FlowReport,
     now_ms: i64,
     measured_w: f64,
     class: FlowClass,
@@ -124,7 +152,13 @@ fn no_flow_verdict(
     let deadline =
         pending.issued_at_ms + i64::try_from(ramp_max_ms.max(RAMP_MAX_MS)).unwrap_or(i64::MAX);
     if pending.ramp_ended() {
-        return ConfirmationVerdict::Anomaly { class, measured_w };
+        return shortfall_or(
+            pending,
+            report,
+            class,
+            measured_w,
+            ConfirmationVerdict::Anomaly { class, measured_w },
+        );
     }
     if now_ms < deadline {
         return ConfirmationVerdict::Pending {
@@ -132,9 +166,18 @@ fn no_flow_verdict(
             provisional: true,
         };
     }
+    if is_shortfall(pending.command_w, report, class) {
+        return ConfirmationVerdict::Shortfall { measured_w };
+    }
     pending.post_ramp_no_flow = pending.post_ramp_no_flow.saturating_add(1);
     if pending.post_ramp_no_flow >= 2 {
-        ConfirmationVerdict::Anomaly { class, measured_w }
+        shortfall_or(
+            pending,
+            report,
+            class,
+            measured_w,
+            ConfirmationVerdict::Anomaly { class, measured_w },
+        )
     } else {
         ConfirmationVerdict::Pending {
             class,

@@ -1,6 +1,8 @@
 //! The single observable record of what happened to one pack.
 
-use crate::dispatch::{AppliedReason, DispatchOutcome, Echo, EvidenceKind, FlowClass, PackCommand};
+use crate::dispatch::{
+    AppliedReason, DispatchOutcome, Echo, EvidenceKind, FlowClass, PackCommand, SafetyExecution,
+};
 
 /// Per-pack row; every distinct M4 state is distinguishable here.
 // Independent transport/verification/flow facts are a reviewer requirement, not a state machine.
@@ -9,6 +11,8 @@ use crate::dispatch::{AppliedReason, DispatchOutcome, Echo, EvidenceKind, FlowCl
 pub struct DispatchRow {
     /// Stable pack identifier.
     pub pack_id: String,
+    /// Monotonic write generation carried by the command fence.
+    pub generation: u64,
     /// Explicit outcome state.
     pub outcome: DispatchOutcome,
     /// Requested power in W, charge positive.
@@ -51,6 +55,14 @@ pub struct DispatchRow {
     pub safety_traffic: bool,
     /// Whether this pack is uncertain and ordinary retries are blocked.
     pub controller_uncertain: bool,
+    /// Why M5 preempted the economic command; independent of write execution.
+    pub economic_preempted_by: Option<&'static str>,
+    /// Execution outcome of the safety command, when M5 sent one.
+    pub safety_execution: Option<SafetyExecution>,
+    /// Evidence for the safety command's own execution.
+    pub safety_evidence: Option<EvidenceKind>,
+    /// Typed extra detail for the safety execution.
+    pub safety_reason: Option<&'static str>,
     /// Whether fault backoff was incremented by this row.
     pub fault_backoff_incremented: bool,
     /// Absolute retry offsets used by a fail-safe hold, milliseconds.
@@ -66,6 +78,7 @@ impl DispatchRow {
     pub fn base(command: &PackCommand, budget_ms: u64) -> Self {
         Self {
             pack_id: command.pack_id.clone(),
+            generation: command.generation,
             outcome: DispatchOutcome::ConfirmationPending,
             requested_w: command.requested_w,
             written_w: None,
@@ -87,6 +100,10 @@ impl DispatchRow {
             retry_at: None,
             safety_traffic: command.safety_traffic,
             controller_uncertain: false,
+            economic_preempted_by: None,
+            safety_execution: None,
+            safety_evidence: None,
+            safety_reason: None,
             fault_backoff_incremented: false,
             retry_offsets_ms: Vec::new(),
             delivered_w: None,

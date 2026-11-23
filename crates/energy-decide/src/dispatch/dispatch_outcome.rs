@@ -13,7 +13,7 @@ pub enum DispatchOutcome {
     Rejected,
     /// Device accepted but delivered materially less with faultLevel 0.
     CapabilityShortfall,
-    /// Authority or safety declined; nothing was written by M4.
+    /// Authority declined; no economic or safety command was written by M4.
     Skipped,
     /// Backoff, pause or uncertainty deferred the ordinary command.
     Deferred,

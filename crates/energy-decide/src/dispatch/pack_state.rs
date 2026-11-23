@@ -23,6 +23,10 @@ pub struct PackState {
     pub partial_retries: usize,
     /// Consecutive fresh neutral reports while no command is standing.
     pub idle_reports: usize,
+    /// Monotonic generation of the latest write; late older writes are ignored.
+    pub generation: u64,
+    /// Last command identity tracked for this pack, accepted or not.
+    pub last_command: Option<crate::dispatch::PackCommand>,
 }
 
 impl PackState {

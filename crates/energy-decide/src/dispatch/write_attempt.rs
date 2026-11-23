@@ -17,6 +17,13 @@ pub enum WriteAttempt {
         /// Elapsed milliseconds inside the budget.
         elapsed_ms: u64,
     },
+    /// Completion arrived after the deadline had already superseded this write.
+    Superseded {
+        /// Monotonic generation that was ignored.
+        generation: u64,
+        /// Elapsed milliseconds inside the budget.
+        elapsed_ms: u64,
+    },
     /// Transport worker died without an answer.
     Failed {
         /// Typed reason.
@@ -32,6 +39,7 @@ impl WriteAttempt {
         match self {
             Self::Ack { elapsed_ms, .. }
             | Self::Timeout { elapsed_ms }
+            | Self::Superseded { elapsed_ms, .. }
             | Self::Failed { elapsed_ms, .. } => *elapsed_ms,
         }
     }

@@ -1,21 +1,20 @@
 //! Fold later reports into deferred confirmations; never await them in a tick.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::dispatch::confirmation::{ConfirmationVerdict, fold, idle_confirmed};
 use crate::dispatch::constants::{NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS};
-use crate::dispatch::fallback::{fallback_accepted, write_fallback};
-use crate::dispatch::flow_predicates::classify_flow;
 use crate::dispatch::{
-    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FallbackResult,
-    FlowClass, FlowReport, PackCommand, PackIo, PendingConfirmation, RetryClock, status_direction,
+    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowClass,
+    FlowReport, LateWrite, PackCommand, PackIo, PendingConfirmation, RetryClock,
 };
 
 fn command_for(pack_id: &str, pending: Option<&PendingConfirmation>) -> PackCommand {
     PackCommand {
         pack_id: pack_id.to_owned(),
-        requested_w: pending.map_or(0.0, |value| value.command_w),
-        issued_at_ms: pending.map_or(0, |value| value.issued_at_ms),
+        requested_w: pending.map_or(0.0, |v| v.command_w),
+        issued_at_ms: pending.map_or(0, |v| v.issued_at_ms),
+        generation: 0,
         fence_id: None,
         safety_traffic: false,
     }
@@ -186,15 +185,22 @@ fn apply_state(
 pub struct Observer<'a> {
     io: &'a Arc<dyn PackIo>,
     clock: &'a dyn RetryClock,
+    late: &'a Arc<Mutex<Vec<LateWrite>>>,
     budget_ms: u64,
 }
 
 impl<'a> Observer<'a> {
     /// Build an observer with the shared transport and retry clock.
-    pub fn new(io: &'a Arc<dyn PackIo>, clock: &'a dyn RetryClock, budget_ms: u64) -> Self {
+    pub fn new(
+        io: &'a Arc<dyn PackIo>,
+        clock: &'a dyn RetryClock,
+        late: &'a Arc<Mutex<Vec<LateWrite>>>,
+        budget_ms: u64,
+    ) -> Self {
         Self {
             io,
             clock,
+            late,
             budget_ms,
         }
     }
@@ -212,7 +218,7 @@ impl<'a> Observer<'a> {
         );
         let pack = state.pack(&report.pack_id);
         let Some(pending) = pack.pending.as_mut() else {
-            return self.no_command(pack, &command, report, now_ms);
+            return self.no_command(pack, &command, report);
         };
         if pending.message_id != 0 && report.message_id <= pending.message_id {
             let mut row = DispatchRow::base(&command, self.budget_ms)
@@ -229,7 +235,7 @@ impl<'a> Observer<'a> {
         }
         let mut row = DispatchRow::base(&command, self.budget_ms);
         apply_verdict(&mut row, verdict, &command, report, self.budget_ms, now_ms);
-        self.shortfall_or_anomaly(row, pack, &command, report, now_ms)
+        self.escalate(row, pack, &command, report, now_ms)
     }
 
     fn no_command(
@@ -237,7 +243,6 @@ impl<'a> Observer<'a> {
         pack: &mut crate::dispatch::PackState,
         command: &PackCommand,
         report: &FlowReport,
-        _now_ms: i64,
     ) -> DispatchRow {
         if !idle_confirmed(pack, report) {
             let mut row = DispatchRow::base(command, self.budget_ms)
@@ -255,7 +260,7 @@ impl<'a> Observer<'a> {
             .reason("no_command_needed")
     }
 
-    fn shortfall_or_anomaly(
+    fn escalate(
         &self,
         row: DispatchRow,
         pack: &mut crate::dispatch::PackState,
@@ -263,34 +268,19 @@ impl<'a> Observer<'a> {
         report: &FlowReport,
         now_ms: i64,
     ) -> DispatchRow {
-        if row.flow_class != Some(FlowClass::PartialFlow) || !row.anomaly_confirmed {
-            return row;
-        }
-        let class = classify_flow(
-            command.requested_w,
-            report.measured_w,
-            status_direction(report.ac_status, report.dc_status),
-        );
-        if class != FlowClass::PartialFlow || now_ms < pack.pause_until_ms {
-            return row;
-        }
-        pack.partial_retries = pack.partial_retries.saturating_add(1);
-        if pack.partial_retries < 2 {
-            let mut row = row
-                .outcome(DispatchOutcome::Deferred, EvidenceKind::PortDecision)
-                .reason("persistent_partial")
-                .reason("retry_pending");
-            row.retry_at = Some(now_ms + i64::try_from(PARTIAL_PAUSE_MS).unwrap_or(i64::MAX));
-            return row;
-        }
-        let fallback: FallbackResult = write_fallback(self.io, self.clock, command, self.budget_ms);
-        let reason = if fallback_accepted(&fallback) {
-            "fallback_hold_written"
-        } else {
-            "safety_hold_unverified"
+        let escalation = crate::dispatch::observer_escalation::Escalation {
+            io: self.io,
+            clock: self.clock,
+            late: self.late,
+            budget_ms: self.budget_ms,
         };
-        row.outcome(DispatchOutcome::Deferred, EvidenceKind::PortDecision)
-            .reason("partial_flow_escalated")
-            .reason(reason)
+        crate::dispatch::observer_escalation::escalate(
+            &escalation,
+            row,
+            pack,
+            command,
+            report,
+            now_ms,
+        )
     }
 }

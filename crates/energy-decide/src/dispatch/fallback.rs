@@ -1,11 +1,13 @@
 //! Fail-safe hold retries at 0/2/6 s, all inside the one per-pack budget.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::dispatch::budget::{elapsed_ms, remaining_ms};
 use crate::dispatch::constants::FALLBACK_RETRY_MS;
-use crate::dispatch::{FallbackResult, PackCommand, PackIo, RetryClock, WriteAck, WriteTask};
+use crate::dispatch::{
+    FallbackResult, LateWrite, PackCommand, PackIo, RetryClock, WriteAck, WriteAttempt, WriteTask,
+};
 
 fn hold_command(command: &PackCommand) -> PackCommand {
     let mut hold = command.clone();
@@ -20,6 +22,7 @@ pub fn write_fallback(
     clock: &dyn RetryClock,
     command: &PackCommand,
     budget_ms: u64,
+    late: &Arc<Mutex<Vec<LateWrite>>>,
 ) -> FallbackResult {
     let started = Instant::now();
     let hold = hold_command(command);
@@ -40,19 +43,20 @@ pub fn write_fallback(
         result.offsets_ms.push(offset);
         result.attempts += 1;
         let tx_id = io.begin(&hold.pack_id);
+        let remaining = remaining_ms(started, budget_ms);
         let attempt =
-            WriteTask::start(io, &hold, tx_id, remaining_ms(started, budget_ms)).collect();
-        io.release(&hold.pack_id, tx_id);
+            WriteTask::start(io, &hold, tx_id, remaining, hold.generation, late).collect();
         match attempt {
-            crate::dispatch::WriteAttempt::Ack { ack, .. } => {
+            WriteAttempt::Ack { ack, .. } => {
                 let accepted = ack.accepted();
                 result.ack = Some(ack);
                 if accepted {
                     break;
                 }
             }
-            crate::dispatch::WriteAttempt::Timeout { .. }
-            | crate::dispatch::WriteAttempt::Failed { .. } => {}
+            WriteAttempt::Timeout { .. }
+            | WriteAttempt::Superseded { .. }
+            | WriteAttempt::Failed { .. } => {}
         }
     }
     result.elapsed_ms = elapsed_ms(started);

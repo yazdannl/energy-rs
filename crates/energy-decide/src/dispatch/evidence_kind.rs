@@ -15,4 +15,6 @@ pub enum EvidenceKind {
     CapabilityObservation,
     /// Decision supplied by the M5 or M6 consumer port.
     PortDecision,
+    /// Completion from a write generation already superseded at its deadline.
+    LateAfterDeadlineSuperseded,
 }

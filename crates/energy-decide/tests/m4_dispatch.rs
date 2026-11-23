@@ -8,8 +8,8 @@ use std::time::Instant;
 use energy_decide::dispatch::constants::PACK_IO_BUDGET_MS;
 use energy_decide::dispatch::{
     AllowAllAuthority, AppliedReason, AuthorityDecision, DispatchOutcome, DispatchState,
-    Dispatcher, Echo, PackCommand, PackIo, ProceedSafety, SafetyAction, SafetyGate,
-    SafetyIntervention, SlotRequest, WriteAuthority,
+    Dispatcher, Echo, PackCommand, PackIo, ProceedSafety, SafetyAction, SafetyExecution,
+    SafetyGate, SafetyIntervention, SlotRequest, WriteAuthority,
 };
 use m4_support::{Behavior, FakeIo, ImmediateClock as TestClock, report};
 
@@ -91,7 +91,7 @@ fn s222_unbounded_transport_is_bounded_and_transaction_released() {
         ProceedSafety,
         AllowAllAuthority,
         TestClock::default(),
-        150,
+        500,
     );
     let mut state = DispatchState::default();
     let requests: Vec<SlotRequest> = ["P1", "P2", "P3", "P4"]
@@ -232,8 +232,11 @@ fn s229_safety_refusal_is_obeyed_and_recorded() {
     );
     let mut state = DispatchState::default();
     let rows = dut.dispatch_slot(&mut state, &[economic("P1", -800.0)], 0);
-    assert_eq!(rows[0].outcome, DispatchOutcome::Skipped);
+    assert_eq!(rows[0].outcome, DispatchOutcome::ConfirmationPending);
     assert!(rows[0].safety_traffic);
+    assert_eq!(rows[0].economic_preempted_by, Some("cell_voltage_guard"));
+    assert_eq!(rows[0].safety_execution, Some(SafetyExecution::Echoed));
+    assert!(rows[0].written);
     assert!(rows[0].reasons.contains(&"cell_voltage_guard"));
     let writes = io.writes();
     assert_eq!(writes.len(), 1);

@@ -15,6 +15,8 @@ pub enum AppliedReason {
     ReadMiss,
     /// The per-pack budget expired during transport.
     TransportDeadline,
+    /// Completion arrived after its generation was superseded and was ignored.
+    LateSuperseded,
     /// Transport failed before acceptance.
     TransportFailed,
     /// Authority denied the write.

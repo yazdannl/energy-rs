@@ -13,4 +13,6 @@ pub struct AttemptEffect {
     pub uncertain_reason: Option<&'static str>,
     /// Whether an ordinary fault backoff should be armed.
     pub arm_backoff: bool,
+    /// Whether the write generation was bumped at its deadline.
+    pub generation_bumped: bool,
 }
