@@ -6,9 +6,9 @@ use crate::dispatch::ack_row;
 use crate::dispatch::constants::NO_FLOW_BACKOFF_MS;
 use crate::dispatch::preparation::{Preparation, prepare};
 use crate::dispatch::{
-    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowReport,
-    LateWrite, Observer, PackCommand, PackIo, RetryClock, SafetyExecution, SafetyGate, SlotRequest,
-    WriteAuthority, WriteTask,
+    DispatchContext, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowReport,
+    LateWrite, Observer, PackIo, RetryClock, SafetyGate, SlotRequest, WorkerHandle,
+    WorkerTerminationViolation, WriteAuthority, WriteTask, WriteTaskContext, status_direction,
 };
 
 /// Dispatcher with injected consumer ports; it owns no safety or authority decision.
@@ -19,6 +19,8 @@ pub struct Dispatcher<S: SafetyGate, A: WriteAuthority, C: RetryClock> {
     clock: C,
     budget_ms: u64,
     late: Arc<Mutex<Vec<LateWrite>>>,
+    violations: Arc<Mutex<Vec<WorkerTerminationViolation>>>,
+    workers: Arc<Mutex<Vec<WorkerHandle>>>,
 }
 
 impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
@@ -42,6 +44,8 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             clock,
             budget_ms,
             late: Arc::new(Mutex::new(Vec::new())),
+            violations: Arc::new(Mutex::new(Vec::new())),
+            workers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -65,6 +69,34 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         std::mem::take(&mut *log)
     }
 
+    /// Worker bound violations, drained by the caller.
+    pub fn take_worker_violations(&self) -> Vec<WorkerTerminationViolation> {
+        let mut log = self
+            .violations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.prune_workers();
+        std::mem::take(&mut *log)
+    }
+
+    fn prune_workers(&self) {
+        self.workers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|worker| !worker.done.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// Workers still inside a transport call; bounded by the termination bound.
+    pub fn outstanding_workers(&self) -> usize {
+        self.prune_workers();
+        self.workers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|worker| !worker.done.load(std::sync::atomic::Ordering::SeqCst))
+            .count()
+    }
+
     /// Start every pack's write before collecting any receipt.
     pub fn dispatch_slot(
         &self,
@@ -86,6 +118,11 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             })
             .collect();
         let mut tasks = Vec::new();
+        let task_context = WriteTaskContext {
+            late: &self.late,
+            violations: &self.violations,
+            workers: &self.workers,
+        };
         for preparation in &mut preparations {
             if let Preparation::Write(write) = preparation {
                 let pack = state.pack(&write.command.pack_id);
@@ -98,7 +135,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                     write.tx_id,
                     self.budget_ms,
                     pack.generation,
-                    &self.late,
+                    &task_context,
                 ));
             }
         }
@@ -119,10 +156,12 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                 Preparation::Row(row) => rows.push(row),
                 Preparation::Write(write) => {
                     let attempt = tasks.remove(0).collect();
-                    let context = ack_row::AttemptContext {
+                    let context = DispatchContext {
                         io: &self.io,
                         clock: &self.clock,
                         late: &self.late,
+                        violations: &self.violations,
+                        workers: &self.workers,
                         budget_ms: self.budget_ms,
                         now_ms,
                     };
@@ -154,6 +193,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         if let Some(reason) = effect.uncertain_reason {
             pack.uncertain = true;
             pack.uncertain_reason = Some(reason);
+            pack.uncertainty_cleared_by = None;
         }
         if effect.arm_backoff {
             pack.backoff_until_ms = now_ms + i64::try_from(NO_FLOW_BACKOFF_MS).unwrap_or(i64::MAX);
@@ -171,7 +211,8 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             row = row.reason("pause_interrupted_by_target_change");
         }
         if row.safety_traffic {
-            let (execution, evidence, detail) = Self::safety_execution(&row);
+            let (execution, evidence, detail) =
+                crate::dispatch::safety_execution_row::execution(&row);
             row.safety_execution = Some(execution);
             row.safety_evidence = Some(evidence);
             row.safety_reason = detail;
@@ -183,42 +224,6 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         row
     }
 
-    fn safety_execution(
-        row: &DispatchRow,
-    ) -> (SafetyExecution, EvidenceKind, Option<&'static str>) {
-        if row.reasons.contains(&"write_deadline_mid_transport")
-            || row.reasons.contains(&"late_after_deadline_superseded")
-        {
-            return (
-                SafetyExecution::TimedOut,
-                EvidenceKind::NoMeasurement,
-                Some("write_deadline_mid_transport"),
-            );
-        }
-        if row.outcome == DispatchOutcome::Rejected {
-            return (
-                SafetyExecution::Rejected,
-                EvidenceKind::PortDecision,
-                row.reasons.first().copied(),
-            );
-        }
-        if row.outcome == DispatchOutcome::Uncertain {
-            return (
-                SafetyExecution::Failed,
-                EvidenceKind::NoMeasurement,
-                Some("controller_uncertain"),
-            );
-        }
-        if row.echo_matched {
-            return (
-                SafetyExecution::Echoed,
-                EvidenceKind::CommandVerification,
-                None,
-            );
-        }
-        (SafetyExecution::Accepted, EvidenceKind::PortDecision, None)
-    }
-
     /// Read one flow report; a read miss keeps tracked command identity and uncertainty.
     pub fn read_flow(
         &self,
@@ -228,44 +233,38 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         deadline_ms: u64,
     ) -> DispatchRow {
         let Some(report) = self.io.read(pack_id, deadline_ms) else {
-            return Self::read_miss_row(state, pack_id, now_ms);
+            return crate::dispatch::read_miss::row(state, pack_id, now_ms);
         };
         self.observe(state, &report, now_ms)
     }
 
-    fn read_miss_row(state: &DispatchState, pack_id: &str, now_ms: i64) -> DispatchRow {
-        let pack = state.get(pack_id);
-        let command = pack
-            .and_then(|value| value.last_command.clone())
-            .unwrap_or(PackCommand {
-                pack_id: pack_id.to_owned(),
-                requested_w: 0.0,
-                issued_at_ms: now_ms,
-                generation: 0,
-                fence_id: None,
-                safety_traffic: false,
-            });
-        let uncertain = pack.is_some_and(|value| value.uncertain);
-        let pending = pack.is_some_and(|value| value.pending.is_some());
-        let mut row = DispatchRow::base(&command, crate::dispatch::constants::PACK_IO_BUDGET_MS)
-            .outcome(
-                if uncertain {
-                    DispatchOutcome::Uncertain
-                } else if pending {
-                    DispatchOutcome::ConfirmationPending
-                } else {
-                    DispatchOutcome::Deferred
-                },
-                EvidenceKind::NoMeasurement,
-            )
-            .reason("read_miss");
-        row.applied_reason = AppliedReason::ReadMiss;
-        row.controller_uncertain = uncertain;
-        if uncertain {
-            row = row.reason("controller_uncertain");
-        }
-        if !pending && !uncertain {
-            row = row.reason("no_pending_command");
+    /// Re-establish truth from a device read-back with an echo and idle flow.
+    ///
+    /// Once a request has left for the device it cannot be un-sent. A read-back that proves
+    /// the device is neutral is one of the two ways to clear uncertainty; the other is a
+    /// verified hold. The clearing method is recorded in the row and pack state.
+    pub fn read_back(
+        &self,
+        state: &mut DispatchState,
+        report: &FlowReport,
+        now_ms: i64,
+    ) -> DispatchRow {
+        let mut row = self.observe(state, report, now_ms);
+        let idle = status_direction(report.ac_status, report.dc_status)
+            == crate::dispatch::FlowStatus::Idle
+            && report.measured_w.abs() <= crate::dispatch::constants::HOLD_DEADBAND_W;
+        let pack = state.pack(&report.pack_id);
+        if pack.uncertain && report.echo.is_some() && idle {
+            pack.uncertain = false;
+            pack.uncertain_reason = None;
+            pack.uncertainty_cleared_by = Some("read_back");
+            row = row
+                .outcome(
+                    DispatchOutcome::Confirmed,
+                    EvidenceKind::CommandVerification,
+                )
+                .reason("read_back_verified");
+            row.uncertainty_cleared_by = Some("read_back");
         }
         row
     }
@@ -277,7 +276,14 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         report: &FlowReport,
         now_ms: i64,
     ) -> DispatchRow {
-        Observer::new(&self.io, &self.clock, &self.late, self.budget_ms)
-            .observe(state, report, now_ms)
+        Observer::new(
+            &self.io,
+            &self.clock,
+            &self.late,
+            &self.violations,
+            &self.workers,
+            self.budget_ms,
+        )
+        .observe(state, report, now_ms)
     }
 }

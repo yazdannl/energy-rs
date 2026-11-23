@@ -8,7 +8,9 @@ use crate::dispatch::{FlowReport, PackCommand, WriteAck};
 /// deadline even if a worker is still inside `write`. Implementations must honour
 /// `deadline_ms` and `cancel`: a cancelled write must return promptly, and a write
 /// that ignores cancellation must still be bounded. Late completions from a
-/// superseded generation are ignored by M4.
+/// superseded generation are ignored by M4's STATE, not unsent from the device.
+/// Once a request has left for the device it cannot be un-sent; M4 re-establishes
+/// truth with a verified hold or a device read-back before the next economic command.
 pub trait PackIo: Send + Sync + 'static {
     /// Acquire the per-pack read/write transaction; exactly one release is required.
     fn begin(&self, pack_id: &str) -> u64;

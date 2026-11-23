@@ -6,10 +6,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use energy_decide::dispatch::{
-    AllowAllAuthority, AppliedReason, DispatchOutcome, DispatchState, Dispatcher, ProceedSafety,
-    SlotRequest,
+    AllowAllAuthority, AppliedReason, DispatchOutcome, DispatchState, Dispatcher, Echo,
+    ProceedSafety, SlotRequest,
 };
-use m4_support::{Behavior, FakeIo, ImmediateClock};
+use m4_support::{Behavior, FakeIo, ImmediateClock, report};
 
 fn dispatcher(
     io: FakeIo,
@@ -164,4 +164,81 @@ fn s225_read_miss_without_pending_command_is_not_a_confirmation() {
     assert_eq!(read.requested_w, 0.0);
     assert!(!read.written);
     assert!(!read.controller_uncertain);
+}
+
+#[test]
+fn s238_blocked_first_does_not_supersede_fast_followers() {
+    let io = FakeIo::new(&[
+        ("P1", Behavior::Stuck { max_wait_ms: 5_000 }),
+        ("P2", Behavior::Accept { echo: true }),
+        ("P3", Behavior::Accept { echo: true }),
+        ("P4", Behavior::Accept { echo: true }),
+    ]);
+    let dut = dispatcher(io, 250);
+    let mut state = DispatchState::default();
+    let requests: Vec<SlotRequest> = ["P1", "P2", "P3", "P4"]
+        .iter()
+        .map(|p| economic(p, -800.0))
+        .collect();
+    let started = Instant::now();
+    let rows = dut.dispatch_slot(&mut state, &requests, 0);
+    assert!(started.elapsed().as_millis() < 400);
+    assert_eq!(rows[0].outcome, DispatchOutcome::Uncertain);
+    for row in rows.iter().skip(1) {
+        assert_eq!(row.outcome, DispatchOutcome::ConfirmationPending);
+        assert!(row.written);
+        assert!(!row.reasons.contains(&"late_after_deadline_superseded"));
+        assert!(!row.reasons.contains(&"write_deadline_mid_transport"));
+    }
+}
+
+#[test]
+fn s239_worker_termination_bound_is_counted() {
+    let io = FakeIo::new(&[("P", Behavior::Late { after_ms: 250 })]);
+    let dut = dispatcher(io.clone(), 80);
+    let mut state = DispatchState::default();
+    let rows = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 0);
+    assert_eq!(rows[0].outcome, DispatchOutcome::Uncertain);
+    thread::sleep(Duration::from_millis(420));
+    let violations = dut.take_worker_violations();
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].pack_id, "P");
+    assert_eq!(violations[0].bound_ms, 160);
+    assert!(violations[0].outstanding >= 1);
+    assert_eq!(dut.take_late_writes().len(), 1);
+    assert!(wait_for_workers(&io, Duration::from_millis(300)));
+}
+
+#[test]
+fn s240_late_device_effect_requires_truth_before_the_next_command() {
+    let io = FakeIo::new(&[("P", Behavior::Late { after_ms: 150 })]);
+    let dut = dispatcher(io.clone(), 80);
+    let mut state = DispatchState::default();
+    let timed_out = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 0);
+    assert_eq!(timed_out[0].outcome, DispatchOutcome::Uncertain);
+    let blocked = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 90);
+    assert_eq!(blocked[0].outcome, DispatchOutcome::Deferred);
+    assert_eq!(io.applied_commands().len(), 0);
+
+    thread::sleep(Duration::from_millis(300));
+    let still_blocked = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 400);
+    assert_eq!(still_blocked[0].outcome, DispatchOutcome::Deferred);
+    assert_eq!(io.applied_commands().len(), 1);
+    assert_eq!(io.device_w("P"), Some(-800.0));
+
+    let mut readback = report("P", 410, 0.0, 0, 0, 1);
+    readback.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 410,
+    });
+    let read = dut.read_back(&mut state, &readback, 410);
+    assert_eq!(read.uncertainty_cleared_by, Some("read_back"));
+    assert!(!state.pack("P").uncertain);
+    assert_eq!(state.pack("P").uncertainty_cleared_by, Some("read_back"));
+
+    io.set_behavior("P", Behavior::Accept { echo: true });
+    let neutral = dut.dispatch_slot(&mut state, &[economic("P", 0.0)], 420);
+    assert!(neutral[0].written);
+    assert_eq!(io.applied_commands().len(), 2);
+    assert_eq!(io.device_w("P"), Some(0.0));
 }

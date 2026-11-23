@@ -1,12 +1,12 @@
 //! Fail-safe hold retries at 0/2/6 s, all inside the one per-pack budget.
 
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::dispatch::budget::{elapsed_ms, remaining_ms};
 use crate::dispatch::constants::FALLBACK_RETRY_MS;
 use crate::dispatch::{
-    FallbackResult, LateWrite, PackCommand, PackIo, RetryClock, WriteAck, WriteAttempt, WriteTask,
+    DispatchContext, FallbackResult, PackCommand, WriteAck, WriteAttempt, WriteTask,
+    WriteTaskContext,
 };
 
 fn hold_command(command: &PackCommand) -> PackCommand {
@@ -18,11 +18,9 @@ fn hold_command(command: &PackCommand) -> PackCommand {
 
 /// Try a neutral hold until the shared budget is exhausted or transport accepts.
 pub fn write_fallback(
-    io: &Arc<dyn PackIo>,
-    clock: &dyn RetryClock,
+    context: &DispatchContext<'_>,
     command: &PackCommand,
     budget_ms: u64,
-    late: &Arc<Mutex<Vec<LateWrite>>>,
 ) -> FallbackResult {
     let started = Instant::now();
     let hold = hold_command(command);
@@ -32,20 +30,26 @@ pub fn write_fallback(
         offsets_ms: Vec::new(),
         elapsed_ms: 0,
     };
+    let tasks = WriteTaskContext {
+        late: context.late,
+        violations: context.violations,
+        workers: context.workers,
+    };
     for offset in FALLBACK_RETRY_MS {
         let left = remaining_ms(started, budget_ms);
         if left == 0 {
             break;
         }
         if let Some(previous) = result.offsets_ms.last() {
-            clock.sleep_ms(offset.saturating_sub(*previous));
+            context.clock.sleep_ms(offset.saturating_sub(*previous));
         }
         result.offsets_ms.push(offset);
         result.attempts += 1;
-        let tx_id = io.begin(&hold.pack_id);
+        let tx_id = context.io.begin(&hold.pack_id);
         let remaining = remaining_ms(started, budget_ms);
         let attempt =
-            WriteTask::start(io, &hold, tx_id, remaining, hold.generation, late).collect();
+            WriteTask::start(context.io, &hold, tx_id, remaining, hold.generation, &tasks)
+                .collect();
         match attempt {
             WriteAttempt::Ack { ack, .. } => {
                 let accepted = ack.accepted();

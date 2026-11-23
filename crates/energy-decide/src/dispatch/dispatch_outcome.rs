@@ -7,7 +7,8 @@ pub enum DispatchOutcome {
     Confirmed,
     /// Transport accepted and echo matched; measured flow is not available yet.
     ConfirmationPending,
-    /// We do not know whether the device received the command.
+    /// We do not know whether the device received the command; it may already be applied.
+    /// No economic command may be sent until verified hold or read-back re-establishes truth.
     Uncertain,
     /// Device explicitly refused the command.
     Rejected,

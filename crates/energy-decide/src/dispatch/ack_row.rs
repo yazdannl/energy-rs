@@ -1,12 +1,10 @@
 //! Convert a bounded transport result into an honest, explicit row.
 
-use std::sync::{Arc, Mutex};
-
 use crate::dispatch::constants::RAMP_MAX_MS;
 use crate::dispatch::fallback::{fallback_accepted, write_fallback};
 use crate::dispatch::{
-    AppliedReason, AttemptEffect, DispatchOutcome, DispatchRow, EvidenceKind, FallbackResult,
-    LateWrite, PackCommand, PackIo, PendingConfirmation, RetryClock, WriteAck, WriteAttempt,
+    AppliedReason, AttemptEffect, DispatchContext, DispatchOutcome, DispatchRow, EvidenceKind,
+    FallbackResult, PackCommand, PendingConfirmation, WriteAck, WriteAttempt,
 };
 
 fn written_row(command: &PackCommand, ack: &WriteAck, elapsed: u64, budget_ms: u64) -> DispatchRow {
@@ -159,23 +157,9 @@ fn rejected_row(
     }
 }
 
-/// Bounded transport context shared by all attempts in one slot.
-pub struct AttemptContext<'a> {
-    /// Shared transport.
-    pub io: &'a Arc<dyn PackIo>,
-    /// Retry clock for fail-safe offsets.
-    pub clock: &'a dyn RetryClock,
-    /// Late completions from superseded generations.
-    pub late: &'a Arc<Mutex<Vec<LateWrite>>>,
-    /// End-to-end budget for one pack.
-    pub budget_ms: u64,
-    /// Slot time in epoch milliseconds.
-    pub now_ms: i64,
-}
-
 /// Build a row, pending state and uncertainty effect for one transport attempt.
 pub fn from_attempt(
-    context: &AttemptContext<'_>,
+    context: &DispatchContext<'_>,
     attempt: WriteAttempt,
     command: &PackCommand,
 ) -> AttemptEffect {
@@ -190,14 +174,22 @@ pub fn from_attempt(
             ..
         } => rejected_row(command, reason, elapsed, context.budget_ms),
         WriteAttempt::Ack {
+            ack:
+                WriteAck::Failed {
+                    reason: "write_cancelled",
+                    ..
+                },
+            ..
+        }
+        | WriteAttempt::Timeout { .. } => timeout_row(command, elapsed, context.budget_ms),
+        WriteAttempt::Ack {
             ack: WriteAck::Failed { reason, .. },
             ..
         } => {
             let left = context.budget_ms.saturating_sub(elapsed);
-            let fallback = write_fallback(context.io, context.clock, command, left, context.late);
+            let fallback = write_fallback(context, command, left);
             failed_row(command, reason, Some(&fallback), elapsed, context.budget_ms)
         }
-        WriteAttempt::Timeout { .. } => timeout_row(command, elapsed, context.budget_ms),
         WriteAttempt::Superseded { generation, .. } => {
             superseded_effect(command, generation, elapsed, context.budget_ms)
         }

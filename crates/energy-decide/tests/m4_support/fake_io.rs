@@ -13,6 +13,7 @@ use super::Behavior;
 struct State {
     behaviors: HashMap<String, Behavior>,
     writes: Vec<(String, PackCommand, u64)>,
+    applied: Vec<(String, PackCommand)>,
     active: HashSet<u64>,
     peak_active: usize,
     next_tx: u64,
@@ -32,6 +33,7 @@ impl Default for State {
         Self {
             behaviors: HashMap::new(),
             writes: Vec::new(),
+            applied: Vec::new(),
             active: HashSet::new(),
             peak_active: 0,
             next_tx: 0,
@@ -79,6 +81,25 @@ impl FakeIo {
     /// Commands that reached the fake transport, in order.
     pub fn writes(&self) -> Vec<(String, PackCommand, u64)> {
         self.lock().writes.clone()
+    }
+
+    /// Commands whose physical write completed, in device-application order.
+    pub fn applied_commands(&self) -> Vec<PackCommand> {
+        self.lock()
+            .applied
+            .iter()
+            .map(|(_, command)| command.clone())
+            .collect()
+    }
+
+    /// Last applied commanded wattage for one pack.
+    pub fn device_w(&self, pack_id: &str) -> Option<f64> {
+        self.lock()
+            .applied
+            .iter()
+            .rev()
+            .find(|(pack, _)| pack == pack_id)
+            .map(|(_, command)| command.requested_w)
     }
 
     /// Number of writes that reached the fake transport.
@@ -261,6 +282,7 @@ impl PackIo for FakeIo {
         }
         let ack = self.answer(&behavior, pack_id, command, tx_id, deadline_ms);
         let mut state = self.lock();
+        state.applied.push((pack_id.to_owned(), command.clone()));
         state.workers -= 1;
         ack
     }

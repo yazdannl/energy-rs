@@ -55,6 +55,8 @@ pub struct DispatchRow {
     pub safety_traffic: bool,
     /// Whether this pack is uncertain and ordinary retries are blocked.
     pub controller_uncertain: bool,
+    /// How uncertainty was cleared, when it was cleared by this row.
+    pub uncertainty_cleared_by: Option<&'static str>,
     /// Why M5 preempted the economic command; independent of write execution.
     pub economic_preempted_by: Option<&'static str>,
     /// Execution outcome of the safety command, when M5 sent one.
@@ -100,6 +102,7 @@ impl DispatchRow {
             retry_at: None,
             safety_traffic: command.safety_traffic,
             controller_uncertain: false,
+            uncertainty_cleared_by: None,
             economic_preempted_by: None,
             safety_execution: None,
             safety_evidence: None,

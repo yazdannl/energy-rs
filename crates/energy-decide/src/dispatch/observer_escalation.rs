@@ -6,8 +6,9 @@ use crate::dispatch::constants::PARTIAL_PAUSE_MS;
 use crate::dispatch::fallback::{fallback_accepted, write_fallback};
 use crate::dispatch::flow_predicates::classify_flow;
 use crate::dispatch::{
-    DispatchOutcome, DispatchRow, EvidenceKind, FallbackResult, FlowClass, FlowReport, LateWrite,
-    PackCommand, PackIo, PackState, RetryClock, status_direction,
+    DispatchContext, DispatchOutcome, DispatchRow, EvidenceKind, FallbackResult, FlowClass,
+    FlowReport, LateWrite, PackCommand, PackIo, PackState, RetryClock, WorkerHandle,
+    WorkerTerminationViolation, status_direction,
 };
 
 /// Transport and clock used only when a partial flow becomes persistent.
@@ -18,6 +19,10 @@ pub struct Escalation<'a> {
     pub clock: &'a dyn RetryClock,
     /// Late completions from superseded writes.
     pub late: &'a Arc<Mutex<Vec<LateWrite>>>,
+    /// Worker bound violations.
+    pub violations: &'a Arc<Mutex<Vec<WorkerTerminationViolation>>>,
+    /// Started workers and their flags.
+    pub workers: &'a Arc<Mutex<Vec<WorkerHandle>>>,
     /// End-to-end per-pack budget.
     pub budget_ms: u64,
 }
@@ -46,13 +51,16 @@ pub fn escalate(
     if pack.partial_retries < 2 {
         return pause_row(row, now_ms);
     }
-    let fallback: FallbackResult = write_fallback(
-        escalation.io,
-        escalation.clock,
-        command,
-        escalation.budget_ms,
-        escalation.late,
-    );
+    let context = DispatchContext {
+        io: escalation.io,
+        clock: escalation.clock,
+        late: escalation.late,
+        violations: escalation.violations,
+        workers: escalation.workers,
+        budget_ms: escalation.budget_ms,
+        now_ms,
+    };
+    let fallback: FallbackResult = write_fallback(&context, command, escalation.budget_ms);
     let reason = if fallback_accepted(&fallback) {
         "fallback_hold_written"
     } else {

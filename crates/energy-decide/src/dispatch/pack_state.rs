@@ -11,6 +11,8 @@ pub struct PackState {
     pub uncertain: bool,
     /// Typed reason for the uncertainty.
     pub uncertain_reason: Option<&'static str>,
+    /// How truth was re-established after uncertainty: verified_hold or read_back.
+    pub uncertainty_cleared_by: Option<&'static str>,
     /// End of ordinary fault backoff, epoch milliseconds.
     pub backoff_until_ms: i64,
     /// Typed reason for ordinary backoff.

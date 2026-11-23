@@ -6,7 +6,8 @@ use crate::dispatch::confirmation::{ConfirmationVerdict, fold, idle_confirmed};
 use crate::dispatch::constants::{NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS};
 use crate::dispatch::{
     AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowClass,
-    FlowReport, LateWrite, PackCommand, PackIo, PendingConfirmation, RetryClock,
+    FlowReport, LateWrite, PackCommand, PackIo, PendingConfirmation, RetryClock, WorkerHandle,
+    WorkerTerminationViolation,
 };
 
 fn command_for(pack_id: &str, pending: Option<&PendingConfirmation>) -> PackCommand {
@@ -19,7 +20,6 @@ fn command_for(pack_id: &str, pending: Option<&PendingConfirmation>) -> PackComm
         safety_traffic: false,
     }
 }
-
 fn reason_for(class: FlowClass) -> &'static str {
     match class {
         FlowClass::StatusInconsistent => "status_inconsistent",
@@ -37,7 +37,6 @@ fn reason_for(class: FlowClass) -> &'static str {
         FlowClass::OverFlow => "over_flow",
     }
 }
-
 fn measured_row(command: &PackCommand, report: &FlowReport, budget_ms: u64) -> DispatchRow {
     let mut row = DispatchRow::base(command, budget_ms);
     row.flow_measured = true;
@@ -50,7 +49,6 @@ fn measured_row(command: &PackCommand, report: &FlowReport, budget_ms: u64) -> D
     };
     row
 }
-
 fn pending_row(
     command: &PackCommand,
     report: &FlowReport,
@@ -73,7 +71,6 @@ fn pending_row(
     };
     row
 }
-
 fn confirmed_row(
     command: &PackCommand,
     report: &FlowReport,
@@ -91,7 +88,6 @@ fn confirmed_row(
     row.flow_class = Some(class);
     row
 }
-
 fn anomaly_row(
     command: &PackCommand,
     report: &FlowReport,
@@ -111,7 +107,6 @@ fn anomaly_row(
     row.retry_at = Some(now_ms + i64::try_from(NO_FLOW_BACKOFF_MS).unwrap_or(i64::MAX));
     row
 }
-
 fn shortfall_row(command: &PackCommand, report: &FlowReport, budget_ms: u64) -> DispatchRow {
     let mut row = measured_row(command, report, budget_ms)
         .outcome(
@@ -127,7 +122,6 @@ fn shortfall_row(command: &PackCommand, report: &FlowReport, budget_ms: u64) -> 
     row.shortfall_requested_w = Some(command.requested_w);
     row
 }
-
 fn apply_verdict(
     row: &mut DispatchRow,
     verdict: ConfirmationVerdict,
@@ -149,7 +143,6 @@ fn apply_verdict(
         ConfirmationVerdict::Shortfall { .. } => shortfall_row(command, report, budget_ms),
     };
 }
-
 fn apply_state(
     state: &mut crate::dispatch::PackState,
     report: &FlowReport,
@@ -161,6 +154,7 @@ fn apply_state(
             if class == FlowClass::HoldVerified && report.echo.is_some() {
                 state.uncertain = false;
                 state.uncertain_reason = None;
+                state.uncertainty_cleared_by = Some("verified_hold");
             }
             state.pending = None;
         }
@@ -186,6 +180,8 @@ pub struct Observer<'a> {
     io: &'a Arc<dyn PackIo>,
     clock: &'a dyn RetryClock,
     late: &'a Arc<Mutex<Vec<LateWrite>>>,
+    violations: &'a Arc<Mutex<Vec<WorkerTerminationViolation>>>,
+    workers: &'a Arc<Mutex<Vec<WorkerHandle>>>,
     budget_ms: u64,
 }
 
@@ -195,12 +191,16 @@ impl<'a> Observer<'a> {
         io: &'a Arc<dyn PackIo>,
         clock: &'a dyn RetryClock,
         late: &'a Arc<Mutex<Vec<LateWrite>>>,
+        violations: &'a Arc<Mutex<Vec<WorkerTerminationViolation>>>,
+        workers: &'a Arc<Mutex<Vec<WorkerHandle>>>,
         budget_ms: u64,
     ) -> Self {
         Self {
             io,
             clock,
             late,
+            violations,
+            workers,
             budget_ms,
         }
     }
@@ -229,12 +229,16 @@ impl<'a> Observer<'a> {
         }
         pending.message_id = report.message_id;
         let verdict = fold(pending, report, now_ms, RAMP_MAX_MS);
+        let was_uncertain = pack.uncertain;
         apply_state(pack, report, verdict, now_ms);
         if pack.pause_until_ms > now_ms {
             pack.pause_target_w = Some(command.requested_w);
         }
         let mut row = DispatchRow::base(&command, self.budget_ms);
         apply_verdict(&mut row, verdict, &command, report, self.budget_ms, now_ms);
+        if was_uncertain && !pack.uncertain {
+            row.uncertainty_cleared_by = Some("verified_hold");
+        }
         self.escalate(row, pack, &command, report, now_ms)
     }
 
@@ -254,10 +258,13 @@ impl<'a> Observer<'a> {
         if report.echo.is_some() {
             pack.uncertain = false;
             pack.uncertain_reason = None;
+            pack.uncertainty_cleared_by = Some("verified_hold");
         }
-        confirmed_row(command, report, FlowClass::HoldVerified, self.budget_ms)
+        let mut row = confirmed_row(command, report, FlowClass::HoldVerified, self.budget_ms)
             .reason("idle_verified")
-            .reason("no_command_needed")
+            .reason("no_command_needed");
+        row.uncertainty_cleared_by = Some("verified_hold");
+        row
     }
 
     fn escalate(
@@ -272,6 +279,8 @@ impl<'a> Observer<'a> {
             io: self.io,
             clock: self.clock,
             late: self.late,
+            violations: self.violations,
+            workers: self.workers,
             budget_ms: self.budget_ms,
         };
         crate::dispatch::observer_escalation::escalate(

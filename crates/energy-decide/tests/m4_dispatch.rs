@@ -175,7 +175,12 @@ fn s225_uncertainty_blocks_retries_until_verified_hold() {
     let second = dut.observe(&mut state, &second_report, 2_100);
     assert!(first.reasons.contains(&"hold_verified"));
     assert_eq!(second.outcome, DispatchOutcome::Confirmed);
+    assert_eq!(second.uncertainty_cleared_by, Some("verified_hold"));
     assert!(!state.pack("P3").uncertain);
+    assert_eq!(
+        state.pack("P3").uncertainty_cleared_by,
+        Some("verified_hold")
+    );
 }
 
 #[test]
