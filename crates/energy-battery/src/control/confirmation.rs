@@ -7,6 +7,7 @@ use tokio::time::Instant;
 use crate::control::controller::{DeviceController, SAFETY_HOLD_WINDOW};
 use crate::control::echo::ECHO_POLL_INTERVAL;
 use crate::control::fault::ControlFault;
+use crate::control::flow::FLOW_CONFIRM_WINDOW;
 use crate::control::observation::Observation;
 use crate::error::BatteryError;
 use crate::transport::DeviceIo;
@@ -19,6 +20,51 @@ enum LoopEnd {
 
 /// Wait for the command this call was created for, inside one absolute deadline.
 ///
+/// Expire a deferred confirmation once its whole flow window has elapsed.
+///
+/// The dispatcher no longer waits for flow on the tick path, so the next fleet read must still turn
+/// a never-delivered command into a typed fault; otherwise the 300 s no-flow backoff would never
+/// fire. Only `expire` can resolve the exact pending command, so a replacement cannot be lost.
+pub(super) fn reap_aged_pending<T: DeviceIo>(
+    controller: &DeviceController<T>,
+) -> Option<ControlFault> {
+    let pending = controller.pending()?;
+    // Holds keep their own bounded waiter inside `poll_confirming`; reaping one here would
+    // mislabel a normal echo timeout as a supersession and skip the fail-safe hold.
+    if pending.command.is_hold() || pending.age(Instant::now()) < FLOW_CONFIRM_WINDOW {
+        return None;
+    }
+    let sn = controller.sn().to_owned();
+    let fallback = timeout_fallback(controller, pending.request_id, "flow window elapsed", &sn);
+    controller
+        .record_timeout(pending.request_id, fallback)
+        .or_else(|| {
+            controller
+                .last_report()
+                .map(|_| ControlFault::ConfirmationTimeout {
+                    window_ms: u64::try_from(FLOW_CONFIRM_WINDOW.as_millis()).unwrap_or(u64::MAX),
+                    detail: "confirmation superseded by a hold".to_owned(),
+                    sn,
+                    request_id: pending.request_id,
+                })
+        })
+}
+
+/// A timed-out write is uncertain: only a verified hold may authorise another ordinary write.
+pub fn mark_uncertain_write<T: DeviceIo>(controller: &DeviceController<T>, detail: String) {
+    if let Some(mut inner) = controller.lock() {
+        let request_id = inner
+            .pending
+            .as_ref()
+            .map_or(0, |pending| pending.request_id);
+        inner.note_fault(ControlFault::UncertainWrite {
+            sn: controller.sn().to_owned(),
+            request_id,
+            detail,
+        });
+    }
+}
+
 /// A read that misses is retried inside the window and ends as a read-miss observation, never as a
 /// device fault; a command replaced by a safety hold resolves as superseded. The shared `read_error`
 /// survives cancellation of the inner loop, so a deadline reached while reads were missing still

@@ -52,6 +52,10 @@ pub enum Reason {
     StaleInput,
     /// A write was accepted; flow confirmation is deferred to the next fleet read.
     ConfirmationPending,
+    /// A changed plan was not written because the previous command is still pending.
+    PreviousCommandPending,
+    /// The end-to-end per-pack budget expired; the device state is uncertain.
+    SendTimedOut,
     /// A device write failed (transport, echo or mode fault).
     DriverError,
     /// A device is backing off after a fault, so the tick sends it nothing.
@@ -102,6 +106,8 @@ impl Reason {
             Self::CellVoltageEmergencyCharge => "cell_voltage_emergency_charge",
             Self::StaleInput => "stale_input",
             Self::ConfirmationPending => "confirmation_pending",
+            Self::PreviousCommandPending => "previous_command_pending",
+            Self::SendTimedOut => "send_timed_out",
             Self::DriverError => "driver_error",
             Self::FaultBackoff => "fault_backoff",
             Self::WatchdogHold => "watchdog_hold",

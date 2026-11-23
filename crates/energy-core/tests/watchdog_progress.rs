@@ -148,6 +148,7 @@ impl CommandSink for ProbeSink {
                 flow_measured: true,
                 measured_at: Some(NOW),
                 confirmation_pending: false,
+                blocked_by_pending: false,
             })
         })
     }
@@ -176,6 +177,7 @@ impl CommandSink for ProbeSink {
                 flow_measured: true,
                 measured_at: Some(NOW),
                 confirmation_pending: false,
+                blocked_by_pending: false,
             })
         })
     }

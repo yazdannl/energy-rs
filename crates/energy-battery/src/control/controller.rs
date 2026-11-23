@@ -28,19 +28,13 @@ use crate::error::BatteryError;
 use crate::report::Report;
 use crate::transport::{DeviceIo, WriteAck, WriteRequest};
 
-/// Backoff after a restart/wedge; re-writing a rebooting pack caused the 2026-11-21 write storm.
 pub const FAULT_BACKOFF: Duration = Duration::from_secs(300);
 
-/// Emergency holds per wedge episode; a hold writes no `acMode`, and this bounds ignored holds.
 pub const MAX_EMERGENCY_HOLDS: u32 = 3;
 
-/// Safety preemption bound for an unresolved command; the waiter resolves as superseded.
 pub const SAFETY_HOLD_WINDOW: Duration = Duration::from_secs(2);
 
-/// The control plane for one device. Writes need a prior read. Ordering is the safety property:
-/// the pacer slot is claimed before validation, pending is installed before the write leaves, polls
-/// and writes never interleave, only a newer report confirms, and every command has a bounded exit
-/// via [`poll_confirming`](Self::poll_confirming) or a preempting hold.
+/// One device's control plane: ordered, bounded writes and bounded confirmations.
 pub struct DeviceController<T: DeviceIo> {
     transport: T,
     limits: ControlLimits,
@@ -97,6 +91,13 @@ impl<T: DeviceIo> DeviceController<T> {
     ///
     /// A wedge or a restart surfaces a fault and pushes the pacer out by [`FAULT_BACKOFF`].
     pub async fn poll(&self) -> Result<Observation, BatteryError> {
+        // A deferred flow confirmation must still eventually become a no-flow/timeout fault. The
+        // next fleet read reaps a pending command once its whole flow window has elapsed, so the
+        // 300 s fault backoff still follows a pack that never delivered.
+        if let Some(fault) = confirmation::reap_aged_pending(self) {
+            self.pacer.defer(FAULT_BACKOFF).await;
+            tracing::warn!(sn = self.transport.sn(), %fault, "deferred after confirmation window");
+        }
         let (report, (confirmed, partial, fault, resolved_request)) = {
             let _transaction = tokio::time::timeout(POLL_BUSY_TIMEOUT, self.transaction.lock())
                 .await

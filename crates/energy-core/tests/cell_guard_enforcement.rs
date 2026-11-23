@@ -389,7 +389,7 @@ async fn a_failed_safety_hold_is_bounded_and_control_recovers_after_the_backoff(
     assert_eq!(
         fake.state().expect("device").write_count(),
         2,
-        "one latched hold and one fail-safe hold, not a write loop"
+        "one latched hold and one fail-safe hold fit the 20 s budget"
     );
     let scripted_drops = fake.state().expect("device").dropped;
     assert!(controller.pending().is_none());
@@ -416,8 +416,9 @@ async fn a_failed_safety_hold_is_bounded_and_control_recovers_after_the_backoff(
     let clear = tick_input(NOW + 12, &plan, &clear_view, &[], &meter, &overrides);
     let resumed = tick_with(&dispatcher, &controller, &clear).await;
     let report = resumed.report("SN-A").expect("report");
-    assert_eq!(report.applied_w, -800.0);
-    assert!(report.verified);
+    // Discharge is non-hold traffic: the write is accepted now and flow is confirmed by the next
+    // fleet read, so a numeric applied watt is deliberately not published in this tick.
+    assert!(report.written && report.reason == Reason::ConfirmationPending);
     assert_eq!(fake.state().expect("device").output_limit_w, 800);
     assert_eq!(
         fake.state().expect("device").dropped,

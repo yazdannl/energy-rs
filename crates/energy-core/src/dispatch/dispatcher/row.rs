@@ -25,7 +25,14 @@ pub(super) fn finish(dispatcher: &Dispatcher, plan: Planned, mut sent: Sent) -> 
         applied_w: sent.applied_w,
         flow_measured: sent.flow_measured,
         applied_w_reason,
-        reason: if sent.confirmation_pending {
+        reason: if let Some(phase) = &sent.timeout {
+            sent.error = Some(format!(
+                "send timed out in {phase}; device state uncertain; verified hold attempted"
+            ));
+            Reason::SendTimedOut
+        } else if sent.blocked_by_pending {
+            Reason::PreviousCommandPending
+        } else if sent.confirmation_pending {
             Reason::ConfirmationPending
         } else {
             plan.reason
@@ -40,13 +47,13 @@ pub(super) fn finish(dispatcher: &Dispatcher, plan: Planned, mut sent: Sent) -> 
     }
 }
 
-/// A send that outlived its budget: the command may have landed, but flow is unknown.
+/// A send that outlived its budget: the command may have landed, so no accepted write is claimed.
+/// The controller was already marked uncertain by the sink and the dispatcher's fail-safe hold is
+/// the only reconciliation before ordinary writes are allowed again.
 pub(super) fn deadline_sent() -> Sent {
     Sent {
-        written: true,
-        confirmation_pending: true,
-        applied_w_reason: Some(AppliedPowerReason::SampleStale),
-        error: Some("send exceeded its per-pack deadline; confirmation pending".to_owned()),
+        timeout: Some("dispatch".to_owned()),
+        applied_w_reason: Some(AppliedPowerReason::ReadFailed),
         ..Sent::none()
     }
 }

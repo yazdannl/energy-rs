@@ -191,3 +191,43 @@ async fn a_superseded_dispatch_does_not_add_a_second_hold() {
     assert!(!report.written && !report.verified);
     assert_eq!(sink.calls(), vec!["write"], "no second hold was sent");
 }
+
+/// Direct sink callers (boot/shutdown holds, maintenance) cannot hang: the bounded read inside the
+/// end-to-end budget ends the attempt and leaves the accepted command pending for readback.
+#[tokio::test(start_paused = true)]
+async fn a_direct_hold_with_a_hung_read_is_bounded_and_stays_pending() {
+    use energy_core::dispatch::SinkError;
+
+    let fake = FakeDevice::spawn(
+        FakeState::new(SN).with_behaviour(FakeBehaviour::default().without_spacing_rule()),
+    )
+    .await
+    .unwrap();
+    let transport =
+        HttpTransport::with_timeout(fake.endpoint(SN), Duration::from_secs(30)).unwrap();
+    let controller = Arc::new(DeviceController::new(transport, ControlLimits::unlimited()));
+    controller.poll().await.unwrap();
+    let sink = BatterySink::new(vec![Arc::clone(&controller)], Duration::MAX);
+    fake.with_state(|state| {
+        state.behaviour = FakeBehaviour::default()
+            .without_spacing_rule()
+            .with_report_delay(Duration::from_secs(60));
+    })
+    .unwrap();
+
+    let started = tokio::time::Instant::now();
+    let error = sink
+        .hold(SN)
+        .await
+        .expect_err("the echo read must be bounded");
+    assert!(
+        matches!(&error, SinkError::ReadUnverified { .. }),
+        "wrong timeout state: {error:?}"
+    );
+    assert!(
+        started.elapsed() <= Duration::from_secs(9),
+        "direct callers must not sit inside the 20 s pack budget: {:?}",
+        started.elapsed()
+    );
+    fake.shutdown().await;
+}

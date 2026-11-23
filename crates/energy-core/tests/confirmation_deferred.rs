@@ -21,8 +21,8 @@ use energy_battery::{
     WriteRequest, parse_report,
 };
 use energy_core::dispatch::{
-    AppliedPowerReason, BatterySink, Dispatcher, FleetView, MeterReading, Overrides, Progress,
-    TickInput,
+    AppliedPowerReason, BatterySink, BoxFuture, CommandSink, Dispatcher, FleetView, MeterReading,
+    Overrides, Progress, SinkError, TickInput, WriteReceipt,
 };
 use energy_core::engine::Watchdog;
 use energy_core::safety::{Authority, Reason, SafetyLimits};
@@ -86,6 +86,25 @@ impl DeviceIo for NeverConfirms {
                 code: 200,
                 sn: Some(self.sn.to_owned()),
             })
+        })
+    }
+}
+
+/// A sink whose transport never returns: the enclosing per-pack deadline must fire.
+struct HangingSink;
+
+impl CommandSink for HangingSink {
+    fn write(&self, _pack_id: &str, _watts: f64) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+        Box::pin(async {
+            tokio::time::sleep(Duration::from_secs(120)).await;
+            Ok(WriteReceipt::pending())
+        })
+    }
+
+    fn hold(&self, _pack_id: &str) -> BoxFuture<'_, Result<WriteReceipt, SinkError>> {
+        Box::pin(async {
+            tokio::time::sleep(Duration::from_secs(120)).await;
+            Ok(WriteReceipt::verified(0.0))
         })
     }
 }
@@ -174,5 +193,60 @@ async fn a_never_confirming_pack_cannot_stall_the_tick_or_its_peers() {
     assert!(
         !watchdog.stalled(NOW + elapsed.as_secs() as i64),
         "a bounded tick keeps the watchdog healthy"
+    );
+}
+
+/// A changed plan must not be reported as written while the previous command still owns the pack.
+#[tokio::test]
+async fn a_changed_setpoint_is_blocked_not_reported_as_pending() {
+    let (sink, _, _, _) = fixture().await;
+    let first = sink.write(SLOW_SN, -320.0).await.expect("first write");
+    assert!(first.confirmation_pending, "first write is the pending one");
+    let second = sink.write(SLOW_SN, -640.0).await.expect("second attempt");
+    assert!(
+        second.blocked_by_pending,
+        "replacement must be distinguished: {second:?}"
+    );
+    assert!(!second.verified && !second.confirmation_pending);
+}
+
+/// A sink that never returns is an uncertain command, not an accepted write with a pending receipt.
+#[tokio::test(start_paused = true)]
+async fn a_per_pack_deadline_is_reported_as_uncertain_not_accepted() {
+    let (_, fleet, plan, overrides) = fixture().await;
+    let meter = MeterReading::default();
+    let input = TickInput {
+        now: NOW,
+        mode: Authority::Auto,
+        plan: Some(&plan),
+        fleet: &fleet,
+        meter: &meter,
+        latches: &[],
+        overrides: &overrides,
+        stale: false,
+        progress: None,
+        selection: None,
+    };
+    let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
+    let started = tokio::time::Instant::now();
+    let outcome = dispatcher.tick(&input, &HangingSink).await;
+    assert_eq!(
+        started.elapsed(),
+        energy_battery::control::PACK_IO_BUDGET,
+        "the published budget must be the enforced one"
+    );
+    let row = outcome.report(SLOW_SN).expect("a row per pack");
+    assert_eq!(row.reason, Reason::SendTimedOut, "{row:?}");
+    assert!(!row.written, "no accepted write claimed: {row:?}");
+    assert_eq!(row.applied_w_reason, Some(AppliedPowerReason::ReadFailed));
+    assert!(
+        row.error
+            .as_deref()
+            .is_some_and(|error| error.contains("uncertain")),
+        "the phase must be named: {row:?}"
+    );
+    assert!(
+        dispatcher.faults().blocking(SLOW_SN, NOW),
+        "the uncertain command must arm backoff"
     );
 }

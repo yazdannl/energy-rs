@@ -24,6 +24,8 @@ pub struct WriteReceipt {
     pub measured_at: Option<i64>,
     /// The write was accepted but flow confirmation is deferred to the next fleet read.
     pub confirmation_pending: bool,
+    /// A newer setpoint was blocked because an earlier command is still pending.
+    pub blocked_by_pending: bool,
 }
 
 impl WriteReceipt {
@@ -37,6 +39,7 @@ impl WriteReceipt {
             flow_measured: false,
             measured_at: None,
             confirmation_pending: false,
+            blocked_by_pending: false,
         }
     }
 
@@ -50,6 +53,7 @@ impl WriteReceipt {
             flow_measured: false,
             measured_at: None,
             confirmation_pending: false,
+            blocked_by_pending: false,
         }
     }
 
@@ -63,6 +67,7 @@ impl WriteReceipt {
             flow_measured: false,
             measured_at: None,
             confirmation_pending: false,
+            blocked_by_pending: false,
         }
     }
 
@@ -76,6 +81,7 @@ impl WriteReceipt {
             flow_measured: false,
             measured_at: None,
             confirmation_pending: false,
+            blocked_by_pending: false,
         }
     }
 
@@ -89,6 +95,21 @@ impl WriteReceipt {
             flow_measured: false,
             measured_at: None,
             confirmation_pending: true,
+            blocked_by_pending: false,
+        }
+    }
+
+    /// A changed plan was not written: the previous command still owns the device.
+    pub const fn blocked_by_pending() -> Self {
+        Self {
+            applied_w: 0.0,
+            verified: false,
+            partial: false,
+            superseded: false,
+            flow_measured: false,
+            measured_at: None,
+            confirmation_pending: false,
+            blocked_by_pending: true,
         }
     }
 

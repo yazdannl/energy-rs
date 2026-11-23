@@ -104,8 +104,12 @@ async fn a_tick_during_the_flow_wait_keeps_the_charge_alive() {
     let first = first.expect("no device fault for the in-flight write");
     let second = second.expect("no device fault for the in-flight write");
     assert!(
-        first.verified || second.verified,
-        "the shared flow wait must confirm once: {first:?} {second:?}"
+        first.confirmation_pending || first.verified,
+        "the first writer owns the command: {first:?}"
+    );
+    assert!(
+        second.blocked_by_pending,
+        "the repeated command must be honest about the prior pending write: {second:?}"
     );
     assert!(
         !(first.superseded && second.superseded),

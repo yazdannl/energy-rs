@@ -243,3 +243,38 @@ async fn an_accepted_write_without_a_response_requires_a_verified_hold() {
         "verified hold did not clear the uncertain fault"
     );
 }
+
+/// A non-hold write no longer waits for flow inside the call, but the next read must still turn a
+/// command that never delivered into a fault and the 300 s fault backoff.
+#[tokio::test(start_paused = true)]
+async fn a_deferred_confirmation_still_arms_the_no_flow_backoff() {
+    use energy_battery::control::FLOW_CONFIRM_WINDOW;
+
+    let device = Arc::new(Scripted::new(WriteMode::Ready));
+    let control = controller(Arc::clone(&device));
+    control.poll().await.expect("prime the report");
+    control
+        .apply(Command::Charge { watts: 300 })
+        .await
+        .expect("charge accepted");
+    assert!(
+        control.pending().is_some(),
+        "write lost its pending command"
+    );
+
+    tokio::time::sleep(FLOW_CONFIRM_WINDOW + Duration::from_secs(1)).await;
+    control.poll().await.expect("read after the flow window");
+    assert!(
+        control.active_fault().is_some(),
+        "the fault must survive into the controller state"
+    );
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            control.apply(Command::Charge { watts: 100 })
+        )
+        .await
+        .is_err(),
+        "the 300 s fault backoff did not block ordinary writes"
+    );
+}

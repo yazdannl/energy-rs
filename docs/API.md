@@ -311,6 +311,11 @@ this tick sent a command, so a `fault_backoff` row can still carry the pack's me
 `appliedW` is `null` whenever `flowMeasured` is false: an unmeasured value is never published as
 zero delivery. `flowMeasured` requires a sample younger than the configured pack freshness bound
 with power in the commanded direction (or genuine idle for a hold), not merely a matching echo.
+If a changed plan arrives while the previous command is still pending, the new setpoint is **not**
+written: the row carries reason `previous_command_pending`, `written: false`, and no applied watts.
+A command that exhausts the one 20 s end-to-end pack budget is never reported as accepted: the row
+carries reason `send_timed_out`, `written: false`, and an error naming the expired phase; the pack is
+marked uncertain and only a verified fail-safe hold may clear it before ordinary writes resume.
 `appliedWReason` then says `sample_stale` (missing/old pack sample) or `read_failed` (transport read
 failed) on new rows, so a checker can tell "measured zero" from "could not measure". A hold whose echo could
 not be verified because the device did not answer carries reason

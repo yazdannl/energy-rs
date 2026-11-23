@@ -2,13 +2,15 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
 use energy_battery::BatteryError;
 use energy_battery::control::flow::{FLOW_THRESHOLD_W, measured_w, status_direction};
 use energy_battery::control::{
-    Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW, ECHO_TOLERANCE_W,
+    Command, DeviceController, Direction, ECHO_CONFIRM_WINDOW, ECHO_TOLERANCE_W, PACK_IO_BUDGET,
+    mark_uncertain_write,
 };
 use energy_battery::transport::DeviceIo;
 
@@ -52,13 +54,8 @@ impl<T: DeviceIo> BatterySink<T> {
         self.devices.keys().map(String::as_str).collect()
     }
 
-    /// Apply one command and poll for its echo inside a hard, heartbeated deadline.
-    ///
-    /// Both halves of the wait are transport steps: a write can wait on the device's 2 s pacer,
-    /// and the echo only arrives on a later report. Mark after each one that succeeds, taking the
-    /// clock at the step (never earlier than the tick's `now`) so the watchdog's epoch half stays
-    /// fresh too. A superseded waiter resolves as a non-error outcome: a safety hold has already
-    /// taken over this episode, so no second hold is issued.
+    /// One end-to-end budget for every caller: dispatch, boot holds, shutdown holds and maintenance.
+    /// A timeout marks the controller's write uncertain so only a verified hold can continue.
     async fn send<'a>(
         &'a self,
         pack_id: String,
@@ -72,39 +69,64 @@ impl<T: DeviceIo> BatterySink<T> {
             .ok_or_else(|| SinkError::UnknownPack {
                 pack_id: pack_id.clone(),
             })?;
+        let phase = Arc::new(AtomicU8::new(1));
+        let inner = self.send_inner(command, controller, &phase, progress, now);
+        let Ok(result) = tokio::time::timeout(PACK_IO_BUDGET, inner).await else {
+            let phase = phase_name(phase.load(Ordering::Relaxed)).to_owned();
+            mark_uncertain_write(
+                controller,
+                format!("{phase} exceeded the {PACK_IO_BUDGET:?} pack budget"),
+            );
+            return Err(SinkError::Timeout { pack_id, phase });
+        };
+        result
+    }
+
+    /// Apply, then confirm only what the next bounded report proves.
+    async fn send_inner<'a>(
+        &'a self,
+        command: Command,
+        controller: &DeviceController<T>,
+        phase: &AtomicU8,
+        progress: Option<&'a dyn Progress>,
+        now: i64,
+    ) -> Result<WriteReceipt, SinkError> {
         let mark = || advance(progress, Utc::now().timestamp().max(now));
         let applied = match controller.apply(command).await {
             Ok(applied) => Some(applied),
-            // An earlier tick's write is still waiting for the AC ramp. It is not a device fault:
-            // a fail-safe hold here would cancel a charge that is about to start drawing power.
-            Err(BatteryError::Unconfirmed { .. }) => None,
-            Err(error) => return Err(device_error(pack_id.clone(), &error)),
+            // A previous command still owns the device. The changed plan was NOT written; reporting
+            // it as pending would leave the old setpoint running while the plan moves on.
+            Err(BatteryError::Unconfirmed { sn }) => {
+                tracing::warn!(%sn, "new setpoint blocked by an unconfirmed command");
+                return Ok(WriteReceipt::blocked_by_pending());
+            }
+            Err(error) => return Err(device_error(controller.sn().to_owned(), &error)),
         };
         mark();
         let target = applied.map_or(command, |applied| applied.command);
         // A direction change used to wait the whole 45 s AC ramp inside a tick; with four packs
         // that alone outlives the watchdog. The write is accepted, so defer flow confirmation to
-        // the next fleet read, which already folds the strike streak and no-flow backoff. Only a
-        // hold still needs the short echo wait inside this tick.
+        // the next fleet read. Only a hold still needs the short echo wait inside this tick.
         if target.direction().is_some() {
             return Ok(WriteReceipt::pending());
         }
+        phase.store(2, Ordering::Relaxed);
         let observation = controller
             .poll_confirming(self.confirm_window, &mark)
             .await
-            .map_err(|error| device_error(pack_id.clone(), &error))?;
+            .map_err(|error| device_error(controller.sn().to_owned(), &error))?;
         if observation.superseded {
-            // A safety hold has already taken over this episode. A second hold here would be a storm.
             return Ok(WriteReceipt::superseded());
         }
-        // A read miss is not a device fault: the write was accepted and stays latched, with no
-        // backoff and no fail-safe hold.
         if let Some(reason) = observation.read_error {
-            return Err(SinkError::ReadUnverified { pack_id, reason });
+            return Err(SinkError::ReadUnverified {
+                pack_id: controller.sn().to_owned(),
+                reason,
+            });
         }
         if let Some(fault) = observation.fault {
             return Err(SinkError::Fault {
-                pack_id,
+                pack_id: controller.sn().to_owned(),
                 fault: Box::new(fault),
             });
         }
@@ -115,6 +137,10 @@ impl<T: DeviceIo> BatterySink<T> {
             self.sample_fresh_after,
         ))
     }
+}
+
+fn phase_name(phase: u8) -> &'static str {
+    if phase == 2 { "echo" } else { "apply" }
 }
 
 impl<T: DeviceIo> CommandSink for BatterySink<T> {
@@ -217,6 +243,7 @@ fn receipt(
             flow_measured: false,
             measured_at: None,
             confirmation_pending: false,
+            blocked_by_pending: false,
         }
     };
     if flow_measured {

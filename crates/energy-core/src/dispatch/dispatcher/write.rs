@@ -30,53 +30,89 @@ impl Dispatcher {
                 .await
         };
         match result {
-            // The write reached the device; flow is verified by the next fleet read, not by
-            // holding this tick's slice open for the AC ramp. No retry and no fail-safe hold.
-            Ok(receipt) if receipt.confirmation_pending => Self::pending_sent(),
-            // A safety hold replaced this write; that hold is the episode's one fail-safe action.
-            Ok(receipt) if receipt.superseded => Sent {
+            Ok(receipt) => self.receipt_sent(progress, pack_id, receipt, context),
+            Err(error) => {
+                self.failure(progress, pack_id, error, sink, context.now)
+                    .await
+            }
+        }
+    }
+
+    fn receipt_sent(
+        &self,
+        progress: Option<&dyn Progress>,
+        pack_id: &str,
+        receipt: WriteReceipt,
+        context: SendContext,
+    ) -> Sent {
+        if receipt.confirmation_pending {
+            return Self::pending_sent();
+        }
+        if receipt.blocked_by_pending {
+            return Self::blocked_sent();
+        }
+        if receipt.superseded {
+            return Sent {
                 superseded: Some("safety hold".to_owned()),
                 ..Sent::none()
-            },
-            // Real but low flow is a completed episode, not a fault: keep ownership, make no hold,
-            // and pause ordinary writes so a current-limited pack is not re-commanded every tick.
-            Ok(receipt) if receipt.partial => {
-                self.curtailed(progress, pack_id, &receipt, context.now)
-            }
-            Ok(receipt) => {
-                // Progress means work happened: a failed write is the watchdog's business, not a
-                // heartbeat.
-                advance(progress, context.now);
-                if receipt.verified && !context.safety_traffic {
-                    self.faults.clear(pack_id);
-                }
-                Sent {
-                    written: true,
-                    verified: receipt.verified,
-                    flow_measured: receipt.flow_measured,
-                    applied_w: receipt.applied_w,
-                    applied_w_reason: receipt_reason(&receipt, None),
-                    ..Sent::none()
-                }
-            }
-            // The gate withdrew the command (mode change, emergency hold) before it was written.
-            // Nothing reached the device, so there is no fault to back off from either.
-            Err(error @ SinkError::Fenced { .. }) => Sent {
+            };
+        }
+        if receipt.partial {
+            return self.curtailed(progress, pack_id, &receipt, context.now);
+        }
+        advance(progress, context.now);
+        if receipt.verified && !context.safety_traffic {
+            self.faults.clear(pack_id);
+        }
+        Sent {
+            written: true,
+            verified: receipt.verified,
+            flow_measured: receipt.flow_measured,
+            applied_w: receipt.applied_w,
+            applied_w_reason: receipt_reason(&receipt, None),
+            ..Sent::none()
+        }
+    }
+
+    async fn failure(
+        &self,
+        progress: Option<&dyn Progress>,
+        pack_id: &str,
+        error: SinkError,
+        sink: &dyn CommandSink,
+        now: i64,
+    ) -> Sent {
+        match error {
+            SinkError::Fenced { .. } => Sent {
                 error: Some(error.to_string()),
                 ..Sent::none()
             },
-            // The write was accepted; only the readback missed. Keep ownership, hold nothing and
-            // leave the backoff alone: this is not a device fault.
-            Err(SinkError::ReadUnverified { reason, .. }) => Sent {
+            SinkError::ReadUnverified { reason, .. } => Sent {
                 written: true,
                 applied_w_reason: Some(AppliedPowerReason::ReadFailed),
                 error: Some(reason),
                 ..Sent::none()
             },
-            Err(error) => {
-                self.fail_safe(progress, context.now, pack_id, &error, sink)
-                    .await
+            SinkError::Timeout { phase, .. } => {
+                let error = SinkError::Timeout {
+                    pack_id: pack_id.to_owned(),
+                    phase: phase.clone(),
+                };
+                let mut sent = self.fail_safe(progress, now, pack_id, &error, sink).await;
+                sent.timeout = Some(phase);
+                sent
             }
+            error => self.fail_safe(progress, now, pack_id, &error, sink).await,
+        }
+    }
+
+    /// A changed plan was not written; the prior command still owns the device.
+    fn blocked_sent() -> Sent {
+        Sent {
+            superseded: Some("previous command pending".to_owned()),
+            applied_w_reason: Some(AppliedPowerReason::SampleStale),
+            error: Some("previous command still pending; new setpoint not written".to_owned()),
+            ..Sent::none()
         }
     }
 
@@ -129,7 +165,6 @@ impl Dispatcher {
         sink: &dyn CommandSink,
     ) -> Sent {
         let cause = error.to_string();
-        // A restart or no-flow gets minutes of silence; a restart gets no hold at all.
         let fault = match error {
             SinkError::Fault { fault, .. } => Some(&**fault),
             _ => None,
@@ -143,7 +178,9 @@ impl Dispatcher {
         }
         let read_failed = matches!(
             error,
-            SinkError::ReadUnverified { .. } | SinkError::DeviceUnreachable { .. }
+            SinkError::ReadUnverified { .. }
+                | SinkError::DeviceUnreachable { .. }
+                | SinkError::Timeout { .. }
         );
         let applied_w_reason = read_failed.then_some(AppliedPowerReason::ReadFailed);
         if !self.failsafe_on_error || restarted {
@@ -176,6 +213,7 @@ impl Dispatcher {
                     confirmation_pending: receipt.confirmation_pending,
                     superseded: receipt.superseded.then(|| "safety hold".to_owned()),
                     error: Some(format!("{cause}; fail-safe hold")),
+                    ..Sent::none()
                 }
             }
             Err(hold_error) => Sent {

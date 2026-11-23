@@ -40,10 +40,9 @@ pub struct Dispatcher {
     last_commands: Mutex<backoff::LastCommands>,
 }
 
-/// One pack's I/O budget: the 8 s echo window, a bounded write and 1 s of scheduling slack.
-/// It stays below the engine's 15 s minimum watchdog bound, so even a wedged device cannot make
-/// the tick look dead. A non-hold write normally returns after the transport write, far sooner.
-const PACK_SEND_BUDGET: Duration = Duration::from_secs(14);
+/// One end-to-end per-pack budget, shared with every direct sink caller. It covers apply, echo
+/// and the fail-safe hold together and stays below the 120 s health-staleness threshold.
+const PACK_SEND_BUDGET: Duration = energy_battery::control::PACK_IO_BUDGET;
 
 /// Per-send context: the tick clock and whether this command bypasses fault backoff.
 #[derive(Clone, Copy)]
@@ -99,12 +98,17 @@ impl Dispatcher {
             let frame = &frame;
             async move {
                 let budgeted_plan = plan.clone();
-                match tokio::time::timeout(PACK_SEND_BUDGET, self.send_plan(frame, plan, sink))
-                    .await
-                {
-                    Ok(report) => report,
-                    Err(_) => row::finish(self, budgeted_plan, row::deadline_sent()),
-                }
+                let Ok(report) =
+                    tokio::time::timeout(PACK_SEND_BUDGET, self.send_plan(frame, plan, sink)).await
+                else {
+                    self.faults.arm(
+                        &budgeted_plan.pack_id,
+                        input.now,
+                        "send exceeded the end-to-end pack budget",
+                    );
+                    return row::finish(self, budgeted_plan, row::deadline_sent());
+                };
+                report
             }
         }))
         .await;

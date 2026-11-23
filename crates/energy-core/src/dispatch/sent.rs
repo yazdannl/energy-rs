@@ -18,6 +18,10 @@ pub(crate) struct Sent {
     pub(crate) confirmation_pending: bool,
     /// Why a safety hold took over this attempt; ownership stays with that hold.
     pub(crate) superseded: Option<String>,
+    /// A newer setpoint was not sent because an earlier command is still pending.
+    pub(crate) blocked_by_pending: bool,
+    /// The end-to-end budget phase that timed out, when it did.
+    pub(crate) timeout: Option<String>,
     pub(crate) error: Option<String>,
 }
 
@@ -33,6 +37,8 @@ impl Sent {
             fail_safe: false,
             confirmation_pending: false,
             superseded: None,
+            blocked_by_pending: false,
+            timeout: None,
             error: None,
         }
     }
