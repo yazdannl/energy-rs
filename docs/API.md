@@ -97,7 +97,8 @@ or no pack has been sampled for that long, the endpoint answers **HTTP 503**:
 
 `reason` is `tick_stalled` or `sampler_stalled`; the matching `since` field names when the signal
 last moved. A missing first tick, or a configured fleet with no first sample, is stalled once the grace
-expires; an empty fleet is not a sampler failure. A write that timed out after the device may have
+expires. Fleet membership comes from the ledger's `configuredPacks` count carried in the snapshot,
+so "configured but publishing zero packs" is a sampler stall; a genuinely empty fleet is healthy. A write that timed out after the device may have
 accepted it does not degrade liveness by itself, but adds `reason: "uncertain_write"` to a 200 health
 response; dispatch stays blocked until a safety hold is sent and echoed. A 503 makes the Supervisor
 restart the add-on, so a frozen loop cannot leave a stale command standing for hours. The check is

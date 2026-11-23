@@ -63,6 +63,11 @@ impl Engine {
         let last_tick = state.watchdog.last_progress();
         let refusal = state.refusal.clone();
         drop(state);
+        let configured_packs = self
+            .ledger
+            .packs()
+            .and_then(|packs| packs.all())
+            .map_or(0, |rows| rows.len());
 
         let mode = self.gate.mode();
         let packs = self.pack_snapshots(view, now, &overrides, &maintenance, &unassigned);
@@ -83,6 +88,7 @@ impl Engine {
                 .map_or_else(Default::default, |runtime| runtime.site()),
             plan: plan_snapshot,
             packs,
+            configured_packs,
             meter: meter_snapshot(now, view, meter),
             forecast: plan.as_ref().map(forecast_snapshot),
             last_tick,
@@ -104,12 +110,18 @@ impl Engine {
         let mode = self.gate.mode();
         let view = FleetView::default();
         let meter = MeterReading::default();
+        let configured_packs = self
+            .ledger
+            .packs()
+            .and_then(|packs| packs.all())
+            .map_or(0, |rows| rows.len());
         publisher.publish(EngineSnapshot {
             mode,
             site: self
                 .runtime
                 .as_ref()
                 .map_or_else(Default::default, |runtime| runtime.site()),
+            configured_packs,
             faults: faults::derive(
                 now,
                 None,

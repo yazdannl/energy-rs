@@ -36,3 +36,73 @@ impl<T: DeviceIo> Drop for PendingGuard<'_, T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    use crate::control::{Command, ControlLimits, Pending};
+    use crate::error::BatteryError;
+    use crate::report::Report;
+    use crate::transport::{BoxFuture, WriteAck};
+    use tokio::time::Instant;
+
+    struct Noop;
+
+    impl DeviceIo for Noop {
+        fn sn(&self) -> &'static str {
+            "TEST"
+        }
+
+        fn report(&self) -> BoxFuture<'_, Result<Report, BatteryError>> {
+            Box::pin(async {
+                Err(BatteryError::Invalid {
+                    reason: "unused".into(),
+                })
+            })
+        }
+
+        fn write(
+            &self,
+            _: crate::transport::WriteRequest,
+        ) -> BoxFuture<'_, Result<WriteAck, BatteryError>> {
+            Box::pin(async {
+                Err(BatteryError::Invalid {
+                    reason: "unused".into(),
+                })
+            })
+        }
+    }
+
+    fn pending(request_id: u32) -> Pending {
+        Pending {
+            command: Command::Hold,
+            request_id,
+            baseline: (1, 1),
+            baseline_sequence: 1,
+            last_seen_sequence: 1,
+            resync_credits: 1,
+            acked_after: None,
+            acked_sequence: None,
+            sent_at: Instant::now(),
+            emergency: false,
+            inconclusive: None,
+            flow_samples: 0,
+            full_flow_samples: 0,
+            flow_w: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_request_does_not_clear_a_replacement() {
+        let controller = DeviceController::new(Noop, ControlLimits::unlimited());
+        let guard = PendingGuard::new(&controller, 1);
+        controller.lock().expect("state").pending = Some(pending(1));
+        controller.lock().expect("state").pending = Some(pending(2));
+
+        drop(guard);
+
+        assert_eq!(controller.pending().map(|entry| entry.request_id), Some(2));
+    }
+}

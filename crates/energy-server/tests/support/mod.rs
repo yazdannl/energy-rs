@@ -391,6 +391,7 @@ fn standard_snapshot(base: i64, plan_id: i64, sn: &str) -> EngineSnapshot {
         site: site_snapshot(),
         plan: Some(plan_snapshot(base, plan_id)),
         packs: vec![pack_snapshot(sn, base)],
+        configured_packs: 1,
         meter: Some(MeterSnapshot {
             at: base,
             grid_w: 250.0,
