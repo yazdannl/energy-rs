@@ -9,7 +9,7 @@ use crate::learning::bounds::CapacityBounds;
 use crate::learning::capacity::{CapacityEstimate, MIN_SESSIONS};
 use crate::learning::efficiency::EfficiencyEstimate;
 use crate::learning::pool::CapacityPool;
-use crate::learning::profile::LearningProfile;
+use crate::learning::profile::{LearningProfile, NEVER_MEASURED_AT};
 use crate::learning::refusal::Refusal;
 use crate::learning::sample::{CapacitySample, span_quality};
 use crate::learning::session::SessionRecord;
@@ -38,6 +38,8 @@ pub struct LearningReport {
     pub refused: Vec<Refusal>,
     /// When the pass ran.
     pub estimated_at: DateTime<Utc>,
+    /// When a real measurement last landed: now on a measured pass, otherwise the previous value.
+    pub measured_at: DateTime<Utc>,
 }
 
 impl LearningReport {
@@ -102,6 +104,12 @@ impl LearningReport {
                 kept,
             })
             .collect();
+        let measured = capacity.decision.applied() || efficiency.applied || efficiency.pairs > 0;
+        let measured_at = if measured {
+            now
+        } else {
+            previous.map_or(NEVER_MEASURED_AT, |profile| profile.updated_at)
+        };
         Self {
             pack_id: pack_id.to_owned(),
             inputs: sessions.len(),
@@ -111,7 +119,13 @@ impl LearningReport {
             efficiency,
             refused,
             estimated_at: now,
+            measured_at,
         }
+    }
+
+    /// Whether this pass published a capacity or efficiency measurement.
+    pub const fn measured(&self) -> bool {
+        self.capacity.decision.applied() || self.efficiency.applied || self.efficiency.pairs > 0
     }
 
     /// One line for the log: what was used, what was published, and why.

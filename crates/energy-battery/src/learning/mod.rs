@@ -30,6 +30,7 @@ pub mod capacity;
 pub mod cycle;
 pub mod decision;
 pub mod efficiency;
+mod event;
 pub mod pair_attempt;
 pub mod pair_diagnostics;
 pub mod pair_refusal;
@@ -60,11 +61,12 @@ pub use efficiency::{
     MAX_PAIR_GAP_DAYS, MAX_ROUND_TRIP, MIN_CONFIDENCE, MIN_IMPLIED_CAPACITY_KWH, MIN_PAIRS,
     MIN_ROUND_TRIP,
 };
+pub use event::LearningEvent;
 pub use pair_attempt::PairAttempt;
 pub use pair_diagnostics::PairDiagnostics;
 pub use pair_refusal::PairRefusal;
 pub use pool::CapacityPool;
-pub use profile::LearningProfile;
+pub use profile::{LearningProfile, NEVER_MEASURED_AT};
 pub use refusal::Refusal;
 pub use relearn::{relearn, relearn_with_pool};
 pub use report::LearningReport;

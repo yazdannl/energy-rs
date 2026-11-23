@@ -17,6 +17,7 @@ use crate::dispatch::DispatchLog;
 use crate::error::LedgerError;
 use crate::event::Events;
 use crate::measurement::Measurements;
+use crate::outbox::LearningOutbox;
 use crate::pack::Packs;
 use crate::plan::Plans;
 use crate::retention::{RetentionPolicy, RetentionReport};
@@ -131,6 +132,10 @@ impl Ledger {
         Ok(Events::new(self.lock()?))
     }
 
+    pub fn learning_outbox(&self) -> Result<LearningOutbox<'_>, LedgerError> {
+        Ok(LearningOutbox::new(self.lock()?))
+    }
+
     pub fn savings(&self) -> Result<Savings<'_>, LedgerError> {
         Ok(Savings::new(self.lock()?))
     }
@@ -170,7 +175,7 @@ impl Ledger {
         self.run_retention(Utc::now().timestamp())
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, Connection>, LedgerError> {
+    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>, LedgerError> {
         self.conn.lock().map_err(|_| LedgerError::Poisoned)
     }
 }

@@ -51,9 +51,9 @@ pub use fake::{FakeBehaviour, FakeDevice, FakePack, FakeState};
 pub use fleet::{DeviceSnapshot, FanOutReport, FleetAggregate, FleetClient, FleetSnapshot};
 pub use learning::{
     AGREEMENT_BAND, CapacityBounds, CapacityEstimate, CapacityPool, CapacitySource, CyclePair,
-    DEFAULT_ROUND_TRIP, EfficiencyEstimate, LearningDecision, LearningProfile, LearningReport,
-    LearningStore, MIN_CONFIDENCE, Refusal, SessionRecord, SessionWeight, recency_weight, relearn,
-    relearn_with_pool,
+    DEFAULT_ROUND_TRIP, EfficiencyEstimate, LearningDecision, LearningEvent, LearningProfile,
+    LearningReport, LearningStore, MIN_CONFIDENCE, Refusal, SessionRecord, SessionWeight,
+    recency_weight, relearn, relearn_with_pool,
 };
 pub use protection::{
     CellConfig, CellDecision, CellLatch, CellLatchStore, CellReading, CellVoltageGuard,

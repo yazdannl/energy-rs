@@ -1,10 +1,8 @@
 //! Session re-extraction and capacity relearning after a completed run.
 
-use energy_battery::control::Direction as BatteryDirection;
 use energy_battery::learning::{
-    CapacityBounds, CapacityPool, LearningReport, LearningStore, SessionRecord, relearn_with_pool,
+    CapacityBounds, CapacityPool, LearningEvent, LearningProfile, LearningReport, LearningStore,
 };
-use energy_ledger::session::Direction as LedgerDirection;
 use energy_ledger::{Ledger, Session, SessionRules, Tier};
 
 use crate::engine::instant;
@@ -48,11 +46,11 @@ pub(crate) fn due(now: i64, last: Option<i64>, interval: i64) -> bool {
     last.is_none_or(|at| now.saturating_sub(at) >= interval)
 }
 
-/// Re-extract the recent window for every pack and relearn any pack whose run just completed.
+/// Re-extract and relearn every pack with a completed session newer than its last measurement.
 ///
-/// A pack is relearned when a completed session ended inside the last two check intervals: that is
-/// "a session completed", which is the trigger the learning policy asks for. The pass itself reads
-/// the long window, so one new completion updates the estimate from all of the pack's history.
+/// The trigger is a *new* episode, not a wall-clock coincidence: a cycle that finished while the
+/// engine was down is still news after a 24-hour gap. Packs with nothing new get their diagnostics
+/// updated (attempt time, window counts and a named blocker) without moving `updatedAt`.
 pub(crate) fn run(
     ledger: &Ledger,
     store: &dyn LearningStore,
@@ -74,6 +72,9 @@ pub(crate) fn relearn_now(
 }
 
 /// The shared pass: extract, pool identical labels, then learn the selected packs.
+///
+/// The pool is built from *every* pack's current window, including packs that are skipped or
+/// excluded by a targeted relearn. Pool membership is an evidence property, not a scheduling one.
 fn scan(
     ledger: &Ledger,
     store: &dyn LearningStore,
@@ -82,70 +83,157 @@ fn scan(
     only: Option<&str>,
     completed_only: bool,
 ) -> Result<Vec<LearningReport>, WiringError> {
-    let inputs = collect_inputs(ledger, policy, now, only, completed_only)?;
-    let peers: Vec<(f64, &[SessionRecord])> = inputs
-        .iter()
-        .map(|input| (input.2.label_kwh, input.3.as_slice()))
-        .collect();
-    let pool = CapacityPool::from_sessions(&peers, instant(now));
-    let mut reports = Vec::with_capacity(inputs.len());
-    for (sn, id, bounds, records) in inputs {
-        let report = relearn_with_pool(store, &sn, &records, &bounds, Some(&pool), instant(now))?;
-        store_row(ledger, id, &report, now)?;
-        reports.push(report);
+    // Replay before touching profiles: an event that was committed with an earlier profile is
+    // still owed to the journal even if this pass later skips that pack or fails on another one.
+    for event in store.pending_events()? {
+        store.publish_event(&event)?;
+    }
+    let states = collect_states(ledger, store, now, policy)?;
+    let pool = pool::fleet_pool(&states, now);
+    let mut reports = Vec::new();
+    for state in states {
+        if only.is_some_and(|sn| sn != state.sn) {
+            continue;
+        }
+        if completed_only
+            && let Some(blocker) = skip_reason(
+                &state.sessions,
+                state.complete,
+                state.previous.as_ref(),
+                now,
+                policy,
+            )
+        {
+            let skipped = skip::SkippedPass {
+                sn: &state.sn,
+                now,
+                sessions_in_window: state.sessions.len(),
+                sessions_complete: state.complete,
+                blocker,
+            };
+            skip::note_skipped(store, state.previous, &state.bounds, skipped)?;
+            continue;
+        }
+        if state.records.is_empty() {
+            continue;
+        }
+        reports.push(learn_and_publish(ledger, store, &state, &pool, now)?);
     }
     Ok(reports)
 }
 
-/// One pack's inputs: serial, row id, bounds and the window's session records.
-type PackInput = (String, i64, CapacityBounds, Vec<SessionRecord>);
-
-/// Extract and load the window for every selected pack before any pack is learned.
-fn collect_inputs(
+/// Extract every pack before any skip or target filter is applied.
+fn collect_states(
     ledger: &Ledger,
-    policy: &SessionPolicy,
+    store: &dyn LearningStore,
     now: i64,
-    only: Option<&str>,
-    completed_only: bool,
-) -> Result<Vec<PackInput>, WiringError> {
+    policy: &SessionPolicy,
+) -> Result<Vec<pool::PackState>, WiringError> {
     let packs = ledger.packs()?.all()?;
-    let mut inputs = Vec::new();
+    let mut states = Vec::with_capacity(packs.len());
     for pack in &packs {
-        if only.is_some_and(|sn| sn != pack.sn) {
-            continue;
-        }
-        let extract_from = now.saturating_sub(policy.extract_seconds());
-        ledger.sessions()?.extract(
-            pack.id,
-            Tier::OneMinute,
-            extract_from,
-            now.saturating_add(1),
-            &policy.rules,
-        )?;
         let from = now.saturating_sub(policy.window_seconds());
-        let sessions = ledger
+        let to = now.saturating_add(1);
+        let previous = store.load(&pack.sn)?;
+        let stored = ledger.sessions()?.for_pack(pack.id, from, to)?;
+        let extract_from = floor::extraction_floor(policy, now, from, &stored, previous.as_ref());
+        ledger
             .sessions()?
-            .for_pack(pack.id, from, now.saturating_add(1))?;
-        if completed_only {
-            let recent = policy.check_seconds().saturating_mul(2);
-            let just_finished = sessions
-                .iter()
-                .any(|session| session.complete && session.ended_at >= now.saturating_sub(recent));
-            if !just_finished {
-                continue;
-            }
-        }
-        let records: Vec<SessionRecord> = sessions
+            .extract(pack.id, Tier::OneMinute, extract_from, to, &policy.rules)?;
+        let sessions = ledger.sessions()?.for_pack(pack.id, from, to)?;
+        let complete = sessions.iter().filter(|session| usable(session)).count();
+        let records = sessions
             .iter()
-            .map(|session| record(session, &pack.sn))
+            .map(|session| record::map(session, &pack.sn))
             .collect();
-        if records.is_empty() {
-            continue;
-        }
         let bounds = CapacityBounds::new(pack.label_capacity_kwh, pack.reported_capacity_kwh);
-        inputs.push((pack.sn.clone(), pack.id, bounds, records));
+        states.push(pool::PackState {
+            sn: pack.sn.clone(),
+            id: pack.id,
+            bounds,
+            sessions,
+            records,
+            complete,
+            previous,
+        });
     }
-    Ok(inputs)
+    Ok(states)
+}
+
+/// Publish the pack row, commit the profile with its pending audit row, then journal the event.
+///
+/// The profile-plus-outbox commit is the commit point: its clocks decide whether a pack needs
+/// another pass, and its outbox row survives a failed journal write. If the row write fails, nothing
+/// has advanced; if the profile write fails, the row is already correct but the old profile still
+/// grants an immediate retry. Both writes are idempotent, so the retry simply rewrites the same row
+/// and then commits the profile again.
+fn learn_and_publish(
+    ledger: &Ledger,
+    store: &dyn LearningStore,
+    state: &pool::PackState,
+    pool: &CapacityPool,
+    now: i64,
+) -> Result<LearningReport, WiringError> {
+    let report = LearningReport::learn_with_pool(
+        &state.sn,
+        &state.records,
+        &state.bounds,
+        state.previous.as_ref(),
+        Some(pool),
+        instant(now),
+    );
+    let profile = LearningProfile::from_report(&report);
+    let event = LearningEvent::new(state.sn.clone(), now, report.summary());
+    store_row(ledger, state.id, &report, report.measured_at.timestamp())?;
+    let event = store.save_with_event(&profile, event)?;
+    store.publish_event(&event)?;
+    Ok(report)
+}
+
+fn usable(session: &Session) -> bool {
+    session.complete
+        && session.invalidated_reason.is_none()
+        && session.soc_start.is_some()
+        && session.soc_end.is_some()
+}
+
+/// A pass that has nothing new to learn still happened: say why, and when.
+fn skip_reason(
+    sessions: &[Session],
+    complete: usize,
+    previous: Option<&LearningProfile>,
+    now: i64,
+    policy: &SessionPolicy,
+) -> Option<&'static str> {
+    // A brand-new pack with no evidence still gets a durable, named diagnostic; otherwise the
+    // packs endpoint would show nothing and the operator could not tell it apart from a dead
+    // learner. A new pack that does have sessions still gets its first pass.
+    if previous.is_none() && sessions.is_empty() {
+        return Some("no_sessions_in_window");
+    }
+    let fresh = previous.is_none_or(|profile| {
+        let learned_at = profile.updated_at.timestamp();
+        sessions
+            .iter()
+            .any(|session| usable(session) && session.ended_at > learned_at)
+    });
+    if fresh {
+        return None;
+    }
+    if sessions.is_empty() {
+        return Some("no_sessions_in_window");
+    }
+    if complete == 0 {
+        return Some("no_completed_session");
+    }
+    // Nothing new is a reason to skip only while the last real learning pass is still fresh.
+    // Diagnostic skips must not refresh this clock, or a five-minute cadence could never build a
+    // ten-minute gap and the backfill would be postponed forever.
+    let gap = policy.check_seconds().saturating_mul(2).max(3600);
+    let recent = previous
+        .and_then(|profile| profile.efficiency_diagnostics.last_learning_at)
+        .is_some_and(|at| now.saturating_sub(at.timestamp()) < gap);
+    recent.then_some("no_new_completed_session")
 }
 
 /// Publish the learned numbers on the pack row, so `/api/v1/packs` and the planner agree.
@@ -169,28 +257,24 @@ fn store_row(
     Ok(())
 }
 
-/// Map one ledger session into the learner's plain record.
-///
-/// Invalid runs are *kept* as records with their direction, time bounds and a refusal marker.
-/// Dropping them upstream would erase a direction change: a discarded discharge between two
-/// charges would let the learner merge the charges and book stored energy as a loss.
-fn record(session: &Session, pack_sn: &str) -> SessionRecord {
-    SessionRecord {
-        pack_id: pack_sn.to_owned(),
-        direction: match session.direction {
-            LedgerDirection::Charge => BatteryDirection::Charge,
-            LedgerDirection::Discharge => BatteryDirection::Discharge,
-        },
-        started_at: instant(session.started_at),
-        ended_at: instant(session.ended_at),
-        soc_start_pct: session.soc_start.unwrap_or(f64::NAN),
-        soc_end_pct: session.soc_end.unwrap_or(f64::NAN),
-        energy_ac_kwh: session.energy_ac_kwh,
-        duration_s: session.duration_s as f64,
-        sample_count: u32::try_from(session.sample_count).unwrap_or(u32::MAX),
-        complete: session.complete && session.invalidated_reason.is_none(),
-    }
-}
+mod floor;
+mod pool;
+mod record;
+mod skip;
 
+#[cfg(test)]
+mod attempt_tests;
+#[cfg(test)]
+mod boundary_tests;
+#[cfg(test)]
+mod event_tests;
+#[cfg(test)]
+mod failure_tests;
+#[cfg(test)]
+mod legacy_tests;
+#[cfg(test)]
+mod pooling_tests;
+#[cfg(test)]
+mod scheduled_tests;
 #[cfg(test)]
 mod sessions_tests;

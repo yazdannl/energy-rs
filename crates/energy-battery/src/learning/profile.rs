@@ -9,6 +9,11 @@ use crate::learning::pair_diagnostics::PairDiagnostics;
 use crate::learning::report::LearningReport;
 use crate::learning::source::CapacitySource;
 
+/// `updatedAt` for a profile that has never seen a real measurement.
+///
+/// A diagnostic pass on a new pack must be visible without pretending a cycle was observed.
+pub const NEVER_MEASURED_AT: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
+
 /// One pack's durable learning result.
 ///
 /// This is the row a `LearningStore` persists: the effective capacity, the split efficiency, the
@@ -82,7 +87,7 @@ impl LearningProfile {
             soc_points_covered: capacity.soc_points,
             cycles_used: capacity.cycles_used,
             capacity_source: capacity.source,
-            updated_at: report.estimated_at,
+            updated_at: report.measured_at,
         }
     }
 
