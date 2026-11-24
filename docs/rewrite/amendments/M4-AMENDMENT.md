@@ -8,7 +8,7 @@ These rows extend, and do not rewrite, the M4 rows already in `SCENARIOS.md`.
 The M4 `INTENDED` acceptance sentence names S128–S131; S128 and S129 belong to M3 (terminal
 validation and infeasibility reporting). The M4-owned ids actually covered by this module are
 S24–S32, S41, S43, S81–S92, S90, S91, S130, S131, S147, S148, S151, S163, S166, S170, S181, S188 and the new
-S221–S250 below. No M3 scenario is claimed as an M4 test.
+S221–S251 below. No M3 scenario is claimed as an M4 test.
 
 | ID | Module | Title | Given | When | Then | Type | REAL | Why |
 |---|---|---|---|---|---|---|---|---|
@@ -52,6 +52,8 @@ S221–S250 below. No M3 scenario is claimed as an M4 test.
 | S249 | M4 | verified_hold shares read_back's transport prerequisite | neutral hold evidence arrives while an earlier write is still in flight | verified hold is observed | the row and pack stay `Uncertain` with `transport_still_outstanding`; no automatic clearance until the transport is complete and the shared evidence check passes | regression | no | Round-7 review: a still-running write could survive hold clearance and apply afterwards. |
 | S250 | M4 | ordered application is a required port capability | capability true/false/absent; post-hold, pre-hold and non-coherent device reports | automatic recovery is requested | true plus coherent post-hold evidence clears; false/absent stays `Uncertain` with `automatic_recovery_unsupported`, and the only exit is explicit `reconcile`; a report predating the hold never clears | contract | no | Round-7 review: timestamp order alone does not prove older commands cannot apply later. No timer or latency guess is introduced. |
 
+| S251 | M4 | transport_gone is a per-pack fact after reaping | two overlapping writes for one pack; one channel completes and the other stays blocked | reconcile and fresh neutral evidence follow | reaping one future leaves `transport_gone=false`; evidence is rejected with `transport_still_outstanding`; after the last future is reaped, `transport_gone=true` and evidence clears | regression | yes | Round-8 review: the reaping loop set the pack fact from each handled future and reopened the round-19 hole. |
+
 ## Interpretations that need reviewer attention
 
 * S224's 40 % SoC ceiling for `capability_shortfall` is derived from one live observation (31-34 %), not from a calibrated curve. Higher-SoC charge taper (96-98 %) is not classified as a shortfall by M4 and needs its own evidence row before implementation.
@@ -69,11 +71,10 @@ S221–S250 below. No M3 scenario is claimed as an M4 test.
 * Physical-effect honesty: a request that has left for the device cannot be un-sent. Cancellation, deadlines and generations prevent STATE CONTAMINATION, not device effects. Every timeout marks the pack `Uncertain`; no economic command is sent until truth is re-established by a verified hold or `Dispatcher::read_back`. Both exits call the same `read_back::recovery_verdict`: transport complete, ordered application declared, coherent device clock, finite neutral report and echo, and a device timestamp causally after the apply attempt and the neutralising hold acknowledgement. With ordered application (single-threaded firmware, one command per pack at a time), a post-hold report reflects a state in which every earlier command was applied or superseded. Without that declared capability, automatic recovery is unsupported and the pack requires explicit `reconcile`; no timer or guessed latency is involved. Missing, incoherent or unorderable evidence keeps the pack `Uncertain` with a named reason; the clearing method is recorded in `uncertainty_cleared_by` on row and pack state.
 * One arbiter drives one future per pack; the future's own return value is the acknowledgement. There is no channel, claim arbitration or watchdog. Completion is decided from the returned completion instant against that write's absolute deadline, so collection order never changes a successful write into a superseded one. At the deadline the arbiter cancels the token, records `Uncertain`, and keeps driving other packs; its own write guard later releases the transaction when that worker terminates. The poll bound (`MAX_DRIVE_POLLS_PER_TICK`) cancels and retains unresolved futures; it prevents a loop, not a leaked thread.
 
-* Round-7 residue and closing conditions:
-  1. S243 does not exercise a true terminal publication/expiry race. Close with an instrumented future or a test-only terminal hook. Likely to be re-raised: yes, if reviewers require race coverage rather than prepublished terminal results.
-  2. `TRANSPORT_BOUND_MS = 6_000` is copied from the live engine, not re-measured by M4. Close with a live-transport conformance test proving return and unwind within 5/5/6 s. Likely to be re-raised: yes, until wired.
-  3. Device-clock coherency is caller-supplied. Close by proving one coherent device clock in live wiring before any clearance. Likely to be re-raised: yes, until wired.
-  4. `PackIo::ordered_application` is a declaration; no real implementation exists yet. Close by asserting the live firmware contract in the real transport. Likely to be re-raised: yes, until wired.
-  5. `reconcile` is a public dispatcher method today; M6 must ensure only the write authority can invoke it as the unsupported-recovery exit. Close in M6 wiring. Likely to be re-raised: yes.
-  6. The SPEC M5 acceptance paragraph still cites M4-owned ids. Close when M5 lands with renumbered citations. Likely to be re-raised: no until M5 lands.
-  7. M4 remains unwired by design. Close in a separate integration round covering live-engine wiring, full-charge interactions and release verification. Likely to be re-raised: yes.
+* Round-8 residue scoping: S243's synthetic terminal-race test is explicitly NOT a merge blocker and is IN SCOPE only if someone asks for a test hook. Items below are DEFERRED to wiring/M5/M6; none is an in-scope defect for this unwired crate.
+  1. DEFERRED to live wiring: `TRANSPORT_BOUND_MS = 6_000` is copied from the live engine and needs a conformance test for 5/5/6 s return and unwind.
+  2. DEFERRED to live wiring: device-clock coherency is caller-supplied and must be proven before clearance.
+  3. DEFERRED to live wiring: `PackIo::ordered_application` is only a declaration until the real transport asserts the firmware contract.
+  4. DEFERRED to M6: `reconcile` is public today and must be writable only by the write authority.
+  5. DEFERRED to M5: the SPEC M5 acceptance paragraph must renumber its M4-owned ids.
+  6. DEFERRED to integration: M4 remains unwired; full-charge interactions and release verification need a separate round.

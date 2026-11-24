@@ -193,7 +193,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         )
     }
 
-    /// Join futures that have returned; only then is their pack's transport gone.
+    /// Join finished futures, then derive each pack's transport_gone from the futures left.
     pub fn reconcile(&self, state: &mut DispatchState, now_ms: i64) -> usize {
         let mut unresolved = self
             .unresolved
@@ -217,23 +217,24 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                 crate::dispatch::driver::record_late(&self.late, &pack_id, generation);
             }
             let pack = state.pack(&pack_id);
-            pack.transport_gone = true;
             pack.transport_contract_violated = false;
             pack.joined_at_ms = now_ms;
-            gone.insert(pack_id);
         }
         for pack_id in state.pack_ids() {
-            if !unresolved.iter().any(|f| f.pack_id() == pack_id) {
-                let pack = state.pack(&pack_id);
-                if !pack.transport_gone {
-                    pack.joined_at_ms = now_ms;
-                }
-                pack.transport_gone = true;
-                if pack.uncertain && pack.ordered_application != Some(true) {
-                    pack.uncertain = false;
-                    pack.uncertain_reason = None;
-                    pack.uncertainty_cleared_by = Some("explicit_reconcile");
-                }
+            if unresolved.iter().any(|f| f.pack_id() == pack_id) {
+                state.pack(&pack_id).transport_gone = false;
+                continue;
+            }
+            let pack = state.pack(&pack_id);
+            if !pack.transport_gone {
+                pack.joined_at_ms = now_ms;
+            }
+            pack.transport_gone = true;
+            gone.insert(pack_id);
+            if pack.uncertain && pack.ordered_application != Some(true) {
+                pack.uncertain = false;
+                pack.uncertain_reason = None;
+                pack.uncertainty_cleared_by = Some("explicit_reconcile");
             }
         }
         gone.len()

@@ -2,12 +2,13 @@
 
 mod m4_support;
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use energy_decide::dispatch::{
-    AllowAllAuthority, DispatchOutcome, DispatchState, Dispatcher, Echo, PendingConfirmation,
-    ProceedSafety, SlotRequest,
+    AllowAllAuthority, DispatchOutcome, DispatchState, Dispatcher, Echo, FlowReport, PackCommand,
+    PackIo, PendingConfirmation, ProceedSafety, SlotRequest, WriteAck,
 };
 use m4_support::{Behavior, FakeIo, ImmediateClock, report};
 
@@ -177,4 +178,126 @@ fn s250_port_capability_is_propagated_to_the_pack() {
         state.pack("P").uncertainty_cleared_by,
         Some("explicit_reconcile")
     );
+}
+
+/// Two writes for one pack, each released by a separate channel. Both deliberately
+/// ignore cancellation so reconciliation must decide from the futures that remain.
+#[derive(Clone)]
+struct ChannelIo {
+    senders: Arc<Mutex<Vec<mpsc::Sender<WriteAck>>>>,
+    next_tx: Arc<AtomicU64>,
+}
+
+impl ChannelIo {
+    fn new() -> Self {
+        Self {
+            senders: Arc::new(Mutex::new(Vec::new())),
+            next_tx: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn pending_count(&self) -> usize {
+        self.senders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    fn complete_first(&self, ack: WriteAck) {
+        let sender = self
+            .senders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(0);
+        let _ = sender.send(ack);
+    }
+}
+
+impl PackIo for ChannelIo {
+    fn begin(&self, _pack_id: &str) -> u64 {
+        self.next_tx.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn release(&self, _pack_id: &str, _tx_id: u64) {}
+
+    fn write(
+        &self,
+        _pack_id: &str,
+        command: &PackCommand,
+        _deadline_ms: u64,
+        _tx_id: u64,
+        _cancel: Arc<std::sync::atomic::AtomicBool>,
+    ) -> WriteAck {
+        let (sender, receiver) = mpsc::channel();
+        self.senders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(sender);
+        receiver.recv().unwrap_or(WriteAck::Failed {
+            reason: "channel_closed",
+            at_ms: command.issued_at_ms,
+        })
+    }
+
+    fn ordered_application(&self) -> bool {
+        true
+    }
+
+    fn read(&self, _pack_id: &str, _deadline_ms: u64) -> Option<FlowReport> {
+        None
+    }
+}
+
+#[test]
+fn s251_transport_gone_is_derived_from_remaining_writes() {
+    let io = ChannelIo::new();
+    let dut = Dispatcher::new_with_shared(
+        Arc::new(io.clone()),
+        ProceedSafety,
+        AllowAllAuthority,
+        ImmediateClock::default(),
+        20,
+    );
+    let mut state = DispatchState::default();
+    let economic = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 0);
+    assert_eq!(economic[0].outcome, DispatchOutcome::Uncertain);
+    let safety = dut.dispatch_slot(
+        &mut state,
+        &[SlotRequest::safety("P", 0.0, 100, "overlap_hold")],
+        100,
+    );
+    assert_eq!(safety[0].outcome, DispatchOutcome::Uncertain);
+    assert_eq!(io.pending_count(), 2);
+
+    io.complete_first(WriteAck::Accepted {
+        echo: Some(Echo {
+            limit_w: 0.0,
+            at_ms: 120,
+        }),
+        at_ms: 120,
+    });
+    std::thread::sleep(Duration::from_millis(30));
+    dut.reconcile(&mut state, 130);
+    assert!(
+        !state.pack("P").transport_gone,
+        "one reaped future must not mark a pack with another outstanding write as gone"
+    );
+
+    let rejected = dut.read_back(&mut state, &neutral_echo("P", 300, 1), 300);
+    assert!(rejected.reasons.contains(&"transport_still_outstanding"));
+    assert!(state.pack("P").uncertain);
+
+    io.complete_first(WriteAck::Accepted {
+        echo: Some(Echo {
+            limit_w: 0.0,
+            at_ms: 500,
+        }),
+        at_ms: 500,
+    });
+    std::thread::sleep(Duration::from_millis(30));
+    dut.reconcile(&mut state, 500);
+    assert!(state.pack("P").transport_gone);
+    let cleared = dut.read_back(&mut state, &neutral_echo("P", 600, 2), 600);
+    assert_eq!(cleared.uncertainty_cleared_by, Some("read_back"));
+    assert!(!state.pack("P").uncertain);
 }
