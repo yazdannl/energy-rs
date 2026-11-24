@@ -11,7 +11,7 @@ mod support;
 
 use axum::http::Method;
 use chrono::{DateTime, SecondsFormat, Utc};
-use energy_ledger::DispatchEntry;
+use energy_ledger::{DispatchEntry, MeasuredWatts};
 use support::{Fixture, get, send_text};
 
 fn stamp(epoch: i64) -> String {
@@ -203,7 +203,6 @@ async fn a_stale_dispatch_row_has_null_applied_w_while_the_meter_reports_power()
         Utc::now().timestamp(),
         Some(pack),
         403.792,
-        0.0,
         "watchdog_hold",
         "auto",
     )
@@ -247,7 +246,6 @@ async fn a_serialized_dispatch_row_has_applied_w_literal_null() {
         Utc::now().timestamp(),
         Some(pack),
         403.792,
-        0.0,
         "watchdog_hold",
         "auto",
     )
@@ -291,8 +289,9 @@ async fn a_genuinely_measured_zero_stays_numeric_zero() {
         .first()
         .expect("a pack")
         .id;
-    let row = DispatchEntry::new(Utc::now().timestamp(), Some(pack), 0.0, 0.0, "hold", "auto")
-        .verified(0.0);
+    let row = DispatchEntry::new(Utc::now().timestamp(), Some(pack), 0.0, "hold", "auto")
+        .measured(MeasuredWatts::new(0.0, 1))
+        .verified();
     fixture
         .ledger
         .dispatch()

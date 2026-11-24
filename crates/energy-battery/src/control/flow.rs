@@ -55,6 +55,18 @@ pub const fn status_direction(ac_status: Option<i32>, dc_status: Option<i32>) ->
 /// The AC relay takes 20-36 s to come up on a cold pack; an 8 s echo window declares success
 /// before any power can appear. Direction changes get a window that covers the whole ramp.
 pub const FLOW_CONFIRM_WINDOW: Duration = Duration::from_secs(45);
+pub const FLOW_EVIDENCE_RECOVERY_SECS: i64 = 45;
+
+/// Bounded recovery for unusable flow evidence: the original write gets this long to prove flow;
+/// after it, the only safe resolution is a verified neutralising hold.
+pub const FLOW_EVIDENCE_RECOVERY_WINDOW: Duration = FLOW_CONFIRM_WINDOW;
+
+/// A sample can only judge a command if it is strictly newer than the write and old enough to
+/// cover the AC ramp. Skewed device clocks must not restart the window.
+#[must_use]
+pub const fn flow_evidence_causal(sample_at: i64, write_at: i64) -> bool {
+    sample_at > write_at && sample_at.saturating_sub(write_at) >= FLOW_EVIDENCE_RECOVERY_SECS
+}
 
 /// How much power must be measured before this command can be considered alive, W.
 #[must_use]

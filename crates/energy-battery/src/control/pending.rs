@@ -37,6 +37,10 @@ pub struct Pending {
     pub acked_sequence: Option<u64>,
     /// Monotonic instant the command was installed, used by the safety-hold preemption bound.
     pub sent_at: Instant,
+    /// Original flow-evidence deadline. Never reset by later reports or downgrades.
+    pub flow_deadline: Instant,
+    /// Epoch seconds of the pre-write report that bounds causal evidence for this command.
+    pub accepted_at: i64,
     /// An emergency neutralising hold sent while the AC path was wedged.
     pub emergency: bool,
     /// The freshest limit mismatch seen so far, held while the write gets a chance to land.

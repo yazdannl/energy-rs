@@ -35,6 +35,7 @@ mod emergency;
 pub mod fault;
 mod fault_api;
 pub mod flow;
+mod flow_verdict;
 pub mod hard_limit;
 pub mod limits;
 pub mod observation;
@@ -56,8 +57,8 @@ pub use direction::Direction;
 pub use echo::{ECHO_CONFIRM_WINDOW, ECHO_POLL_INTERVAL, ECHO_TOLERANCE_W, is_echo_doubt, verify};
 pub use fault::ControlFault;
 pub use flow::{
-    FLOW_CONFIRM_WINDOW, FLOW_SAMPLES, FLOW_THRESHOLD_W, FlowEvidence, assess, flow_threshold,
-    flow_threshold_w,
+    FLOW_CONFIRM_WINDOW, FLOW_EVIDENCE_RECOVERY_SECS, FLOW_EVIDENCE_RECOVERY_WINDOW, FLOW_SAMPLES,
+    FLOW_THRESHOLD_W, FlowEvidence, assess, flow_evidence_causal, flow_threshold, flow_threshold_w,
 };
 pub use hard_limit::{HardLimit, MAX_HARD_LIMIT_W};
 pub use limits::ControlLimits;

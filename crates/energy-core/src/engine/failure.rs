@@ -87,9 +87,14 @@ impl Engine {
     }
 }
 
-/// Whether this tick wrote the pack, fail-safed it, or handed ownership to a safety hold.
+/// Whether this tick wrote the pack, fail-safed it, handed ownership to a safety hold, or left it
+/// alone because its own device report closed charge. The last case must not trigger an orphan
+/// hold: that write is exactly the retry storm a full pack refuses.
 fn commanded(pack_id: &str, outcome: &TickOutcome) -> bool {
-    outcome
-        .report(pack_id)
-        .is_some_and(|report| report.written || report.fail_safe || report.superseded.is_some())
+    outcome.report(pack_id).is_some_and(|report| {
+        report.written
+            || report.fail_safe
+            || report.superseded.is_some()
+            || (report.capability_skipped && report.reason == Reason::ChargeAtCeiling)
+    })
 }

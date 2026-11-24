@@ -46,6 +46,7 @@ mod tests {
     use crate::error::BatteryError;
     use crate::report::Report;
     use crate::transport::{BoxFuture, WriteAck};
+    use std::time::Duration;
     use tokio::time::Instant;
 
     struct Noop;
@@ -86,6 +87,8 @@ mod tests {
             acked_after: None,
             acked_sequence: None,
             sent_at: Instant::now(),
+            flow_deadline: Instant::now() + Duration::from_secs(45),
+            accepted_at: 1,
             emergency: false,
             inconclusive: None,
             flow_samples: 0,

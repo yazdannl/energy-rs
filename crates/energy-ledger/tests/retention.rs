@@ -9,7 +9,7 @@
 
 mod support;
 
-use energy_ledger::{DispatchEntry, Plan, PlanSlot, RetentionPolicy, Tier};
+use energy_ledger::{DispatchEntry, MeasuredWatts, Plan, PlanSlot, RetentionPolicy, Tier};
 use support::{TempDatabase, register_pack, sample, write};
 
 /// 2026-06-15T10:00:00Z, local noon in Amsterdam.
@@ -157,11 +157,12 @@ fn dispatch_is_trimmed_by_count_and_protects_today() {
     let pack = register_pack(&ledger, "ABC123");
     let base = NOW - 10 * DAY;
     for offset in 0..5 {
-        let entry = DispatchEntry::new(base + offset, Some(pack), 500.0, 500.0, "plan", "auto")
-            .verified(500.0);
+        let entry = DispatchEntry::new(base + offset, Some(pack), 500.0, "plan", "auto")
+            .measured(MeasuredWatts::new(500.0, 1))
+            .verified();
         ledger.dispatch().unwrap().insert(&entry).unwrap();
     }
-    let today = DispatchEntry::new(NOW, Some(pack), 0.0, 0.0, "hold", "dry_run");
+    let today = DispatchEntry::new(NOW, Some(pack), 0.0, "hold", "dry_run");
     ledger.dispatch().unwrap().insert(&today).unwrap();
     let report = ledger.run_retention(NOW).unwrap();
     assert_eq!(report.dispatch_log, 3);

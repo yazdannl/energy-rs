@@ -3,7 +3,7 @@
 use energy_battery::protection::CellLatch;
 use energy_ledger::plan::PlanSlot;
 
-use crate::allocation::{Allocation, Hold, SplitInput};
+use crate::allocation::{Allocation, ChargeSkip, Hold, SplitInput};
 use crate::dispatch::pack_context::PackContext;
 use crate::dispatch::{PackReading, TickInput, fleet_grid, grid_telemetry};
 use crate::plan::PackState;
@@ -15,6 +15,7 @@ pub(crate) fn allocate(
     limits: &SafetyLimits,
     target: f64,
     slot: Option<&PlanSlot>,
+    charge_skips: &[ChargeSkip],
 ) -> (Allocation, Option<Reason>) {
     let states: Vec<PackState> = input
         .fleet
@@ -40,6 +41,7 @@ pub(crate) fn allocate(
         soc_band_pct: limits.pack_switch_soc_pct,
         now: input.now,
         hold_seconds: limits.pack_hold_seconds,
+        charge_skips,
     };
     let mut allocation = Allocation::split(target, &states, &split);
     let base = grid_telemetry::base(input, slot, limits);

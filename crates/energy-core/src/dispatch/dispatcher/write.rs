@@ -3,6 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use energy_battery::ControlFault;
+use energy_battery::control::{FLOW_EVIDENCE_RECOVERY_WINDOW, flow_evidence_causal};
 
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
@@ -67,6 +68,7 @@ impl Dispatcher {
             written: true,
             verified: receipt.verified,
             flow_measured: receipt.flow_measured,
+            measured_at: receipt.measured_at,
             applied_w: receipt.applied_w,
             applied_w_reason: receipt_reason(&receipt, None),
             ..Sent::none()
@@ -115,7 +117,7 @@ impl Dispatcher {
         Sent {
             blocked_by_pending: true,
             superseded: Some("previous command pending".to_owned()),
-            applied_w_reason: Some(AppliedPowerReason::SampleStale),
+            applied_w_reason: Some(AppliedPowerReason::PreviousCommandPending),
             error: Some("previous command still pending; new setpoint not written".to_owned()),
             ..Sent::none()
         }
@@ -126,7 +128,7 @@ impl Dispatcher {
         Sent {
             written: true,
             confirmation_pending: true,
-            applied_w_reason: Some(AppliedPowerReason::SampleStale),
+            applied_w_reason: Some(AppliedPowerReason::ConfirmationPending),
             error: Some("confirmation pending; readback will verify".to_owned()),
             ..Sent::none()
         }
@@ -154,6 +156,7 @@ impl Dispatcher {
         Sent {
             written: true,
             flow_measured: receipt.flow_measured,
+            measured_at: receipt.measured_at,
             applied_w: receipt.applied_w,
             applied_w_reason: receipt_reason(receipt, None),
             ..Sent::none()
@@ -172,25 +175,25 @@ impl Dispatcher {
         let now = context.now;
         let cause = error.to_string();
         let restarted = matches!(error, SinkError::Fault { fault, .. } if matches!(**fault, ControlFault::Restarted { .. }));
-        let no_flow = matches!(error, SinkError::Fault { fault, .. } if matches!(**fault, ControlFault::NoFlow { .. }));
+        let verdict_clocks = flow_verdict_clocks(error);
+        if let Some(sent) = premature_no_flow(verdict_clocks, now) {
+            return sent;
+        }
+        let no_flow = verdict_clocks.0.is_some();
         if restarted || no_flow {
             self.faults.arm_long(pack_id, now, &cause);
         } else {
             self.faults.arm(pack_id, now, &cause);
         }
-        let read_failed = matches!(
-            error,
-            SinkError::ReadUnverified { .. }
-                | SinkError::DeviceUnreachable { .. }
-                | SinkError::Timeout { .. }
-        );
+        let read_failed = is_read_failure(error);
         let applied_w_reason = read_failed.then_some(AppliedPowerReason::ReadFailed);
         if !self.failsafe_on_error || restarted {
             return Sent {
                 applied_w_reason,
                 error: Some(cause),
                 ..Sent::none()
-            };
+            }
+            .with_judged(verdict_clocks);
         }
         match sink.hold_with_progress(pack_id, progress, now).await {
             Err(SinkError::ReadUnverified { reason, .. }) => Sent {
@@ -200,13 +203,15 @@ impl Dispatcher {
                 applied_w_reason: Some(AppliedPowerReason::ReadFailed),
                 error: Some(format!("{cause}; fail-safe hold not echoed: {reason}")),
                 ..Sent::none()
-            },
+            }
+            .with_judged(verdict_clocks),
             Ok(receipt) => {
                 advance(progress, now);
                 Sent {
                     written: true,
                     verified: receipt.verified,
                     flow_measured: receipt.flow_measured,
+                    measured_at: receipt.measured_at,
                     applied_w: receipt.applied_w,
                     applied_w_reason: receipt_reason(&receipt, applied_w_reason),
                     fail_safe: true,
@@ -215,19 +220,71 @@ impl Dispatcher {
                     error: Some(format!("{cause}; fail-safe hold")),
                     ..Sent::none()
                 }
+                .with_judged(verdict_clocks)
             }
             Err(hold_error) => Sent {
                 applied_w_reason: Some(AppliedPowerReason::ReadFailed),
                 error: Some(format!("{cause}; fail-safe hold failed: {hold_error}")),
                 ..Sent::none()
-            },
+            }
+            .with_judged(verdict_clocks),
         }
     }
 }
 
-/// Why a receipt carries no measured watts: a fresh-sample failure unless a read already failed.
-/// A receipt only exists after a successful read, so its unmeasured watts are stale/unusable —
-/// not a read failure. Preserve an earlier read failure only when the hold is also unmeasured.
+/// A no-flow verdict without causally valid post-write evidence stays pending until the original
+/// recovery window ends; after that the caller escalates to a verified hold instead of resetting.
+fn premature_no_flow(clocks: (Option<i64>, Option<i64>), now: i64) -> Option<Sent> {
+    let (Some(sample_at), Some(write_at)) = clocks else {
+        return None;
+    };
+    if flow_window_elapsed(sample_at, write_at) {
+        return None;
+    }
+    let bound = i64::try_from(FLOW_EVIDENCE_RECOVERY_WINDOW.as_secs()).unwrap_or(i64::MAX);
+    if now.saturating_sub(write_at) >= bound {
+        return None;
+    }
+    Some(Sent {
+        written: true,
+        confirmation_pending: true,
+        applied_w_reason: Some(AppliedPowerReason::ConfirmationPending),
+        error: Some("confirmation pending; readback will verify".to_owned()),
+        judged_sample_at: Some(sample_at),
+        judged_write_at: Some(write_at),
+        ..Sent::none()
+    })
+}
+
+fn flow_window_elapsed(sample_at: i64, write_at: i64) -> bool {
+    flow_evidence_causal(sample_at, write_at)
+}
+
+fn is_read_failure(error: &SinkError) -> bool {
+    matches!(
+        error,
+        SinkError::ReadUnverified { .. }
+            | SinkError::DeviceUnreachable { .. }
+            | SinkError::Timeout { .. }
+    )
+}
+
+/// Clocks behind a no-flow verdict, carried to the dispatch row for diagnosis.
+fn flow_verdict_clocks(error: &SinkError) -> (Option<i64>, Option<i64>) {
+    match error {
+        SinkError::Fault { fault, .. } => match **fault {
+            ControlFault::NoFlow {
+                sample_at,
+                write_at,
+                ..
+            } => (Some(sample_at), Some(write_at)),
+            _ => (None, None),
+        },
+        _ => (None, None),
+    }
+}
+
+/// Why a receipt carries no measured watts; an unmeasured hold keeps an earlier read failure.
 fn receipt_reason(
     receipt: &WriteReceipt,
     fallback: Option<AppliedPowerReason>,

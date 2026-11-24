@@ -31,6 +31,8 @@ pub struct FakeSink {
     supersede_writes: AtomicBool,
     unverified_writes: AtomicBool,
     unverified_holds: AtomicBool,
+    /// Echo the command as accepted but supply no timestamped flow sample.
+    echo_only: AtomicBool,
     /// Positive W: writes confirm with real but lower flow instead of the requested magnitude.
     curtailed_w: AtomicI64,
     read_miss: AtomicBool,
@@ -52,6 +54,7 @@ impl Default for FakeSink {
             supersede_writes: AtomicBool::new(false),
             unverified_writes: AtomicBool::new(false),
             unverified_holds: AtomicBool::new(false),
+            echo_only: AtomicBool::new(false),
             curtailed_w: AtomicI64::new(0),
             read_miss: AtomicBool::new(false),
             observer: Mutex::new(None),
@@ -80,6 +83,11 @@ impl FakeSink {
 
     pub fn unverified_writes(&self, unverified: bool) {
         self.unverified_writes.store(unverified, Ordering::Relaxed);
+    }
+
+    /// Return an accepted echo with a zero placeholder but no flow measurement.
+    pub fn echo_only(&self, echo_only: bool) {
+        self.echo_only.store(echo_only, Ordering::Relaxed);
     }
 
     pub fn unverified_holds(&self, unverified: bool) {
@@ -220,6 +228,15 @@ impl CommandSink for FakeSink {
                 });
             }
             let verified = !self.unverified_writes.load(Ordering::Relaxed);
+            if self.echo_only.load(Ordering::Relaxed) {
+                return Ok(WriteReceipt {
+                    applied_w: 0.0,
+                    verified: true,
+                    flow_measured: false,
+                    measured_at: None,
+                    ..WriteReceipt::unverified()
+                });
+            }
             let fault = self.faults.lock().expect("sink faults").remove(&pack_id);
             if let Some(fault) = fault {
                 return Err(SinkError::Fault {

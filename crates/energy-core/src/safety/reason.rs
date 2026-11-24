@@ -22,6 +22,10 @@ pub enum Reason {
     StateMissing,
     /// The pack is at its SoC ceiling.
     SocCeiling,
+    /// The device itself closed charge (electricLevel, socLimit or full-charge protection).
+    ChargeAtCeiling,
+    /// The fleet target could not be placed after the ceiling skips were redistributed.
+    ChargeCapabilityShortfall,
     /// The pack is at its SoC floor (including the reserve).
     SocFloor,
     /// The plan's own SoC trajectory for this slot bound the setpoint.
@@ -91,6 +95,8 @@ impl Reason {
             Self::StaleState => "stale_state",
             Self::StateMissing => "state_missing",
             Self::SocCeiling => "soc_ceiling",
+            Self::ChargeAtCeiling => "charge_at_ceiling",
+            Self::ChargeCapabilityShortfall => "charge_capability_shortfall",
             Self::SocFloor => "soc_floor",
             Self::PlanTarget => "plan_soc_target",
             Self::PowerClamp => "power_clamp",

@@ -7,7 +7,9 @@ use tokio::time::Instant;
 use crate::control::controller::{DeviceController, SAFETY_HOLD_WINDOW};
 use crate::control::echo::ECHO_POLL_INTERVAL;
 use crate::control::fault::ControlFault;
-use crate::control::flow::FLOW_CONFIRM_WINDOW;
+use crate::control::flow::{
+    FLOW_CONFIRM_WINDOW, FLOW_EVIDENCE_RECOVERY_SECS, flow_evidence_causal,
+};
 use crate::control::observation::Observation;
 use crate::error::BatteryError;
 use crate::transport::DeviceIo;
@@ -22,9 +24,7 @@ enum LoopEnd {
 ///
 /// Expire a deferred confirmation once its whole flow window has elapsed.
 ///
-/// The dispatcher no longer waits for flow on the tick path, so the next fleet read must still turn
-/// a never-delivered command into a typed fault; otherwise the 300 s no-flow backoff would never
-/// fire. Only `expire` can resolve the exact pending command, so a replacement cannot be lost.
+/// The next fleet read must turn a never-delivered command into a typed fault without losing it.
 pub(super) fn reap_aged_pending<T: DeviceIo>(
     controller: &DeviceController<T>,
 ) -> Option<ControlFault> {
@@ -35,6 +35,18 @@ pub(super) fn reap_aged_pending<T: DeviceIo>(
         return None;
     }
     let sn = controller.sn().to_owned();
+    let causal = controller
+        .last_report()
+        .is_some_and(|report| flow_evidence_causal(report.timestamp, pending.accepted_at));
+    if !causal {
+        mark_uncertain_write(
+            controller,
+            format!(
+                "flow evidence unavailable after {FLOW_EVIDENCE_RECOVERY_SECS}s; verified hold required"
+            ),
+        );
+        return controller.active_fault();
+    }
     let fallback = timeout_fallback(controller, pending.request_id, "flow window elapsed", &sn);
     controller
         .record_timeout(pending.request_id, fallback)

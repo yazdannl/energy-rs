@@ -20,6 +20,10 @@ pub struct TickOutcome {
     pub grid_limit: Option<Reason>,
     /// The final-vector bound (fleet power cap or site ceiling) when it had to reduce the commands.
     pub fleet_clamp: Option<Reason>,
+    /// Charge watts left unplaced after ceiling skips were redistributed, W.
+    pub capability_shortfall_w: f64,
+    /// Packs whose own device report closed charge this tick.
+    pub capability_skipped: Vec<String>,
     /// One row per pack, in fleet order.
     pub packs: Vec<PackReport>,
 }
@@ -35,6 +39,8 @@ impl TickOutcome {
             target_w: 0.0,
             grid_limit: None,
             fleet_clamp: None,
+            capability_shortfall_w: 0.0,
+            capability_skipped: Vec::new(),
             packs: Vec::new(),
         }
     }

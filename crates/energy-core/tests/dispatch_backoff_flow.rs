@@ -87,8 +87,8 @@ async fn a_pack_delivering_through_backoff_reports_its_measured_watts() {
 
     let row = row_at(&h, BACKOFF_AT);
     assert_eq!(row.written, Some(false));
-    assert!(row.flow_measured);
-    assert_eq!(row.applied_w, -799.0);
+    assert!(row.flow_measured());
+    assert_eq!(row.applied_w(), Some(-799.0));
 }
 
 #[tokio::test]
@@ -144,9 +144,9 @@ async fn a_stale_or_unavailable_pack_reports_unknown_flow_not_zero_delivery() {
             .range(BACKOFF_AT, BACKOFF_AT + 1)
             .expect("rows")
             .into_iter()
-            .find(|row| row.applied_w_reason.as_deref() == Some("sample_stale"))
+            .find(|row| row.applied_w_reason() == Some("sample_stale"))
             .expect("row naming the unknown sample");
-        assert_eq!(row.applied_w, 0.0);
+        assert_eq!(row.applied_w(), None);
     }
 }
 

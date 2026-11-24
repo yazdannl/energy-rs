@@ -1,7 +1,9 @@
 //! Journal and ledger writes: plans, dispatch rows, live-write latch and events.
 
+mod shortfall;
+
 use energy_ledger::plan::{Plan as StoredPlan, PlanSlot};
-use energy_ledger::{DispatchEntry, Event, EventLevel};
+use energy_ledger::{DispatchEntry, Event, EventLevel, MeasuredWatts};
 
 use crate::dispatch::PackReport;
 use crate::engine::LATCH_TOLERANCE_W;
@@ -74,6 +76,7 @@ impl Engine {
                 )?;
             }
         }
+        shortfall::record(self, outcome, outcome.mode, now)?;
         if state.latch_dirty {
             state.latch.save(&self.ledger, now)?;
             state.latch_dirty = false;
@@ -93,20 +96,26 @@ impl Engine {
             now,
             report.ledger_id,
             report.requested_w,
-            report.applied_w,
             report.reason.as_str(),
             mode.slug(),
         )
-        .written(report.written)
-        .flow_measured(report.flow_measured);
+        .written(report.written);
         if let Some(reason) = report.applied_w_reason {
             entry = entry.with_applied_w_reason(reason.as_str());
+        }
+        if let (Some(sample_at), Some(write_at)) = (report.judged_sample_at, report.judged_write_at)
+        {
+            entry = entry.with_flow_verdict(sample_at, write_at);
         }
         if let Some(note) = &report.note {
             entry = entry.with_note(note.clone());
         }
+        // Only a timestamped sample may publish applied watts. An echo alone only marks acceptance.
+        if let Some(at) = report.measured_at.filter(|_| report.flow_measured) {
+            entry = entry.measured(MeasuredWatts::new(report.applied_w, at));
+        }
         if report.verified {
-            entry = entry.verified(report.applied_w);
+            entry = entry.verified();
         } else if let Some(error) = &report.error {
             entry = entry.failed(error.clone());
         } else if !report.written {
@@ -179,24 +188,22 @@ fn note_journal_failure(error: &EngineError) {
 
 /// Fold one pack's outcome into the latch; returns whether it changed.
 ///
-/// A dry-run or blocked row never latches. A verified neutral command clears; everything else that
-/// reached a device with a non-zero setpoint latches, verified or not, because the device may be
-/// executing it.
+/// A dry-run or blocked row never latches. An echo is not evidence of neutral flow: only a
+/// *measured* neutral sample may clear a claim. When flow is unknown the accepted intent stays
+/// latched, so a non-zero command can never be erased by a verified echo with a zero placeholder.
 fn note_latch(latch: &mut LiveLatch, report: &PackReport, now: i64) -> bool {
     if !report.written {
         return false;
     }
-    let watts = if report.fail_safe {
-        0.0
-    } else if report.verified {
+    if report.verified && report.flow_measured && report.applied_w.abs() <= LATCH_TOLERANCE_W {
+        return latch.clear(&report.pack_id);
+    }
+    let watts = if report.flow_measured {
         report.applied_w
     } else {
         report.intended_w
     };
-    if report.verified && watts.abs() <= LATCH_TOLERANCE_W {
-        return latch.clear(&report.pack_id);
-    }
-    if watts.abs() > LATCH_TOLERANCE_W {
+    if !report.fail_safe && watts.abs() > LATCH_TOLERANCE_W {
         return latch.record(&report.pack_id, watts, now);
     }
     false

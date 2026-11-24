@@ -48,8 +48,12 @@ async fn dry_run_applies_nothing_but_logs_the_intended_write() {
         .range(NOW, NOW + 10)
         .expect("rows");
     assert!(
-        rows.iter()
-            .any(|row| row.reason == "mode_not_auto" && row.applied_w.abs() < f64::EPSILON),
+        rows.iter().any(|row| {
+            row.reason == "mode_not_auto"
+                && row
+                    .applied_w()
+                    .is_none_or(|watts| watts.abs() < f64::EPSILON)
+        }),
         "the intended write is not in the dispatch log: {rows:?}"
     );
     assert!(rows.iter().all(|row| !row.verified));
@@ -102,7 +106,11 @@ async fn auto_applies_the_setpoint_and_verifies_its_echo() {
         .expect("rows");
     assert_eq!(rows.len(), 1);
     assert!(rows[0].verified);
-    assert!((rows[0].applied_w + 800.0).abs() < 1.0);
+    assert!(
+        rows[0]
+            .applied_w()
+            .is_some_and(|watts| (watts + 800.0).abs() < 1.0)
+    );
 }
 
 /// A failing tick is journalled, not guessed around: the plan is refused and the fleet holds.

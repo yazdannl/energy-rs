@@ -3,7 +3,7 @@
 use energy_battery::protection::CellLatch;
 use energy_ledger::plan::PlanSlot;
 
-use crate::allocation::Allocation;
+use crate::allocation::{Allocation, ChargeSkip};
 use crate::dispatch::fleet_grid::GridBase;
 use crate::dispatch::pack_context::PackContext;
 use crate::dispatch::{MeterReading, Overrides, Progress};
@@ -27,6 +27,8 @@ pub(crate) struct TickFrame<'a> {
     pub(crate) slot: Option<PlanSlot>,
     pub(crate) stale: bool,
     pub(crate) allocation: Allocation,
+    /// Device-reported reasons this tick's charge split skipped packs.
+    pub(crate) skips: Vec<ChargeSkip>,
     /// The split before the reactive import guard, to attribute a per-pack change to it.
     pub(crate) baseline: Allocation,
     pub(crate) grid_base: Option<GridBase>,

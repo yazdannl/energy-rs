@@ -15,7 +15,7 @@ use crate::db::migrations::MIGRATIONS;
 use crate::error::LedgerError;
 
 /// Current schema version; adding a migration bumps this and appends to the list.
-pub(crate) const SCHEMA_VERSION: i64 = 12;
+pub(crate) const SCHEMA_VERSION: i64 = 14;
 
 const VERSION_KEY: &str = "schema_version";
 
@@ -213,5 +213,34 @@ mod tests {
         assert_eq!(current_version(&conn).unwrap(), 1);
         run_to(&mut conn, 1).unwrap();
         assert_eq!(current_version(&conn).unwrap(), 1);
+    }
+    #[test]
+    fn a_verified_unmeasured_legacy_row_is_not_retro_promoted() {
+        use crate::dispatch::DispatchEntry;
+        use rusqlite::params;
+        let mut conn = Connection::open_in_memory().expect("in-memory db");
+        run_to(&mut conn, 12).expect("v12 schema");
+        conn.execute(
+            "INSERT INTO dispatch_log
+                (ts, requested_w, applied_w, reason, mode, verified, flow_measured)
+             VALUES (1700000000, 900.0, 900.0, 'dispatch', 'auto', 1, 1)",
+            [],
+        )
+        .expect("legacy row");
+        run(&mut conn).expect("v13 upgrade");
+        assert_eq!(current_version(&conn).expect("version"), SCHEMA_VERSION);
+        let row = conn
+            .query_row(
+                "SELECT id, ts, pack_id, requested_w, applied_w, reason, mode, verified,
+                        error, note, written, flow_measured, applied_w_reason, applied_w_measured,
+                        judged_sample_at, judged_write_at
+                 FROM dispatch_log WHERE ts = ?1",
+                params![1_700_000_000],
+                DispatchEntry::from_row,
+            )
+            .expect("hydrated row");
+        assert_eq!(row.applied_w(), None, "an echo is never a measurement");
+        assert!(!row.flow_measured());
+        assert!(row.applied_w_reason().is_none());
     }
 }

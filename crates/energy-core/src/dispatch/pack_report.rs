@@ -26,6 +26,11 @@ pub struct PackReport {
     pub applied_w: f64,
     /// Whether `applied_w` came from a fresh reading; false means unknown, not zero delivery.
     pub flow_measured: bool,
+    /// Device clock of the fresh measurement behind `applied_w`, when there was one.
+    pub measured_at: Option<i64>,
+    /// Sample and write clocks behind a no-flow verdict, so a hold is diagnosable.
+    pub judged_sample_at: Option<i64>,
+    pub judged_write_at: Option<i64>,
     /// Why the applied watts are unknown; `None` when a measurement exists or was not expected.
     pub applied_w_reason: Option<AppliedPowerReason>,
     /// The binding reason for what happened.
@@ -45,4 +50,7 @@ pub struct PackReport {
     /// Why this row is what it is, in words the dispatch log can show (maintenance, balance
     /// current); `None` when the reason slug is the whole story.
     pub note: Option<String>,
+    /// Whether the device itself closed charge, so no command was sent on purpose. Distinct from
+    /// a read failure, a timeout or a transport backoff.
+    pub capability_skipped: bool,
 }

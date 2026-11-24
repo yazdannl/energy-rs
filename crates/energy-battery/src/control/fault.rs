@@ -57,6 +57,10 @@ pub enum ControlFault {
         direction: Direction,
         echoed_w: u32,
         observed_w: i64,
+        /// Device clock of the sample that judged this command.
+        sample_at: i64,
+        /// Epoch seconds of the pre-write report that bounds the command.
+        write_at: i64,
     },
     #[error(
         "hold on {sn} not confirmed: report echoes inputLimit {input_w} W / outputLimit {output_w} W"

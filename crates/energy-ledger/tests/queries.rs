@@ -9,7 +9,9 @@
 
 mod support;
 
-use energy_ledger::{DispatchEntry, Event, EventLevel, Plan, PlanSlot, SavingsDaily, Tier};
+use energy_ledger::{
+    DispatchEntry, Event, EventLevel, MeasuredWatts, Plan, PlanSlot, SavingsDaily, Tier,
+};
 use support::{TempDatabase, register_pack, sample, write};
 
 #[test]
@@ -184,9 +186,10 @@ fn a_dispatch_entry_round_trips_verified_and_failed() {
     let ledger = db.ledger();
     let pack = register_pack(&ledger, "ABC123");
     let dispatch = ledger.dispatch().unwrap();
-    let verified =
-        DispatchEntry::new(100, Some(pack), 800.0, 800.0, "charge", "auto").verified(795.0);
-    let failed = DispatchEntry::new(200, Some(pack), -500.0, 0.0, "discharge", "auto")
+    let verified = DispatchEntry::new(100, Some(pack), 800.0, "charge", "auto")
+        .measured(MeasuredWatts::new(795.0, 1))
+        .verified();
+    let failed = DispatchEntry::new(200, Some(pack), -500.0, "discharge", "auto")
         .failed("serial mismatch")
         .with_note("balance current during the maintenance hold");
     let verified_id = dispatch.insert(&verified).unwrap();
@@ -195,7 +198,7 @@ fn a_dispatch_entry_round_trips_verified_and_failed() {
     let rows = dispatch.range(0, 300).unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows[0].verified);
-    assert_eq!(rows[0].applied_w, 795.0);
+    assert_eq!(rows[0].applied_w(), Some(795.0));
     assert_eq!(rows[0].error, None);
     assert!(!rows[1].verified);
     assert_eq!(rows[1].error.as_deref(), Some("serial mismatch"));

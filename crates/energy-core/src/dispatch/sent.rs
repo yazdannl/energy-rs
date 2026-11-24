@@ -10,6 +10,12 @@ pub(crate) struct Sent {
     pub(crate) verified: bool,
     /// Whether `applied_w` came from a fresh measurement rather than being unknown.
     pub(crate) flow_measured: bool,
+    /// Device clock of that fresh measurement; a measured row must carry one.
+    pub(crate) measured_at: Option<i64>,
+    /// Sample clock judged by a no-flow verdict, when one fired.
+    pub(crate) judged_sample_at: Option<i64>,
+    /// Write clock that verdict judged against, when one fired.
+    pub(crate) judged_write_at: Option<i64>,
     pub(crate) applied_w: f64,
     /// Why the watts are unknown, when they could not be measured.
     pub(crate) applied_w_reason: Option<AppliedPowerReason>,
@@ -26,12 +32,21 @@ pub(crate) struct Sent {
 }
 
 impl Sent {
+    pub(crate) const fn with_judged(mut self, clocks: (Option<i64>, Option<i64>)) -> Self {
+        self.judged_sample_at = clocks.0;
+        self.judged_write_at = clocks.1;
+        self
+    }
+
     /// Nothing reached a device: no write, no receipt, no fault.
     pub(crate) const fn none() -> Self {
         Self {
             written: false,
             verified: false,
             flow_measured: false,
+            measured_at: None,
+            judged_sample_at: None,
+            judged_write_at: None,
             applied_w: 0.0,
             applied_w_reason: None,
             fail_safe: false,

@@ -22,6 +22,8 @@ pub struct EngineSnapshot {
     pub packs: Vec<PackSnapshot>,
     /// Number of packs known to the ledger, including ones the fleet has not sampled yet.
     pub configured_packs: usize,
+    /// Serials the operator requires; an absent or disabled pack is excluded from health stalls.
+    pub required_packs: Vec<String>,
     /// Live grid/PV/load power, when HA published a fresh reading.
     pub meter: Option<MeterSnapshot>,
     /// The forecast totals this slot's plan was built on.
