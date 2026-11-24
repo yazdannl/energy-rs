@@ -1,9 +1,9 @@
-//! Device-timestamp causality and neutrality for truth re-establishment.
+//! One prerequisite check for both automatic-recovery exits.
 //!
-//! No stopwatch can prove a late write has stopped applying. The only honest evidence
-//! is a device-generated report whose timestamp is causally after the last apply
-//! attempt and after the neutralising hold's acknowledgement. If the device clock is
-//! unavailable, incoherent or cannot be ordered, the pack stays `Uncertain`.
+//! No stopwatch can prove a device stopped applying writes. Recovery requires an
+//! ordered-application device contract, a coherent device clock, transport completion,
+//! and a finite neutral report causally after the last apply attempt and the hold ack.
+//! If any prerequisite is absent, the pack stays `Uncertain`.
 
 use crate::dispatch::constants::{HOLD_DEADBAND_W, READBACK_FRESHNESS_MS};
 use crate::dispatch::{
@@ -11,24 +11,17 @@ use crate::dispatch::{
     PackState, status_direction,
 };
 
-/// Whether device ordering proves this report postdates every pending application.
-pub fn causality_ok(report: &FlowReport, apply_attempt_ms: i64, neutral_ack_ms: i64) -> bool {
-    report.device_clock_ok
-        && report.device_clock_coherent
-        && report.at_ms > apply_attempt_ms
-        && report.at_ms > neutral_ack_ms
-}
-
-/// Reject missing, stale, non-causal, non-neutral or non-finite evidence.
-pub fn rejection(
-    transport_gone: bool,
+/// The single prerequisite check shared by `read_back` and `verified_hold`.
+pub fn recovery_verdict(
+    pack: &PackState,
     report: &FlowReport,
     now_ms: i64,
-    evidence_after_ms: i64,
-    neutral_ack_ms: i64,
 ) -> Option<&'static str> {
-    if !transport_gone {
+    if !pack.transport_gone {
         return Some("transport_still_outstanding");
+    }
+    if pack.ordered_application != Some(true) {
+        return Some("automatic_recovery_unsupported");
     }
     let Some(echo) = report.echo else {
         return Some("readback_echo_missing");
@@ -36,7 +29,12 @@ pub fn rejection(
     if !report.measured_w.is_finite() || !echo.limit_w.is_finite() {
         return Some("readback_non_finite");
     }
-    if !causality_ok(report, evidence_after_ms, neutral_ack_ms) {
+    let evidence_after_ms = pack.last_apply_attempt_ms.max(pack.joined_at_ms);
+    if !report.device_clock_ok
+        || !report.device_clock_coherent
+        || report.at_ms <= evidence_after_ms
+        || report.at_ms <= pack.last_neutral_ack_at_ms
+    {
         return Some("application_causality_unknown");
     }
     let fresh = |at_ms: i64| {
@@ -85,14 +83,7 @@ pub fn clear(
     report: &FlowReport,
     now_ms: i64,
 ) -> DispatchRow {
-    let evidence_after_ms = pack.last_apply_attempt_ms.max(pack.joined_at_ms);
-    let Some(reason) = rejection(
-        pack.transport_gone,
-        report,
-        now_ms,
-        evidence_after_ms,
-        pack.last_neutral_ack_at_ms,
-    ) else {
+    let Some(reason) = recovery_verdict(pack, report, now_ms) else {
         pack.uncertain = false;
         pack.uncertain_reason = None;
         pack.uncertainty_cleared_by = Some("read_back");

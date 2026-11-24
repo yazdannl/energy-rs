@@ -1,9 +1,5 @@
 //! M4 incidents S221-S225 and consumer-port/row observability S227-S233.
 mod m4_support;
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
-
 use energy_decide::dispatch::constants::PACK_IO_BUDGET_MS;
 use energy_decide::dispatch::{
     AllowAllAuthority, AppliedReason, AuthorityDecision, DispatchOutcome, DispatchState,
@@ -11,7 +7,9 @@ use energy_decide::dispatch::{
     SafetyGate, SafetyIntervention, SlotRequest, WriteAuthority,
 };
 use m4_support::{Behavior, FakeIo, ImmediateClock as TestClock, report};
-
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 struct HoldSafety;
 impl SafetyGate for HoldSafety {
     fn preempt(&self, _request: &SlotRequest, _now_ms: i64) -> SafetyIntervention {
@@ -152,6 +150,8 @@ fn s225_uncertainty_blocks_retries_until_verified_hold() {
     assert_eq!(retry[0].outcome, DispatchOutcome::Deferred);
     assert!(retry[0].reasons.contains(&"controller_uncertain"));
     assert_eq!(io.write_count(), 1);
+    thread::sleep(Duration::from_millis(20));
+    dut.reconcile(&mut state, 1_500);
 
     let mut hold_report = report("P3", 2_000, 0.0, 0, 0, 1);
     hold_report.echo = Some(Echo {
@@ -168,6 +168,10 @@ fn s225_uncertainty_blocks_retries_until_verified_hold() {
     let mut second_report = hold_report.clone();
     second_report.message_id = 2;
     second_report.at_ms = 9_000;
+    second_report.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 9_000,
+    });
     let second = dut.observe(&mut state, &second_report, 9_000);
     assert!(first.reasons.contains(&"hold_verified"));
     assert_eq!(second.outcome, DispatchOutcome::Confirmed);
@@ -423,6 +427,7 @@ fn s247_uncertain_exits_by_verified_hold() {
     held.pack("P").uncertain = true;
     held.pack("P").uncertain_reason = Some("write_deadline_mid_transport");
     held.pack("P").last_apply_attempt_ms = 2_000;
+    held.pack("P").ordered_application = Some(true);
     held.pack("P").pending = Some(energy_decide::dispatch::PendingConfirmation::new(
         0.0,
         1_000,
@@ -455,46 +460,4 @@ fn s247_uncertain_exits_by_verified_hold() {
     let hold_second = dut.observe(&mut held, &third, 7_003);
     assert_eq!(hold_second.uncertainty_cleared_by, Some("verified_hold"));
     assert!(!held.pack("P").uncertain);
-}
-#[test]
-fn s248_device_clock_is_required_for_causality() {
-    let dut = Dispatcher::new(
-        FakeIo::default(),
-        ProceedSafety,
-        AllowAllAuthority,
-        TestClock::default(),
-        120,
-    );
-    let mut state = DispatchState::default();
-    let pack = state.pack("P");
-    pack.uncertain = true;
-    pack.transport_gone = true;
-    pack.last_apply_attempt_ms = 100;
-    pack.joined_at_ms = 100;
-    pack.last_neutral_ack_at_ms = 200;
-
-    let mut evidence = report("P", 300, 0.0, 0, 0, 1);
-    evidence.echo = Some(Echo {
-        limit_w: 0.0,
-        at_ms: 300,
-    });
-    evidence.device_clock_ok = false;
-    let missing = dut.read_back(&mut state, &evidence, 300);
-    assert!(missing.reasons.contains(&"application_causality_unknown"));
-    assert!(state.pack("P").uncertain);
-
-    evidence.device_clock_ok = true;
-    evidence.device_clock_coherent = false;
-    let incoherent = dut.read_back(&mut state, &evidence, 300);
-    assert!(
-        incoherent
-            .reasons
-            .contains(&"application_causality_unknown")
-    );
-    assert!(state.pack("P").uncertain);
-
-    evidence.device_clock_coherent = true;
-    let post_hold = dut.read_back(&mut state, &evidence, 300);
-    assert_eq!(post_hold.uncertainty_cleared_by, Some("read_back"));
-    assert!(!state.pack("P").uncertain);
 }

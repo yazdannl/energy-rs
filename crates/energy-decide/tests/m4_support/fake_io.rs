@@ -10,7 +10,7 @@ use energy_decide::dispatch::{Echo, FlowReport, PackCommand, PackIo, WriteAck};
 
 use super::Behavior;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct State {
     behaviors: HashMap<String, Behavior>,
     writes: Vec<(String, PackCommand, u64)>,
@@ -22,10 +22,42 @@ struct State {
     begin_at: HashMap<u64, Instant>,
     release_latency_ms: HashMap<u64, u64>,
     slow_release_ms: HashMap<String, u64>,
+    ordered_application: bool,
     reports: BTreeMap<String, Vec<FlowReport>>,
     failures_left: HashMap<String, usize>,
     workers: usize,
     peak_workers: usize,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            ordered_application: true,
+            ..Self::empty()
+        }
+    }
+}
+
+impl State {
+    fn empty() -> Self {
+        Self {
+            behaviors: HashMap::new(),
+            writes: Vec::new(),
+            applied: Vec::new(),
+            active: HashSet::new(),
+            peak_active: 0,
+            next_tx: 0,
+            released: Vec::new(),
+            begin_at: HashMap::new(),
+            release_latency_ms: HashMap::new(),
+            slow_release_ms: HashMap::new(),
+            ordered_application: true,
+            reports: BTreeMap::new(),
+            failures_left: HashMap::new(),
+            workers: 0,
+            peak_workers: 0,
+        }
+    }
 }
 
 /// In-memory pack transport with observable transactions and device effects.
@@ -35,12 +67,18 @@ pub struct FakeIo {
 }
 
 impl FakeIo {
+    /// Declare whether the fake device applies commands in receipt order.
+    pub fn set_ordered_application(&self, ordered: bool) {
+        self.lock().ordered_application = ordered;
+    }
+
     /// Build a transport with one behaviour per pack.
     pub fn new(behaviors: &[(&str, Behavior)]) -> Self {
         let mut state = State::default();
         for (pack, behavior) in behaviors {
             state.behaviors.insert((*pack).to_owned(), behavior.clone());
         }
+        state.ordered_application = true;
         Self {
             state: Arc::new(Mutex::new(state)),
         }
@@ -312,6 +350,10 @@ impl PackIo for FakeIo {
         let ack = self.answer(&behavior, pack_id, command, deadline_ms, &cancel);
         self.lock().workers -= 1;
         ack
+    }
+
+    fn ordered_application(&self) -> bool {
+        self.lock().ordered_application
     }
 
     fn read(&self, pack_id: &str, _deadline_ms: u64) -> Option<FlowReport> {

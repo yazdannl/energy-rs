@@ -14,6 +14,11 @@ use crate::dispatch::{FlowReport, PackCommand, WriteAck};
 /// Hard contract: `write` MUST return success, refusal or error within `TRANSPORT_BOUND_MS`
 /// and MUST be unwind-safe. A write that blocks forever is a CONTRACT VIOLATION: M4 latches
 /// that pack and reports it, but cannot release a transaction the consumer never returns.
+/// Ordered-application contract: the pack applies commands in the order it receives them
+/// (single-threaded firmware, one command per pack at a time). A device-generated report
+/// timestamped after the neutralising command's acknowledgement therefore reflects a state
+/// in which every earlier command was applied or superseded. If the consumer cannot declare
+/// this, automatic recovery is unsupported and the pack needs an explicit reconcile.
 /// Physical application MAY occur after `write` returns; M4 assumes yes and requires
 /// evidence strictly after the future is joined before clearing uncertainty.
 pub trait PackIo: Send + Sync + 'static {
@@ -37,6 +42,10 @@ pub trait PackIo: Send + Sync + 'static {
         tx_id: u64,
         cancel: Arc<AtomicBool>,
     ) -> WriteAck;
+
+    /// Whether this transport guarantees ordered physical application per pack.
+    /// There is deliberately no default: every implementation must answer.
+    fn ordered_application(&self) -> bool;
 
     /// Read one flow report within the given deadline.
     fn read(&self, pack_id: &str, deadline_ms: u64) -> Option<FlowReport>;

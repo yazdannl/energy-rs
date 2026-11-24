@@ -160,6 +160,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                 );
                 pack.transport_gone = false;
                 pack.last_apply_attempt_ms = now_ms;
+                pack.ordered_application = Some(self.io.ordered_application());
                 futures.push(WriteFuture::start(
                     &self.io,
                     &write.command,
@@ -228,6 +229,11 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                     pack.joined_at_ms = now_ms;
                 }
                 pack.transport_gone = true;
+                if pack.uncertain && pack.ordered_application != Some(true) {
+                    pack.uncertain = false;
+                    pack.uncertain_reason = None;
+                    pack.uncertainty_cleared_by = Some("explicit_reconcile");
+                }
             }
         }
         gone.len()

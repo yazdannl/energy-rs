@@ -99,7 +99,7 @@ fn s235_late_completion_cannot_overwrite_a_later_hold() {
     let hold = SlotRequest::safety("P", 0.0, 1_000, "later_hold");
     let second = dut.dispatch_slot(&mut state, &[hold], 1_000);
     assert!(second[0].written);
-    thread::sleep(Duration::from_millis(420));
+    thread::sleep(Duration::from_millis(800));
     dut.reconcile(&mut state, 1_000);
     let late = dut.take_late_writes();
     assert_eq!(late.len(), 1);

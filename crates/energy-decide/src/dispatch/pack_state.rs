@@ -35,6 +35,8 @@ pub struct PackState {
     pub idle_reports: usize,
     /// Device timestamp of the last accepted neutralising hold, epoch milliseconds.
     pub last_neutral_ack_at_ms: i64,
+    /// Whether the consumer declared in-order physical application for this pack.
+    pub ordered_application: Option<bool>,
     /// Monotonic generation of the latest write; late older writes are ignored.
     pub generation: u64,
     /// Last command identity tracked for this pack, accepted or not.
@@ -59,6 +61,7 @@ impl Default for PackState {
             partial_retries: 0,
             idle_reports: 0,
             last_neutral_ack_at_ms: 0,
+            ordered_application: None,
             generation: 0,
             last_command: None,
         }
