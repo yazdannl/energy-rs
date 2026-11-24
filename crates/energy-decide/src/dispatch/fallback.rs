@@ -32,6 +32,7 @@ pub fn write_fallback(
     };
     let driver = DriveContext {
         io: context.io,
+        release: context.release,
         clock: context.clock,
         late: context.late,
         bound: context.bound,

@@ -21,6 +21,7 @@ struct State {
     released: Vec<u64>,
     begin_at: HashMap<u64, Instant>,
     release_latency_ms: HashMap<u64, u64>,
+    slow_release_ms: HashMap<String, u64>,
     reports: BTreeMap<String, Vec<FlowReport>>,
     failures_left: HashMap<String, usize>,
     workers: usize,
@@ -111,6 +112,13 @@ impl FakeIo {
     /// Highest number of simultaneous `write` calls.
     pub fn peak_workers(&self) -> usize {
         self.lock().peak_workers
+    }
+
+    /// Make one pack's release artificially slow, to prove the arbiter is not blocked.
+    pub fn set_slow_release(&self, pack: &str, delay_ms: u64) {
+        self.lock()
+            .slow_release_ms
+            .insert(pack.to_owned(), delay_ms);
     }
 
     /// Replace a behaviour, for retry tests.
@@ -228,7 +236,16 @@ impl PackIo for FakeIo {
         id
     }
 
-    fn release(&self, _pack_id: &str, tx_id: u64) {
+    fn release(&self, pack_id: &str, tx_id: u64) {
+        let delay = self
+            .lock()
+            .slow_release_ms
+            .get(pack_id)
+            .copied()
+            .unwrap_or(0);
+        if delay > 0 {
+            thread::sleep(Duration::from_millis(delay));
+        }
         let mut state = self.lock();
         state.active.remove(&tx_id);
         state.released.push(tx_id);

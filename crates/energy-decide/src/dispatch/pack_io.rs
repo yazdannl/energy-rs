@@ -11,11 +11,15 @@ use crate::dispatch::{FlowReport, PackCommand, WriteAck};
 /// there is no channel and no second claimant. Once a request has left for the device it
 /// cannot be un-sent: cancellation and generation fencing prevent STATE contamination only.
 /// A cancelled write that ignores the token stays unresolved until reconciliation joins it.
+/// Physical application MAY occur after `write` returns; M4 assumes yes and requires
+/// evidence strictly after the future is joined before clearing uncertainty.
 pub trait PackIo: Send + Sync + 'static {
     /// Acquire the per-pack read/write transaction; exactly one release is required.
     fn begin(&self, pack_id: &str) -> u64;
 
     /// Release a transaction acquired by `begin`, including after a deadline.
+    /// This call MAY block on locks held by a stuck write; the arbiter therefore queues it
+    /// on `ReleaseQueue` instead of calling it inline. Implementations must terminate.
     fn release(&self, pack_id: &str, tx_id: u64);
 
     /// Send one command under this transaction. The future token is set at the deadline;

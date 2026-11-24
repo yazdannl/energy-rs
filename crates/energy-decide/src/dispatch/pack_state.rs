@@ -15,6 +15,10 @@ pub struct PackState {
     pub uncertainty_cleared_by: Option<&'static str>,
     /// True once every transport future carrying this pack's command is gone.
     pub transport_gone: bool,
+    /// Slot time of the last write that could physically apply, epoch milliseconds.
+    pub last_apply_attempt_ms: i64,
+    /// Slot time when that write's future was joined, epoch milliseconds.
+    pub joined_at_ms: i64,
     /// End of ordinary fault backoff, epoch milliseconds.
     pub backoff_until_ms: i64,
     /// Typed reason for ordinary backoff.
@@ -41,6 +45,8 @@ impl Default for PackState {
             uncertain_reason: None,
             uncertainty_cleared_by: None,
             transport_gone: true,
+            last_apply_attempt_ms: 0,
+            joined_at_ms: 0,
             backoff_until_ms: 0,
             backoff_reason: None,
             pause_until_ms: 0,

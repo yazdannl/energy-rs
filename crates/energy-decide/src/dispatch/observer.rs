@@ -1,12 +1,10 @@
 //! Fold later reports into deferred confirmations; never await them in a tick.
 
-use std::sync::{Arc, Mutex};
-
 use crate::dispatch::confirmation::{ConfirmationVerdict, fold, idle_confirmed};
 use crate::dispatch::constants::{NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS};
 use crate::dispatch::{
-    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, DriveBoundEvent, EvidenceKind,
-    FlowClass, FlowReport, LateWrite, PackCommand, PackIo, PendingConfirmation, RetryClock,
+    AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowClass,
+    FlowReport, PackCommand, PendingConfirmation,
 };
 
 fn command_for(pack_id: &str, pending: Option<&PendingConfirmation>) -> PackCommand {
@@ -176,32 +174,13 @@ fn apply_state(
 
 /// Fold one fresh report, producing a row even when no command is pending.
 pub struct Observer<'a> {
-    io: &'a Arc<dyn PackIo>,
-    clock: &'a dyn RetryClock,
-    late: &'a Arc<Mutex<Vec<LateWrite>>>,
-    bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
-    max_polls: u64,
-    budget_ms: u64,
+    escalation: &'a crate::dispatch::observer_escalation::Escalation<'a>,
 }
 
 impl<'a> Observer<'a> {
-    /// Build an observer with the shared transport and retry clock.
-    pub fn new(
-        io: &'a Arc<dyn PackIo>,
-        clock: &'a dyn RetryClock,
-        late: &'a Arc<Mutex<Vec<LateWrite>>>,
-        bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
-        max_polls: u64,
-        budget_ms: u64,
-    ) -> Self {
-        Self {
-            io,
-            clock,
-            late,
-            bound,
-            max_polls,
-            budget_ms,
-        }
+    /// Build an observer from the one shared escalation context.
+    pub fn new(escalation: &'a crate::dispatch::observer_escalation::Escalation<'a>) -> Self {
+        Self { escalation }
     }
 
     /// Observe a report; no transport wait or confirmation sleep happens here.
@@ -220,7 +199,7 @@ impl<'a> Observer<'a> {
             return self.no_command(pack, &command, report);
         };
         if pending.message_id != 0 && report.message_id <= pending.message_id {
-            let mut row = DispatchRow::base(&command, self.budget_ms)
+            let mut row = DispatchRow::base(&command, self.escalation.budget_ms)
                 .outcome(DispatchOutcome::Deferred, EvidenceKind::NoMeasurement)
                 .reason("stale_report");
             row.applied_reason = AppliedReason::Deferred;
@@ -233,8 +212,15 @@ impl<'a> Observer<'a> {
         if pack.pause_until_ms > now_ms {
             pack.pause_target_w = Some(command.requested_w);
         }
-        let mut row = DispatchRow::base(&command, self.budget_ms);
-        apply_verdict(&mut row, verdict, &command, report, self.budget_ms, now_ms);
+        let mut row = DispatchRow::base(&command, self.escalation.budget_ms);
+        apply_verdict(
+            &mut row,
+            verdict,
+            &command,
+            report,
+            self.escalation.budget_ms,
+            now_ms,
+        );
         if was_uncertain && !pack.uncertain {
             row.uncertainty_cleared_by = Some("verified_hold");
         }
@@ -248,7 +234,7 @@ impl<'a> Observer<'a> {
         report: &FlowReport,
     ) -> DispatchRow {
         if !idle_confirmed(pack, report) {
-            let mut row = DispatchRow::base(command, self.budget_ms)
+            let mut row = DispatchRow::base(command, self.escalation.budget_ms)
                 .outcome(DispatchOutcome::Deferred, EvidenceKind::NoMeasurement)
                 .reason("one_neutral_report");
             row.applied_reason = AppliedReason::Deferred;
@@ -259,9 +245,14 @@ impl<'a> Observer<'a> {
             pack.uncertain_reason = None;
             pack.uncertainty_cleared_by = Some("verified_hold");
         }
-        let mut row = confirmed_row(command, report, FlowClass::HoldVerified, self.budget_ms)
-            .reason("idle_verified")
-            .reason("no_command_needed");
+        let mut row = confirmed_row(
+            command,
+            report,
+            FlowClass::HoldVerified,
+            self.escalation.budget_ms,
+        )
+        .reason("idle_verified")
+        .reason("no_command_needed");
         row.uncertainty_cleared_by = Some("verified_hold");
         row
     }
@@ -274,16 +265,8 @@ impl<'a> Observer<'a> {
         report: &FlowReport,
         now_ms: i64,
     ) -> DispatchRow {
-        let escalation = crate::dispatch::observer_escalation::Escalation {
-            io: self.io,
-            clock: self.clock,
-            late: self.late,
-            bound: self.bound,
-            max_polls: self.max_polls,
-            budget_ms: self.budget_ms,
-        };
         crate::dispatch::observer_escalation::escalate(
-            &escalation,
+            self.escalation,
             row,
             pack,
             command,

@@ -3,13 +3,12 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use crate::dispatch::ack_row;
-use crate::dispatch::constants::{MAX_DRIVE_POLLS_PER_TICK, NO_FLOW_BACKOFF_MS};
+use crate::dispatch::constants::MAX_DRIVE_POLLS_PER_TICK;
 use crate::dispatch::driver::drive;
 use crate::dispatch::preparation::{Preparation, prepare};
 use crate::dispatch::{
     DispatchContext, DispatchRow, DispatchState, DriveBoundEvent, DriveContext, FlowReport,
-    LateWrite, Observer, PackIo, RetryClock, SafetyGate, SlotRequest, WriteAttempt, WriteAuthority,
+    LateWrite, Observer, PackIo, ReleaseQueue, RetryClock, SafetyGate, SlotRequest, WriteAuthority,
     WriteFuture,
 };
 
@@ -23,6 +22,7 @@ pub struct Dispatcher<S: SafetyGate, A: WriteAuthority, C: RetryClock> {
     max_polls: u64,
     late: Arc<Mutex<Vec<LateWrite>>>,
     bound: Arc<Mutex<Vec<DriveBoundEvent>>>,
+    release: Arc<ReleaseQueue>,
     unresolved: Mutex<Vec<WriteFuture>>,
 }
 impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
@@ -39,6 +39,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         clock: C,
         budget_ms: u64,
     ) -> Self {
+        let release = Arc::new(ReleaseQueue::new(Arc::clone(&io)));
         Self {
             io,
             safety,
@@ -48,6 +49,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             max_polls: MAX_DRIVE_POLLS_PER_TICK,
             late: Arc::new(Mutex::new(Vec::new())),
             bound: Arc::new(Mutex::new(Vec::new())),
+            release,
             unresolved: Mutex::new(Vec::new()),
         }
     }
@@ -88,6 +90,11 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         std::mem::take(&mut *log)
     }
 
+    /// Diagnostic barrier: wait for queued releases to finish. Not used by the arbiter.
+    pub fn wait_for_releases(&self, timeout: std::time::Duration) {
+        self.release.wait_idle(timeout);
+    }
+
     /// Futures still inside transport; never restarted within the same tick.
     pub fn outstanding_futures(&self) -> usize {
         self.unresolved
@@ -95,6 +102,28 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
     }
+    fn contexts(&self, now_ms: i64) -> (DispatchContext<'_>, DriveContext<'_>) {
+        let context = DispatchContext {
+            io: &self.io,
+            release: &self.release,
+            clock: &self.clock,
+            late: &self.late,
+            bound: &self.bound,
+            max_polls: self.max_polls,
+            budget_ms: self.budget_ms,
+            now_ms,
+        };
+        let driver = DriveContext {
+            io: context.io,
+            release: context.release,
+            clock: context.clock,
+            late: context.late,
+            bound: context.bound,
+            max_polls: context.max_polls,
+        };
+        (context, driver)
+    }
+
     /// Start every pack's future, then drive them all from one arbiter.
     pub fn dispatch_slot(
         &self,
@@ -123,6 +152,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                 write.command.generation = pack.generation;
                 write.tx_id = self.io.begin(&write.command.pack_id);
                 pack.transport_gone = false;
+                pack.last_apply_attempt_ms = now_ms;
                 futures.push(WriteFuture::start(
                     &self.io,
                     &write.command,
@@ -131,13 +161,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                 ));
             }
         }
-        let driver = DriveContext {
-            io: &self.io,
-            clock: &self.clock,
-            late: &self.late,
-            bound: &self.bound,
-            max_polls: self.max_polls,
-        };
+        let (context, driver) = self.contexts(now_ms);
         let result = drive(futures, &driver);
         let outstanding = result
             .unresolved
@@ -148,101 +172,54 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend(result.unresolved);
-        self.collect(state, preparations, &result.attempts, &outstanding, now_ms)
-    }
-
-    fn collect(
-        &self,
-        state: &mut DispatchState,
-        preparations: Vec<Preparation>,
-        attempts: &[WriteAttempt],
-        outstanding: &BTreeSet<String>,
-        now_ms: i64,
-    ) -> Vec<DispatchRow> {
-        let context = DispatchContext {
-            io: &self.io,
-            clock: &self.clock,
-            late: &self.late,
-            bound: &self.bound,
-            max_polls: self.max_polls,
-            budget_ms: self.budget_ms,
+        self.unresolved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(result.retired);
+        crate::dispatch::slot_collector::collect(
+            state,
+            preparations,
+            &result.attempts,
+            &outstanding,
             now_ms,
-        };
-        let mut rows = Vec::with_capacity(preparations.len());
-        let mut index = 0;
-        for preparation in preparations {
-            match preparation {
-                Preparation::Row(row) => rows.push(row),
-                Preparation::Write(write) => {
-                    let attempt = attempts[index].clone();
-                    index += 1;
-                    let gone = !outstanding.contains(&write.command.pack_id);
-                    let mut effect = ack_row::from_attempt(&context, attempt, &write.command);
-                    Self::apply_effect(state, &write.command, &mut effect, gone, now_ms);
-                    rows.push(crate::dispatch::safety_execution_row::row(
-                        effect.row,
-                        write.gate_reason,
-                        write.interrupted,
-                    ));
-                }
-            }
-        }
-        rows
-    }
-
-    fn apply_effect(
-        state: &mut DispatchState,
-        command: &crate::dispatch::PackCommand,
-        effect: &mut crate::dispatch::AttemptEffect,
-        transport_gone: bool,
-        now_ms: i64,
-    ) {
-        let pack = state.pack(&command.pack_id);
-        pack.last_command = Some(command.clone());
-        pack.pending = effect.pending.take();
-        pack.transport_gone = transport_gone;
-        if effect.generation_bumped {
-            pack.generation = pack.generation.saturating_add(1);
-        }
-        if let Some(reason) = effect.uncertain_reason {
-            pack.uncertain = true;
-            pack.uncertain_reason = Some(reason);
-            pack.uncertainty_cleared_by = None;
-        }
-        if effect.arm_backoff {
-            pack.backoff_until_ms = now_ms + i64::try_from(NO_FLOW_BACKOFF_MS).unwrap_or(i64::MAX);
-            pack.backoff_reason = Some("fault_backoff");
-        }
+            &context,
+        )
     }
 
     /// Join futures that have returned; only then is their pack's transport gone.
-    pub fn reconcile(&self, state: &mut DispatchState) -> usize {
+    pub fn reconcile(&self, state: &mut DispatchState, now_ms: i64) -> usize {
         let mut unresolved = self
             .unresolved
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut gone = BTreeSet::new();
-        let finished: Vec<usize> = unresolved
+        let reapable: Vec<usize> = unresolved
             .iter()
             .enumerate()
-            .filter(|(_, future)| future.finished())
+            .filter(|(_, future)| future.handle_finished())
             .map(|(index, _)| index)
             .collect();
-        for index in finished.into_iter().rev() {
+        for index in reapable.into_iter().rev() {
             let future = unresolved.remove(index);
+            let pack_id = future.pack_id().to_owned();
             let deadline = future.deadline();
             let generation = future.generation();
-            let pack_id = future.pack_id().to_owned();
-            future.release_once(&self.io);
-            let result = future.join();
-            if result.completed_at > deadline {
+            let claim_late = future.claim_late_log();
+            let result = future.reap_finished();
+            if result.completed_at > deadline && claim_late {
                 crate::dispatch::driver::record_late(&self.late, &pack_id, generation);
             }
+            let pack = state.pack(&pack_id);
+            pack.transport_gone = true;
+            pack.joined_at_ms = now_ms;
             gone.insert(pack_id);
         }
         for pack_id in state.pack_ids() {
-            let pack = state.pack(&pack_id);
-            if gone.contains(&pack_id) || !unresolved.iter().any(|f| f.pack_id() == pack_id) {
+            if !unresolved.iter().any(|f| f.pack_id() == pack_id) {
+                let pack = state.pack(&pack_id);
+                if !pack.transport_gone {
+                    pack.joined_at_ms = now_ms;
+                }
                 pack.transport_gone = true;
             }
         }
@@ -279,14 +256,15 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         report: &FlowReport,
         now_ms: i64,
     ) -> DispatchRow {
-        Observer::new(
-            &self.io,
-            &self.clock,
-            &self.late,
-            &self.bound,
-            self.max_polls,
-            self.budget_ms,
-        )
-        .observe(state, report, now_ms)
+        let escalation = crate::dispatch::observer_escalation::Escalation {
+            io: &self.io,
+            release: &self.release,
+            clock: &self.clock,
+            late: &self.late,
+            bound: &self.bound,
+            max_polls: self.max_polls,
+            budget_ms: self.budget_ms,
+        };
+        Observer::new(&escalation).observe(state, report, now_ms)
     }
 }

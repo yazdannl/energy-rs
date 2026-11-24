@@ -3,7 +3,7 @@
 mod m4_support;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use energy_decide::dispatch::constants::PACK_IO_BUDGET_MS;
 use energy_decide::dispatch::{
@@ -112,6 +112,7 @@ fn s222_unbounded_transport_is_bounded_and_transaction_released() {
         ]
     );
     assert_eq!(io.write_count(), 4);
+    dut.wait_for_releases(Duration::from_secs(2));
     assert_eq!(io.active(), [] as [u64; 0]);
     assert_eq!(io.released().len(), 4);
     assert_eq!(io.peak_active(), 4);

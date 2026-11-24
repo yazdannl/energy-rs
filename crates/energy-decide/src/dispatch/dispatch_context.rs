@@ -2,12 +2,14 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::dispatch::{DriveBoundEvent, LateWrite, PackIo, RetryClock};
+use crate::dispatch::{DriveBoundEvent, LateWrite, PackIo, ReleaseQueue, RetryClock};
 
 /// Everything a write attempt needs from the dispatcher, without long argument lists.
 pub struct DispatchContext<'a> {
     /// Shared pack transport.
     pub io: &'a Arc<dyn PackIo>,
+    /// Non-blocking release queue; transport release never runs on the arbiter.
+    pub release: &'a ReleaseQueue,
     /// Retry clock for fail-safe offsets.
     pub clock: &'a dyn RetryClock,
     /// Late completions from superseded generations.

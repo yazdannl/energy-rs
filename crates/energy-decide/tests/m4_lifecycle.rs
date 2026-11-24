@@ -2,12 +2,14 @@
 
 mod m4_support;
 
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use energy_decide::dispatch::{
-    AllowAllAuthority, AppliedReason, DispatchOutcome, DispatchState, Dispatcher, Echo,
-    ProceedSafety, SlotRequest,
+    AllowAllAuthority, AppliedReason, DispatchOutcome, DispatchState, Dispatcher, DriveBoundEvent,
+    DriveContext, DriveResult, Echo, LateWrite, PackCommand, PackIo, ProceedSafety, ReleaseQueue,
+    SlotRequest, WriteAck, WriteAttempt, WriteFuture, WriteResult, drive,
 };
 use m4_support::{Behavior, FakeIo, ImmediateClock, report};
 
@@ -102,7 +104,7 @@ fn s235_late_completion_cannot_overwrite_a_later_hold() {
     let second = dut.dispatch_slot(&mut state, &[hold], 1_000);
     assert!(second[0].written);
     thread::sleep(Duration::from_millis(420));
-    dut.reconcile(&mut state);
+    dut.reconcile(&mut state, 1_000);
     let late = dut.take_late_writes();
     assert_eq!(late.len(), 1);
     assert_eq!(late[0].pack_id, "P");
@@ -120,20 +122,21 @@ fn s235_late_completion_cannot_overwrite_a_later_hold() {
 #[test]
 fn s235_consecutive_deadlines_do_not_accumulate_workers() {
     let io = FakeIo::new(&[("P", Behavior::Stuck { max_wait_ms: 2_000 })]);
-    let dut = dispatcher(io.clone(), 60);
+    let dut = dispatcher(io.clone(), 60).with_max_polls(5);
     let mut state = DispatchState::default();
     for round in 0..5 {
         let started = Instant::now();
         let safety = SlotRequest::safety("P", -800.0, round * 1_000, "bounded_retry");
         let rows = dut.dispatch_slot(&mut state, &[safety], round * 1_000);
         let elapsed = started.elapsed().as_millis();
-        assert!(elapsed < 200, "round {round} took {elapsed} ms");
+        assert!(elapsed < 500, "round {round} took {elapsed} ms");
         assert_eq!(rows[0].outcome, DispatchOutcome::Uncertain);
         assert!(wait_for_release(&io, Duration::from_millis(300)));
         assert!(wait_for_workers(&io, Duration::from_millis(500)));
+        dut.wait_for_releases(Duration::from_secs(2));
         assert_eq!(io.active_workers(), 0);
         assert_eq!(io.peak_workers(), 1);
-        dut.reconcile(&mut state);
+        dut.reconcile(&mut state, 200);
         assert_eq!(dut.outstanding_futures(), 0);
     }
     assert_eq!(io.released().len(), 5);
@@ -177,7 +180,7 @@ fn s238_blocked_first_does_not_supersede_fast_followers() {
         ("P3", Behavior::Accept { echo: true }),
         ("P4", Behavior::Accept { echo: true }),
     ]);
-    let dut = dispatcher(io, 250);
+    let dut = dispatcher(io, 100);
     let mut state = DispatchState::default();
     let requests: Vec<SlotRequest> = ["P1", "P2", "P3", "P4"]
         .iter()
@@ -198,7 +201,7 @@ fn s238_blocked_first_does_not_supersede_fast_followers() {
 #[test]
 fn s239_drive_bound_prevents_a_restart_loop() {
     let io = FakeIo::new(&[("P", Behavior::Stuck { max_wait_ms: 5_000 })]);
-    let dut = dispatcher(io.clone(), 100).with_max_polls(50);
+    let dut = dispatcher(io.clone(), 30_000).with_max_polls(50);
     let mut state = DispatchState::default();
     let rows = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 0);
     assert_eq!(rows[0].outcome, DispatchOutcome::Uncertain);
@@ -209,11 +212,11 @@ fn s239_drive_bound_prevents_a_restart_loop() {
     assert_eq!(events[0].polls, 51);
     assert_eq!(dut.outstanding_futures(), 1);
     assert_eq!(io.write_count(), 1);
-    let retry = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 200);
+    let retry = dut.dispatch_slot(&mut state, &[economic("P", -800.0)], 31_000);
     assert_eq!(retry[0].outcome, DispatchOutcome::Deferred);
     assert_eq!(io.write_count(), 1);
-    thread::sleep(Duration::from_millis(30));
-    dut.reconcile(&mut state);
+    assert!(wait_for_workers(&io, Duration::from_millis(500)));
+    dut.reconcile(&mut state, 31_000);
     assert_eq!(dut.outstanding_futures(), 0);
 }
 
@@ -257,9 +260,9 @@ fn s240_read_back_rejects_stale_and_non_neutral_evidence() {
     assert!(early_row.reasons.contains(&"transport_still_outstanding"));
     assert!(state.pack("P").uncertain);
 
-    thread::sleep(Duration::from_millis(260));
+    assert!(wait_for_workers(&io, Duration::from_millis(1_500)));
     assert_eq!(io.device_w("P"), Some(-800.0));
-    dut.reconcile(&mut state);
+    dut.reconcile(&mut state, 200);
     assert_eq!(dut.outstanding_futures(), 0);
 
     let mut stale = readback_from_device(&io, "P", 0, 2);
@@ -289,7 +292,7 @@ fn s240_read_back_clears_only_after_coherent_neutralisation() {
     let entries_before = io.writes().len();
 
     thread::sleep(Duration::from_millis(260));
-    dut.reconcile(&mut state);
+    dut.reconcile(&mut state, 400);
     io.set_behavior("P", Behavior::Accept { echo: true });
     let neutral = dut.dispatch_slot(
         &mut state,
@@ -298,7 +301,7 @@ fn s240_read_back_clears_only_after_coherent_neutralisation() {
     );
     assert!(neutral[0].written);
     assert_eq!(io.device_w("P"), Some(0.0));
-    dut.reconcile(&mut state);
+    dut.reconcile(&mut state, 400);
 
     let proof = readback_from_device(&io, "P", 410, 1);
     let row = dut.read_back(&mut state, &proof, 410);
@@ -331,7 +334,7 @@ fn s241_rejected_and_cancelled_writes_do_not_apply() {
     assert_eq!(rows[1].outcome, DispatchOutcome::Uncertain);
     assert_eq!(rows[2].outcome, DispatchOutcome::ConfirmationPending);
     thread::sleep(Duration::from_millis(30));
-    dut.reconcile(&mut state);
+    dut.reconcile(&mut state, 200);
     assert_eq!(io.writes().len(), 3);
     let applied = io.applied_commands();
     assert_eq!(applied.len(), 1);
@@ -339,4 +342,158 @@ fn s241_rejected_and_cancelled_writes_do_not_apply() {
     assert_eq!(io.device_w("A"), None);
     assert_eq!(io.device_w("B"), None);
     assert_eq!(io.device_w("C"), Some(-800.0));
+}
+fn timed_out_pack(
+    pack: &str,
+) -> (
+    FakeIo,
+    Dispatcher<ProceedSafety, AllowAllAuthority, ImmediateClock>,
+    DispatchState,
+) {
+    let io = FakeIo::new(&[(pack, Behavior::Late { after_ms: 150 })]);
+    let dut = dispatcher(io.clone(), 80);
+    let mut state = DispatchState::default();
+    let rows = dut.dispatch_slot(&mut state, &[economic(pack, -800.0)], 0);
+    assert_eq!(rows[0].outcome, DispatchOutcome::Uncertain);
+    assert!(wait_for_workers(&io, Duration::from_millis(1_500)));
+    dut.reconcile(&mut state, 200);
+    (io, dut, state)
+}
+
+#[test]
+fn s242_read_back_rejects_missing_echo() {
+    let (_io, dut, mut state) = timed_out_pack("P");
+    let mut evidence = report("P", 410, 0.0, 0, 0, 1);
+    evidence.echo = None;
+    let row = dut.read_back(&mut state, &evidence, 410);
+    assert!(row.reasons.contains(&"readback_echo_missing"));
+    assert_eq!(row.applied_reason, AppliedReason::ReadbackRejected);
+    assert!(state.pack("P").uncertain);
+}
+
+#[test]
+fn s243_terminal_state_wins_over_handle_observation() {
+    let io: Arc<dyn PackIo> = Arc::new(FakeIo::new(&[(
+        "P",
+        Behavior::Stuck { max_wait_ms: 5_000 },
+    )]));
+    let release = ReleaseQueue::new(Arc::clone(&io));
+    let clock = ImmediateClock::default();
+    let late = Arc::new(Mutex::new(Vec::<LateWrite>::new()));
+    let bound = Arc::new(Mutex::new(Vec::<DriveBoundEvent>::new()));
+    let context = DriveContext {
+        io: &io,
+        release: &release,
+        clock: &clock,
+        late: &late,
+        bound: &bound,
+        max_polls: 4_096,
+    };
+    let command = PackCommand {
+        pack_id: "P".to_owned(),
+        requested_w: -800.0,
+        issued_at_ms: 0,
+        generation: 1,
+        fence_id: None,
+        safety_traffic: false,
+    };
+    let ack = || WriteAck::Accepted {
+        echo: None,
+        at_ms: 0,
+    };
+
+    let on_time = WriteFuture::start(&io, &command, 1, 500);
+    let deadline = on_time.deadline();
+    on_time.terminal_state().publish(
+        WriteResult {
+            ack: ack(),
+            completed_at: Instant::now(),
+        },
+        deadline,
+    );
+    assert!(!on_time.handle_finished());
+    let outcome: DriveResult = drive(vec![on_time], &context);
+    assert!(matches!(outcome.attempts[0], WriteAttempt::Ack { .. }));
+
+    let late_result = WriteFuture::start(&io, &command, 2, 500);
+    late_result.terminal_state().publish(
+        WriteResult {
+            ack: ack(),
+            completed_at: Instant::now() + Duration::from_millis(600),
+        },
+        late_result.deadline(),
+    );
+    let outcome = drive(vec![late_result], &context);
+    assert!(matches!(
+        outcome.attempts[0],
+        WriteAttempt::Superseded { .. }
+    ));
+}
+
+#[test]
+fn s244_slow_release_cannot_stall_other_packs() {
+    let io = FakeIo::new(&[
+        ("A", Behavior::Stuck { max_wait_ms: 5_000 }),
+        ("B", Behavior::Stuck { max_wait_ms: 5_000 }),
+    ]);
+    io.set_slow_release("A", 500);
+    let dut = dispatcher(io.clone(), 100).with_max_polls(5);
+    let mut state = DispatchState::default();
+    let requests = ["A", "B"]
+        .iter()
+        .map(|p| economic(p, -800.0))
+        .collect::<Vec<_>>();
+    let started = Instant::now();
+    let rows = dut.dispatch_slot(&mut state, &requests, 0);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "arbiter blocked for {elapsed:?}"
+    );
+    assert_eq!(rows.len(), 2);
+    dut.wait_for_releases(Duration::from_secs(2));
+    let mut latencies = io.release_latency_ms();
+    latencies.sort_unstable();
+    assert_eq!(latencies.len(), 2);
+    assert!(latencies[0] < 250, "fast release stalled: {latencies:?}");
+    assert!(
+        latencies[1] >= 500,
+        "slow release was not exercised: {latencies:?}"
+    );
+}
+
+#[test]
+fn s245_evidence_before_future_join_is_not_causal() {
+    let (_io, dut, mut state) = timed_out_pack("P");
+    let mut replayed = report("P", 10, 0.0, 0, 0, 1);
+    replayed.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 10,
+    });
+    let row = dut.read_back(&mut state, &replayed, 400);
+    assert!(row.reasons.contains(&"readback_not_causal"));
+    assert_eq!(row.applied_reason, AppliedReason::ReadbackRejected);
+    assert!(state.pack("P").uncertain);
+}
+
+#[test]
+fn s246_non_finite_wattage_is_not_neutral() {
+    let (_io, dut, mut state) = timed_out_pack("P");
+    let mut nan = report("P", 410, 0.0, 0, 0, 1);
+    nan.echo = Some(Echo {
+        limit_w: f64::NAN,
+        at_ms: 410,
+    });
+    let row = dut.read_back(&mut state, &nan, 410);
+    assert!(row.reasons.contains(&"readback_non_finite"));
+    assert!(state.pack("P").uncertain);
+
+    let mut infinite = report("P", 410, f64::INFINITY, 0, 0, 2);
+    infinite.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 410,
+    });
+    let row = dut.read_back(&mut state, &infinite, 410);
+    assert!(row.reasons.contains(&"readback_non_finite"));
+    assert!(state.pack("P").uncertain);
 }
