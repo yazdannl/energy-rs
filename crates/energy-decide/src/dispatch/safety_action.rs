@@ -7,6 +7,10 @@ pub enum SafetyAction {
     NeutralHold,
     /// Emergency charge at the target chosen by M5.
     EmergencyCharge { target_w: f64 },
+    /// Protective discharge required by the M5 import-ceiling rule.
+    ///
+    /// Added for M5: existing variants and their `target_w()` results are unchanged.
+    ProtectiveDischarge { target_w: f64 },
 }
 
 impl SafetyAction {
@@ -14,7 +18,7 @@ impl SafetyAction {
     pub fn target_w(self) -> f64 {
         match self {
             Self::NeutralHold => 0.0,
-            Self::EmergencyCharge { target_w } => target_w,
+            Self::EmergencyCharge { target_w } | Self::ProtectiveDischarge { target_w } => target_w,
         }
     }
 }

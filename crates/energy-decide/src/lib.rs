@@ -9,6 +9,7 @@ pub mod dispatch;
 pub mod horizon;
 pub mod optimizer;
 pub mod plan_assemble;
+pub mod safety;
 
 /// Slots in a full requested horizon: 30 hours at quarter-hour resolution.
 pub const REQUESTED_SLOTS: usize = 120;
