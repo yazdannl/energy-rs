@@ -82,7 +82,7 @@ fn resolve(
             elapsed_ms: elapsed,
         },
     };
-    future.cancel_and_release(context.release);
+    future.cancel();
     (attempt, future)
 }
 
@@ -167,7 +167,7 @@ pub fn drive(futures: Vec<WriteFuture>, context: &DriveContext<'_>) -> DriveResu
                 generation,
                 elapsed_ms: elapsed,
             });
-            future.cancel_and_release(context.release);
+            future.cancel();
             sink.unresolved.push(future);
         }
     }

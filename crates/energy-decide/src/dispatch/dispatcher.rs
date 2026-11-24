@@ -8,8 +8,8 @@ use crate::dispatch::driver::drive;
 use crate::dispatch::preparation::{Preparation, prepare};
 use crate::dispatch::{
     DispatchContext, DispatchRow, DispatchState, DriveBoundEvent, DriveContext, FlowReport,
-    LateWrite, Observer, PackIo, ReleaseQueue, RetryClock, SafetyGate, SlotRequest, WriteAuthority,
-    WriteFuture,
+    LateWrite, Observer, PackIo, RetryClock, SafetyGate, SlotRequest, TransactionGuard,
+    WriteAuthority, WriteFuture,
 };
 
 /// Dispatcher with injected consumer ports; it owns no safety or authority decision.
@@ -22,7 +22,6 @@ pub struct Dispatcher<S: SafetyGate, A: WriteAuthority, C: RetryClock> {
     max_polls: u64,
     late: Arc<Mutex<Vec<LateWrite>>>,
     bound: Arc<Mutex<Vec<DriveBoundEvent>>>,
-    release: Arc<ReleaseQueue>,
     unresolved: Mutex<Vec<WriteFuture>>,
 }
 impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
@@ -39,7 +38,6 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         clock: C,
         budget_ms: u64,
     ) -> Self {
-        let release = Arc::new(ReleaseQueue::new(Arc::clone(&io)));
         Self {
             io,
             safety,
@@ -49,7 +47,6 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             max_polls: MAX_DRIVE_POLLS_PER_TICK,
             late: Arc::new(Mutex::new(Vec::new())),
             bound: Arc::new(Mutex::new(Vec::new())),
-            release,
             unresolved: Mutex::new(Vec::new()),
         }
     }
@@ -90,11 +87,6 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         std::mem::take(&mut *log)
     }
 
-    /// Diagnostic barrier: wait for queued releases to finish. Not used by the arbiter.
-    pub fn wait_for_releases(&self, timeout: std::time::Duration) {
-        self.release.wait_idle(timeout);
-    }
-
     /// Futures still inside transport; never restarted within the same tick.
     pub fn outstanding_futures(&self) -> usize {
         self.unresolved
@@ -105,7 +97,6 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
     fn contexts(&self, now_ms: i64) -> (DispatchContext<'_>, DriveContext<'_>) {
         let context = DispatchContext {
             io: &self.io,
-            release: &self.release,
             clock: &self.clock,
             late: &self.late,
             bound: &self.bound,
@@ -115,7 +106,6 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         };
         let driver = DriveContext {
             io: context.io,
-            release: context.release,
             clock: context.clock,
             late: context.late,
             bound: context.bound,
@@ -151,12 +141,17 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                 pack.generation = pack.generation.saturating_add(1);
                 write.command.generation = pack.generation;
                 write.tx_id = self.io.begin(&write.command.pack_id);
+                let guard = TransactionGuard::new(
+                    Arc::clone(&self.io),
+                    &write.command.pack_id,
+                    write.tx_id,
+                );
                 pack.transport_gone = false;
                 pack.last_apply_attempt_ms = now_ms;
                 futures.push(WriteFuture::start(
                     &self.io,
                     &write.command,
-                    write.tx_id,
+                    guard,
                     self.budget_ms,
                 ));
             }
@@ -246,7 +241,9 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         report: &FlowReport,
         now_ms: i64,
     ) -> DispatchRow {
-        let row = self.observe(state, report, now_ms);
+        let empty = crate::dispatch::PackState::default();
+        let tracked = state.get(&report.pack_id).unwrap_or(&empty);
+        let row = crate::dispatch::read_back::row(tracked, report, self.budget_ms);
         crate::dispatch::read_back::clear(row, state.pack(&report.pack_id), report, now_ms)
     }
     /// Fold a later report; no waiting occurs in this call.
@@ -258,7 +255,6 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
     ) -> DispatchRow {
         let escalation = crate::dispatch::observer_escalation::Escalation {
             io: &self.io,
-            release: &self.release,
             clock: &self.clock,
             late: &self.late,
             bound: &self.bound,

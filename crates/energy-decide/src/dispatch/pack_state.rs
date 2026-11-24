@@ -31,6 +31,10 @@ pub struct PackState {
     pub partial_retries: usize,
     /// Consecutive fresh neutral reports while no command is standing.
     pub idle_reports: usize,
+    /// Anchor of the current neutral-evidence window, epoch milliseconds.
+    pub neutral_window_start_ms: Option<i64>,
+    /// Latest neutral observation in that window, epoch milliseconds.
+    pub neutral_window_last_ms: i64,
     /// Monotonic generation of the latest write; late older writes are ignored.
     pub generation: u64,
     /// Last command identity tracked for this pack, accepted or not.
@@ -53,6 +57,8 @@ impl Default for PackState {
             pause_target_w: None,
             partial_retries: 0,
             idle_reports: 0,
+            neutral_window_start_ms: None,
+            neutral_window_last_ms: 0,
             generation: 0,
             last_command: None,
         }

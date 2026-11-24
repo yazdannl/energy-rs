@@ -18,8 +18,9 @@ pub trait PackIo: Send + Sync + 'static {
     fn begin(&self, pack_id: &str) -> u64;
 
     /// Release a transaction acquired by `begin`, including after a deadline.
-    /// This call MAY block on locks held by a stuck write; the arbiter therefore queues it
-    /// on `ReleaseQueue` instead of calling it inline. Implementations must terminate.
+    /// This call MAY block on locks held by a stuck write; the arbiter never calls it.
+    /// Each pack's write guard releases its own transaction, so a slow release costs
+    /// only that pack. Implementations must terminate.
     fn release(&self, pack_id: &str, tx_id: u64);
 
     /// Send one command under this transaction. The future token is set at the deadline;

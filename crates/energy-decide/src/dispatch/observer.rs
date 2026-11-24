@@ -1,7 +1,9 @@
 //! Fold later reports into deferred confirmations; never await them in a tick.
 
 use crate::dispatch::confirmation::{ConfirmationVerdict, fold, idle_confirmed};
-use crate::dispatch::constants::{NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS};
+use crate::dispatch::constants::{
+    MAX_APPLICATION_DELAY_MS, NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS,
+};
 use crate::dispatch::{
     AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowClass,
     FlowReport, PackCommand, PendingConfirmation,
@@ -148,7 +150,22 @@ fn apply_state(
 ) {
     match verdict {
         ConfirmationVerdict::Confirmed { class, .. } => {
-            if class == FlowClass::HoldVerified && report.echo.is_some() {
+            if let (FlowClass::HoldVerified, Some(first)) = (
+                class,
+                state.pending.as_ref().and_then(|p| p.first_in_band_ms),
+            ) {
+                state.neutral_window_start_ms.get_or_insert(first);
+                state.neutral_window_last_ms = now_ms;
+            }
+            let covered = state
+                .pending
+                .as_ref()
+                .and_then(|p| p.first_in_band_ms)
+                .is_some_and(|first| {
+                    now_ms.saturating_sub(first)
+                        > i64::try_from(MAX_APPLICATION_DELAY_MS).unwrap_or(i64::MAX)
+                });
+            if class == FlowClass::HoldVerified && report.echo.is_some() && covered {
                 state.uncertain = false;
                 state.uncertain_reason = None;
                 state.uncertainty_cleared_by = Some("verified_hold");

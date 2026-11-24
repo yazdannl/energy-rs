@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::dispatch::{PackCommand, PackIo, ReleaseQueue, TerminalState, WriteAck, WriteResult};
+use crate::dispatch::{
+    PackCommand, PackIo, TerminalState, TransactionGuard, WriteAck, WriteResult,
+};
 
 /// A bounded write future owned by the single arbiter.
 pub struct WriteFuture {
@@ -23,7 +25,13 @@ pub struct WriteFuture {
 
 impl WriteFuture {
     /// Spawn one future; no channel, claim or watchdog is created.
-    pub fn start(io: &Arc<dyn PackIo>, command: &PackCommand, tx_id: u64, budget_ms: u64) -> Self {
+    pub fn start(
+        io: &Arc<dyn PackIo>,
+        command: &PackCommand,
+        guard: TransactionGuard,
+        budget_ms: u64,
+    ) -> Self {
+        let tx_id = guard.tx_id();
         let started = Instant::now();
         let deadline = started
             .checked_add(Duration::from_millis(budget_ms))
@@ -35,6 +43,7 @@ impl WriteFuture {
         let worker_cancel = Arc::clone(&cancel);
         let worker_terminal = Arc::clone(&terminal);
         let handle = thread::spawn(move || {
+            let tx_id = guard.tx_id();
             let ack = worker_io.write(
                 &worker_command.pack_id,
                 &worker_command,
@@ -47,6 +56,9 @@ impl WriteFuture {
                 completed_at: Instant::now(),
             };
             worker_terminal.publish(result, deadline);
+            // Dropping the guard here releases the pack's own transaction. Panics and
+            // cancellation unwind through the same drop path.
+            drop(guard);
         });
         Self {
             pack_id: command.pack_id.clone(),
@@ -104,10 +116,10 @@ impl WriteFuture {
         !self.late_logged.swap(true, Ordering::SeqCst)
     }
 
-    /// Cancel transport and enqueue release without blocking the arbiter.
-    pub fn cancel_and_release(&self, release: &ReleaseQueue) {
+    /// Request transport cancellation. The pack's own guard releases its transaction
+    /// when that worker ends; the arbiter never calls `PackIo::release`.
+    pub fn cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
-        release.release(&self.pack_id, self.tx_id);
     }
 
     /// Whether the OS thread is done. Used only for reaping, never to classify a write.

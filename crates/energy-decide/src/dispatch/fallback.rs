@@ -1,5 +1,6 @@
 //! Fail-safe hold retries at 0/2/6 s, all inside the one per-pack budget.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::dispatch::budget::{elapsed_ms, remaining_ms};
@@ -32,7 +33,6 @@ pub fn write_fallback(
     };
     let driver = DriveContext {
         io: context.io,
-        release: context.release,
         clock: context.clock,
         late: context.late,
         bound: context.bound,
@@ -49,7 +49,9 @@ pub fn write_fallback(
         result.offsets_ms.push(offset);
         result.attempts += 1;
         let tx_id = context.io.begin(&hold.pack_id);
-        let future = WriteFuture::start(context.io, &hold, tx_id, left);
+        let guard =
+            crate::dispatch::TransactionGuard::new(Arc::clone(context.io), &hold.pack_id, tx_id);
+        let future = WriteFuture::start(context.io, &hold, guard, left);
         let outcome = drive(vec![future], &driver);
         if let Some(WriteAttempt::Ack { ack, .. }) = outcome.attempts.into_iter().next() {
             let accepted = ack.accepted();

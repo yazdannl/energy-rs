@@ -1,6 +1,6 @@
 //! Deferred confirmation folding: echo gate first, measured flow is the verdict.
 
-use crate::dispatch::constants::{RAMP_MAX_MS, SHORTFALL_SOC_MAX_PCT};
+use crate::dispatch::constants::{MAX_APPLICATION_DELAY_MS, RAMP_MAX_MS, SHORTFALL_SOC_MAX_PCT};
 use crate::dispatch::flow_predicates::classify_flow;
 use crate::dispatch::{FlowClass, FlowReport, PackState, PendingConfirmation, status_direction};
 
@@ -193,8 +193,16 @@ pub fn idle_confirmed(state: &mut PackState, report: &FlowReport) -> bool {
         && report.measured_w.abs() <= 30.0;
     if neutral {
         state.idle_reports = state.idle_reports.saturating_add(1);
+        state.neutral_window_start_ms.get_or_insert(report.at_ms);
+        state.neutral_window_last_ms = report.at_ms;
     } else {
         state.idle_reports = 0;
+        state.neutral_window_start_ms = None;
+        state.neutral_window_last_ms = 0;
     }
-    state.idle_reports >= 2
+    let span = state.neutral_window_start_ms.is_some_and(|start| {
+        state.neutral_window_last_ms.saturating_sub(start)
+            > i64::try_from(MAX_APPLICATION_DELAY_MS).unwrap_or(i64::MAX)
+    });
+    state.idle_reports >= 2 && span
 }

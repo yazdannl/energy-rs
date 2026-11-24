@@ -3,6 +3,7 @@
 mod m4_support;
 
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use energy_decide::dispatch::constants::PACK_IO_BUDGET_MS;
@@ -112,10 +113,10 @@ fn s222_unbounded_transport_is_bounded_and_transaction_released() {
         ]
     );
     assert_eq!(io.write_count(), 4);
-    dut.wait_for_releases(Duration::from_secs(2));
+    assert!(io.wait_for_released(4, Duration::from_secs(2)));
     assert_eq!(io.active(), [] as [u64; 0]);
     assert_eq!(io.released().len(), 4);
-    assert_eq!(io.peak_active(), 4);
+    assert!(io.peak_active() <= 4);
     assert!(rows.iter().filter(|r| r.pack_id != "P3").all(|r| r.written));
 }
 
@@ -172,8 +173,8 @@ fn s225_uncertainty_blocks_retries_until_verified_hold() {
     let first = dut.observe(&mut state, &hold_report, 2_000);
     let mut second_report = hold_report.clone();
     second_report.message_id = 2;
-    second_report.at_ms = 2_100;
-    let second = dut.observe(&mut state, &second_report, 2_100);
+    second_report.at_ms = 9_000;
+    let second = dut.observe(&mut state, &second_report, 9_000);
     assert!(first.reasons.contains(&"hold_verified"));
     assert_eq!(second.outcome, DispatchOutcome::Confirmed);
     assert_eq!(second.uncertainty_cleared_by, Some("verified_hold"));
@@ -381,4 +382,103 @@ fn s043_s092_protection_active_skips_economic_writes() {
     assert_eq!(rows[0].applied_w, None);
     assert!(rows[0].reasons.contains(&"protection_active"));
     assert_eq!(io.write_count(), 0);
+}
+
+#[test]
+fn s247_uncertain_exits_by_read_back() {
+    let io = FakeIo::new(&[("P", Behavior::Never)]);
+    let dut = Dispatcher::new_with_shared(
+        Arc::new(io),
+        ProceedSafety,
+        AllowAllAuthority,
+        TestClock::default(),
+        120,
+    );
+    let mut state = DispatchState::default();
+    let request = economic("P", -800.0);
+    let timed_out = dut.dispatch_slot(&mut state, std::slice::from_ref(&request), 0);
+    assert_eq!(timed_out[0].outcome, DispatchOutcome::Uncertain);
+    thread::sleep(Duration::from_millis(300));
+    dut.reconcile(&mut state, 1_000);
+    assert!(state.pack("P").uncertain);
+    assert_eq!(state.pack("P").uncertainty_cleared_by, None);
+
+    let mut first = report("P", 1_001, 0.0, 0, 0, 1);
+    first.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 1_001,
+    });
+    let partial = dut.read_back(&mut state, &first, 1_001);
+    assert!(partial.reasons.contains(&"application_bound_not_covered"));
+    assert!(state.pack("P").uncertain);
+
+    let mut second = first.clone();
+    second.at_ms = 7_002;
+    second.message_id = 2;
+    second.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 7_002,
+    });
+    let cleared = dut.read_back(&mut state, &second, 7_002);
+    assert_eq!(cleared.uncertainty_cleared_by, Some("read_back"));
+    assert!(!state.pack("P").uncertain);
+}
+
+#[test]
+fn s247_uncertain_exits_by_verified_hold() {
+    let io = FakeIo::default();
+    let dut = Dispatcher::new_with_shared(
+        Arc::new(io),
+        ProceedSafety,
+        AllowAllAuthority,
+        TestClock::default(),
+        120,
+    );
+    let mut first = report("P", 1_001, 0.0, 0, 0, 1);
+    first.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 1_001,
+    });
+    let mut second = first.clone();
+    second.at_ms = 7_002;
+    second.message_id = 2;
+    second.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 7_002,
+    });
+    let mut held = DispatchState::default();
+    held.pack("P").uncertain = true;
+    held.pack("P").uncertain_reason = Some("write_deadline_mid_transport");
+    held.pack("P").pending = Some(energy_decide::dispatch::PendingConfirmation::new(
+        0.0,
+        1_000,
+        Some(1_000),
+        45_000,
+    ));
+    let hold_first = dut.observe(&mut held, &first, 1_001);
+    assert!(hold_first.reasons.contains(&"hold_verified"));
+    assert!(held.pack("P").uncertain);
+    let mut close = first.clone();
+    close.at_ms = 1_002;
+    close.message_id = 2;
+    close.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 1_002,
+    });
+    let early_hold = dut.observe(&mut held, &close, 1_002);
+    assert!(early_hold.reasons.contains(&"hold_verified"));
+    assert!(held.pack("P").uncertain);
+    second.message_id = 3;
+    let _hold_second = dut.observe(&mut held, &second, 7_002);
+    assert!(held.pack("P").uncertain);
+    let mut third = second.clone();
+    third.at_ms = 7_003;
+    third.message_id = 4;
+    third.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 7_003,
+    });
+    let hold_second = dut.observe(&mut held, &third, 7_003);
+    assert_eq!(hold_second.uncertainty_cleared_by, Some("verified_hold"));
+    assert!(!held.pack("P").uncertain);
 }

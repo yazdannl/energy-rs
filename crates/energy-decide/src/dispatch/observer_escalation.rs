@@ -7,16 +7,13 @@ use crate::dispatch::fallback::{fallback_accepted, write_fallback};
 use crate::dispatch::flow_predicates::classify_flow;
 use crate::dispatch::{
     DispatchContext, DispatchOutcome, DispatchRow, DriveBoundEvent, EvidenceKind, FallbackResult,
-    FlowClass, FlowReport, LateWrite, PackCommand, PackIo, PackState, ReleaseQueue, RetryClock,
-    status_direction,
+    FlowClass, FlowReport, LateWrite, PackCommand, PackIo, PackState, RetryClock, status_direction,
 };
 
 /// Transport and clock used only when a partial flow becomes persistent.
 pub struct Escalation<'a> {
     /// Shared transport.
     pub io: &'a Arc<dyn PackIo>,
-    /// Non-blocking release queue.
-    pub release: &'a ReleaseQueue,
     /// Retry clock for fail-safe offsets.
     pub clock: &'a dyn RetryClock,
     /// Late completions from superseded writes.
@@ -55,7 +52,6 @@ pub fn escalate(
     }
     let context = DispatchContext {
         io: escalation.io,
-        release: escalation.release,
         clock: escalation.clock,
         late: escalation.late,
         bound: escalation.bound,

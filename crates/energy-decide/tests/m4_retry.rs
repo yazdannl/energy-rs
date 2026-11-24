@@ -51,7 +51,7 @@ fn s089_fallback_hold_retries_at_0_2_6_seconds() {
             .skip(1)
             .all(|(_, command, _)| command.requested_w == 0.0)
     );
-    dispatcher.wait_for_releases(Duration::from_secs(2));
+    assert!(io.wait_for_released(4, Duration::from_secs(2)));
     assert_eq!(io.active(), [] as [u64; 0]);
 }
 

@@ -99,6 +99,30 @@ impl FakeIo {
         self.lock().released.clone()
     }
 
+    /// Wait until `count` transactions have reached release.
+    pub fn wait_for_released(&self, count: usize, timeout: Duration) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            if self.released().len() >= count {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        self.released().len() >= count
+    }
+
+    /// Wait until one transaction has reached release.
+    pub fn wait_for_tx_released(&self, tx_id: u64, timeout: Duration) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            if self.released().contains(&tx_id) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        self.released().contains(&tx_id)
+    }
+
     /// Release latency per transaction, measured from `begin`.
     pub fn release_latency_ms(&self) -> Vec<u64> {
         self.lock().release_latency_ms.values().copied().collect()
