@@ -1,6 +1,5 @@
 //! M4 review lifecycle regressions: absolute deadlines, generations and read misses.
 mod m4_support;
-
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -265,7 +264,7 @@ fn s240_read_back_rejects_stale_and_non_neutral_evidence() {
         at_ms: 0,
     });
     let stale_row = dut.read_back(&mut state, &stale, 12_000);
-    assert!(stale_row.reasons.contains(&"readback_stale_report"));
+    assert!(stale_row.reasons.contains(&"application_causality_unknown"));
     assert!(state.pack("P").uncertain);
 
     let non_neutral = readback_from_device(&io, "P", 400, 3);
@@ -294,15 +293,11 @@ fn s240_read_back_clears_only_after_coherent_neutralisation() {
     );
     assert!(neutral[0].written);
     assert_eq!(io.device_w("P"), Some(0.0));
+    assert_eq!(state.pack("P").last_neutral_ack_at_ms, 400);
     dut.reconcile(&mut state, 400);
 
-    let first = readback_from_device(&io, "P", 410, 1);
-    let first_row = dut.read_back(&mut state, &first, 410);
-    assert!(first_row.reasons.contains(&"application_bound_not_covered"));
-    assert!(state.pack("P").uncertain);
-
-    let proof = readback_from_device(&io, "P", 6_500, 2);
-    let row = dut.read_back(&mut state, &proof, 6_500);
+    let proof = readback_from_device(&io, "P", 410, 1);
+    let row = dut.read_back(&mut state, &proof, 410);
     assert!(row.reasons.contains(&"read_back_verified"));
     assert_eq!(row.uncertainty_cleared_by, Some("read_back"));
     assert!(!state.pack("P").uncertain);
@@ -380,6 +375,7 @@ fn s243_terminal_classification_with_prepublished_results() {
         clock: &clock,
         late: &late,
         bound: &bound,
+        transport_bound_ms: 6_000,
         max_polls: 4_096,
     };
     let command = PackCommand {
@@ -397,7 +393,7 @@ fn s243_terminal_classification_with_prepublished_results() {
 
     let tx1 = io.begin("P");
     let guard1 = TransactionGuard::new(Arc::clone(&io), "P", tx1);
-    let on_time = WriteFuture::start(&io, &command, guard1, 500);
+    let on_time = WriteFuture::start(&io, &command, guard1, 500, 6_000);
     let deadline = on_time.deadline();
     on_time.terminal_state().publish(
         WriteResult {
@@ -412,7 +408,7 @@ fn s243_terminal_classification_with_prepublished_results() {
 
     let tx2 = io.begin("P");
     let guard2 = TransactionGuard::new(Arc::clone(&io), "P", tx2);
-    let late_result = WriteFuture::start(&io, &command, guard2, 500);
+    let late_result = WriteFuture::start(&io, &command, guard2, 500, 6_000);
     late_result.terminal_state().publish(
         WriteResult {
             ack: ack(),
@@ -473,7 +469,7 @@ fn s245_evidence_before_future_join_is_not_causal() {
         at_ms: 10,
     });
     let row = dut.read_back(&mut state, &replayed, 400);
-    assert!(row.reasons.contains(&"readback_not_causal"));
+    assert!(row.reasons.contains(&"application_causality_unknown"));
     assert_eq!(row.applied_reason, AppliedReason::ReadbackRejected);
     assert!(state.pack("P").uncertain);
 }

@@ -13,6 +13,8 @@ pub enum Behavior {
     Stuck { max_wait_ms: u64 },
     /// Never-returning transport in the original incident; cancellable here.
     Never,
+    /// Ignores cancellation and returns only after the hard contract bound.
+    Blocked { return_after_ms: u64 },
     /// Completion ignores cancellation and arrives after the deadline.
     Late { after_ms: u64 },
     /// Fail the first N writes, then accept with an echo.

@@ -26,7 +26,19 @@ pub fn collect(
                 let gone = !outstanding.contains(&write.command.pack_id);
                 let mut effect =
                     crate::dispatch::ack_row::from_attempt(context, attempt, &write.command);
-                apply_effect(state, &write.command, &mut effect, gone, now_ms);
+                let violated = matches!(
+                    attempts[index - 1],
+                    crate::dispatch::WriteAttempt::TransportContractViolated { .. }
+                );
+                apply_effect(state, &write.command, &mut effect, gone, violated, now_ms);
+                if write.command.safety_traffic
+                    && let crate::dispatch::WriteAttempt::Ack {
+                        ack: crate::dispatch::WriteAck::Accepted { at_ms, .. },
+                        ..
+                    } = attempts[index - 1]
+                {
+                    state.pack(&write.command.pack_id).last_neutral_ack_at_ms = at_ms;
+                }
                 rows.push(crate::dispatch::safety_execution_row::row(
                     effect.row,
                     write.gate_reason,
@@ -43,12 +55,16 @@ fn apply_effect(
     command: &crate::dispatch::PackCommand,
     effect: &mut AttemptEffect,
     transport_gone: bool,
+    transport_contract_violated: bool,
     now_ms: i64,
 ) {
     let pack = state.pack(&command.pack_id);
     pack.last_command = Some(command.clone());
     pack.pending = effect.pending.take();
     pack.transport_gone = transport_gone;
+    if transport_contract_violated {
+        pack.transport_contract_violated = true;
+    }
     if effect.generation_bumped {
         pack.generation = pack.generation.saturating_add(1);
     }

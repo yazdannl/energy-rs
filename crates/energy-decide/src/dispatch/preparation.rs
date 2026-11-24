@@ -22,8 +22,13 @@ fn denied_row(command: &PackCommand, reason: &'static str, budget_ms: u64) -> Di
         .reason(reason)
 }
 
-fn deferred_row(command: &PackCommand, reason: &'static str, retry_at: Option<i64>) -> DispatchRow {
-    let mut row = DispatchRow::base(command, 0)
+fn deferred_row(
+    command: &PackCommand,
+    reason: &'static str,
+    retry_at: Option<i64>,
+    budget_ms: u64,
+) -> DispatchRow {
+    let mut row = DispatchRow::base(command, budget_ms)
         .outcome(DispatchOutcome::Deferred, EvidenceKind::PortDecision)
         .reason(reason);
     row.applied_reason = AppliedReason::Deferred;
@@ -37,6 +42,35 @@ fn safety_hold_command(request: &SlotRequest, target_w: f64, now_ms: i64) -> Pac
     command.issued_at_ms = now_ms;
     command.safety_traffic = true;
     command
+}
+
+fn ordinary_deferral(
+    command: &PackCommand,
+    pack: &crate::dispatch::PackState,
+    now_ms: i64,
+    budget_ms: u64,
+    safety_traffic: bool,
+) -> Option<Preparation> {
+    if safety_traffic {
+        return None;
+    }
+    let reason = if pack.transport_contract_violated {
+        Some(("transport_contract_violated", None))
+    } else if pack.uncertain {
+        Some(("controller_uncertain", None))
+    } else if now_ms < pack.backoff_until_ms {
+        Some((
+            pack.backoff_reason.unwrap_or("ordinary_backoff"),
+            Some(pack.backoff_until_ms),
+        ))
+    } else if now_ms < pack.pause_until_ms {
+        Some(("partial_flow_pause", Some(pack.pause_until_ms)))
+    } else {
+        None
+    };
+    reason.map(|(reason, retry_at)| {
+        Preparation::Row(deferred_row(command, reason, retry_at, budget_ms))
+    })
 }
 
 /// Ask M6 then M5, in that order, and never override either answer.
@@ -64,24 +98,9 @@ pub fn prepare<S: SafetyGate, A: WriteAuthority>(
         pack.pause_target_w = None;
         interrupted = true;
     }
-    if !request.safety_traffic {
-        if pack.uncertain {
-            return Preparation::Row(deferred_row(&command, "controller_uncertain", None));
-        }
-        if now_ms < pack.backoff_until_ms {
-            return Preparation::Row(deferred_row(
-                &command,
-                pack.backoff_reason.unwrap_or("ordinary_backoff"),
-                Some(pack.backoff_until_ms),
-            ));
-        }
-        if now_ms < pack.pause_until_ms {
-            return Preparation::Row(deferred_row(
-                &command,
-                "partial_flow_pause",
-                Some(pack.pause_until_ms),
-            ));
-        }
+    if let Some(row) = ordinary_deferral(&command, pack, now_ms, budget_ms, request.safety_traffic)
+    {
+        return row;
     }
     match authority.authorize(&command) {
         AuthorityDecision::Denied { reason } => {

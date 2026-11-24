@@ -16,6 +16,7 @@ pub struct WriteFuture {
     tx_id: u64,
     started: Instant,
     deadline: Instant,
+    transport_bound: Instant,
     budget_ms: u64,
     cancel: Arc<AtomicBool>,
     late_logged: Arc<AtomicBool>,
@@ -30,11 +31,15 @@ impl WriteFuture {
         command: &PackCommand,
         guard: TransactionGuard,
         budget_ms: u64,
+        transport_bound_ms: u64,
     ) -> Self {
         let tx_id = guard.tx_id();
         let started = Instant::now();
         let deadline = started
             .checked_add(Duration::from_millis(budget_ms))
+            .unwrap_or(started);
+        let transport_bound = started
+            .checked_add(Duration::from_millis(transport_bound_ms))
             .unwrap_or(started);
         let cancel = Arc::new(AtomicBool::new(false));
         let terminal = Arc::new(TerminalState::default());
@@ -66,6 +71,7 @@ impl WriteFuture {
             tx_id,
             started,
             deadline,
+            transport_bound,
             budget_ms,
             cancel,
             late_logged: Arc::new(AtomicBool::new(false)),
@@ -92,6 +98,16 @@ impl WriteFuture {
     /// Absolute deadline of this write.
     pub fn deadline(&self) -> Instant {
         self.deadline
+    }
+
+    /// Hard contract deadline for the consumer transport call.
+    pub fn transport_bound(&self) -> Instant {
+        self.transport_bound
+    }
+
+    /// Record that the consumer transport broke its hard return-time contract.
+    pub fn mark_contract_violated(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
     }
 
     /// Shared terminal state, exposed only for deterministic interleaving tests.

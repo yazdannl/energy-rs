@@ -110,6 +110,20 @@ fn settle(
     }
 }
 
+fn violate(slots: &mut [Option<WriteFuture>], index: usize, sink: &mut Sink<'_>) {
+    let Some(future) = slots[index].take() else {
+        return;
+    };
+    let generation = future.generation();
+    let elapsed_ms = future.elapsed_ms();
+    future.mark_contract_violated();
+    sink.attempts[index] = Some(WriteAttempt::TransportContractViolated {
+        generation,
+        elapsed_ms,
+    });
+    sink.unresolved.push(future);
+}
+
 fn handle_bound(
     slots: &mut [Option<WriteFuture>],
     context: &DriveContext<'_>,
@@ -126,12 +140,18 @@ fn handle_bound(
 
 fn poll_ready(slots: &mut [Option<WriteFuture>], context: &DriveContext<'_>, sink: &mut Sink<'_>) {
     for index in 0..slots.len() {
+        let now = Instant::now();
         if slots[index]
             .as_ref()
-            .and_then(|future| future.settle(Instant::now()))
+            .and_then(|future| future.settle(now))
             .is_some()
         {
             settle(slots, index, context, sink, false);
+        } else if slots[index]
+            .as_ref()
+            .is_some_and(|future| now >= future.transport_bound())
+        {
+            violate(slots, index, sink);
         }
     }
 }

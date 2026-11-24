@@ -25,6 +25,10 @@ pub struct FlowReport {
     pub echo: Option<Echo>,
     /// Ordered report sequence for freshness checks.
     pub message_id: u32,
+    /// Whether the device generated its own timestamp for this report.
+    pub device_clock_ok: bool,
+    /// Whether that device clock is coherent with the pack's command timeline.
+    pub device_clock_coherent: bool,
 }
 
 impl FlowReport {

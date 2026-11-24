@@ -20,6 +20,8 @@ pub struct Escalation<'a> {
     pub late: &'a Arc<Mutex<Vec<LateWrite>>>,
     /// Driver-loop bound violations.
     pub bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
+    /// Hard transport return-time bound.
+    pub transport_bound_ms: u64,
     /// Arbiter poll bound.
     pub max_polls: u64,
     /// End-to-end per-pack budget.
@@ -55,6 +57,7 @@ pub fn escalate(
         clock: escalation.clock,
         late: escalation.late,
         bound: escalation.bound,
+        transport_bound_ms: escalation.transport_bound_ms,
         max_polls: escalation.max_polls,
         budget_ms: escalation.budget_ms,
         now_ms,

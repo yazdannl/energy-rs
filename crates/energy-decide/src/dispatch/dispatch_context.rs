@@ -14,6 +14,8 @@ pub struct DispatchContext<'a> {
     pub late: &'a Arc<Mutex<Vec<LateWrite>>>,
     /// Driver-loop bound violations.
     pub bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
+    /// Hard transport return-time bound.
+    pub transport_bound_ms: u64,
     /// Arbiter poll bound for one tick.
     pub max_polls: u64,
     /// Per-pack end-to-end budget.

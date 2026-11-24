@@ -1,7 +1,5 @@
 //! M4 incidents S221-S225 and consumer-port/row observability S227-S233.
-
 mod m4_support;
-
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -49,7 +47,6 @@ fn shared(io: FakeIo) -> Arc<dyn PackIo> {
 fn economic(pack: &str, watts: f64) -> SlotRequest {
     SlotRequest::economic(pack, watts, 0, "plan")
 }
-
 #[test]
 fn s221_flow_window_is_not_awaited_inside_the_tick() {
     let dut = Dispatcher::new(
@@ -78,7 +75,6 @@ fn s221_flow_window_is_not_awaited_inside_the_tick() {
             .all(|row| row.reasons.contains(&"flow_not_measured"))
     );
 }
-
 #[test]
 fn s222_unbounded_transport_is_bounded_and_transaction_released() {
     let io = FakeIo::new(&[
@@ -119,7 +115,6 @@ fn s222_unbounded_transport_is_bounded_and_transaction_released() {
     assert!(io.peak_active() <= 4);
     assert!(rows.iter().filter(|r| r.pack_id != "P3").all(|r| r.written));
 }
-
 #[test]
 fn s223_deadline_row_is_never_written_or_accepted() {
     let io = FakeIo::new(&[("P3", Behavior::Never)]);
@@ -140,7 +135,6 @@ fn s223_deadline_row_is_never_written_or_accepted() {
     assert_eq!(row.applied_reason, AppliedReason::TransportDeadline);
     assert!(row.controller_uncertain);
 }
-
 #[test]
 fn s225_uncertainty_blocks_retries_until_verified_hold() {
     let io = FakeIo::new(&[("P3", Behavior::Never)]);
@@ -184,7 +178,6 @@ fn s225_uncertainty_blocks_retries_until_verified_hold() {
         Some("verified_hold")
     );
 }
-
 #[test]
 fn s224_low_soc_refusal_is_capability_shortfall_not_a_fault() {
     let io = FakeIo::new(&[("P3", Behavior::Accept { echo: true })]);
@@ -211,7 +204,6 @@ fn s224_low_soc_refusal_is_capability_shortfall_not_a_fault() {
     assert!(!row.fault_backoff_incremented);
     assert_eq!(state.pack("P3").backoff_until_ms, 0);
 }
-
 #[test]
 fn s227_one_budget_is_observable_in_the_row() {
     let dut = Dispatcher::production(
@@ -226,7 +218,6 @@ fn s227_one_budget_is_observable_in_the_row() {
     assert_eq!(rows[0].budget_ms, PACK_IO_BUDGET_MS);
     assert!(rows[0].elapsed_ms <= rows[0].budget_ms);
 }
-
 #[test]
 fn s229_safety_refusal_is_obeyed_and_recorded() {
     let io = FakeIo::default();
@@ -249,7 +240,6 @@ fn s229_safety_refusal_is_obeyed_and_recorded() {
     assert_eq!(writes.len(), 1);
     assert_eq!(writes[0].1.requested_w, 0.0);
 }
-
 #[test]
 fn s230_authority_denial_is_not_retried_around() {
     let io = FakeIo::default();
@@ -271,7 +261,6 @@ fn s230_authority_denial_is_not_retried_around() {
     assert_eq!(second[0].outcome, DispatchOutcome::Skipped);
     assert_eq!(io.write_count(), 0);
 }
-
 #[test]
 fn s232_echo_is_a_gate_not_a_verdict() {
     let io = FakeIo::new(&[
@@ -299,7 +288,6 @@ fn s232_echo_is_a_gate_not_a_verdict() {
     assert!(!rows[1].verified);
     assert_eq!(rows[1].applied_reason, AppliedReason::FlowNotMeasured);
 }
-
 #[test]
 fn s231_s233_rows_distinguish_every_state() {
     let io = FakeIo::new(&[
@@ -349,7 +337,6 @@ fn s231_s233_rows_distinguish_every_state() {
     assert_eq!(read.applied_reason, AppliedReason::ReadMiss);
     assert!(read.applied_w.is_none());
 }
-
 #[test]
 fn s041_null_applied_w_is_typed_not_zero() {
     let io = FakeIo::new(&[("A", Behavior::Accept { echo: true })]);
@@ -365,7 +352,6 @@ fn s041_null_applied_w_is_typed_not_zero() {
     assert_eq!(rows[0].applied_w, None);
     assert_eq!(rows[0].applied_reason, AppliedReason::FlowNotMeasured);
 }
-
 #[test]
 fn s043_s092_protection_active_skips_economic_writes() {
     let io = FakeIo::default();
@@ -383,7 +369,6 @@ fn s043_s092_protection_active_skips_economic_writes() {
     assert!(rows[0].reasons.contains(&"protection_active"));
     assert_eq!(io.write_count(), 0);
 }
-
 #[test]
 fn s247_uncertain_exits_by_read_back() {
     let io = FakeIo::new(&[("P", Behavior::Never)]);
@@ -408,22 +393,10 @@ fn s247_uncertain_exits_by_read_back() {
         limit_w: 0.0,
         at_ms: 1_001,
     });
-    let partial = dut.read_back(&mut state, &first, 1_001);
-    assert!(partial.reasons.contains(&"application_bound_not_covered"));
-    assert!(state.pack("P").uncertain);
-
-    let mut second = first.clone();
-    second.at_ms = 7_002;
-    second.message_id = 2;
-    second.echo = Some(Echo {
-        limit_w: 0.0,
-        at_ms: 7_002,
-    });
-    let cleared = dut.read_back(&mut state, &second, 7_002);
+    let cleared = dut.read_back(&mut state, &first, 1_001);
     assert_eq!(cleared.uncertainty_cleared_by, Some("read_back"));
     assert!(!state.pack("P").uncertain);
 }
-
 #[test]
 fn s247_uncertain_exits_by_verified_hold() {
     let io = FakeIo::default();
@@ -449,6 +422,7 @@ fn s247_uncertain_exits_by_verified_hold() {
     let mut held = DispatchState::default();
     held.pack("P").uncertain = true;
     held.pack("P").uncertain_reason = Some("write_deadline_mid_transport");
+    held.pack("P").last_apply_attempt_ms = 2_000;
     held.pack("P").pending = Some(energy_decide::dispatch::PendingConfirmation::new(
         0.0,
         1_000,
@@ -481,4 +455,46 @@ fn s247_uncertain_exits_by_verified_hold() {
     let hold_second = dut.observe(&mut held, &third, 7_003);
     assert_eq!(hold_second.uncertainty_cleared_by, Some("verified_hold"));
     assert!(!held.pack("P").uncertain);
+}
+#[test]
+fn s248_device_clock_is_required_for_causality() {
+    let dut = Dispatcher::new(
+        FakeIo::default(),
+        ProceedSafety,
+        AllowAllAuthority,
+        TestClock::default(),
+        120,
+    );
+    let mut state = DispatchState::default();
+    let pack = state.pack("P");
+    pack.uncertain = true;
+    pack.transport_gone = true;
+    pack.last_apply_attempt_ms = 100;
+    pack.joined_at_ms = 100;
+    pack.last_neutral_ack_at_ms = 200;
+
+    let mut evidence = report("P", 300, 0.0, 0, 0, 1);
+    evidence.echo = Some(Echo {
+        limit_w: 0.0,
+        at_ms: 300,
+    });
+    evidence.device_clock_ok = false;
+    let missing = dut.read_back(&mut state, &evidence, 300);
+    assert!(missing.reasons.contains(&"application_causality_unknown"));
+    assert!(state.pack("P").uncertain);
+
+    evidence.device_clock_ok = true;
+    evidence.device_clock_coherent = false;
+    let incoherent = dut.read_back(&mut state, &evidence, 300);
+    assert!(
+        incoherent
+            .reasons
+            .contains(&"application_causality_unknown")
+    );
+    assert!(state.pack("P").uncertain);
+
+    evidence.device_clock_coherent = true;
+    let post_hold = dut.read_back(&mut state, &evidence, 300);
+    assert_eq!(post_hold.uncertainty_cleared_by, Some("read_back"));
+    assert!(!state.pack("P").uncertain);
 }

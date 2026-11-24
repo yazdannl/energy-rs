@@ -1,9 +1,7 @@
 //! Fold later reports into deferred confirmations; never await them in a tick.
 
 use crate::dispatch::confirmation::{ConfirmationVerdict, fold, idle_confirmed};
-use crate::dispatch::constants::{
-    MAX_APPLICATION_DELAY_MS, NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS,
-};
+use crate::dispatch::constants::{NO_FLOW_BACKOFF_MS, PARTIAL_PAUSE_MS, RAMP_MAX_MS};
 use crate::dispatch::{
     AppliedReason, DispatchOutcome, DispatchRow, DispatchState, EvidenceKind, FlowClass,
     FlowReport, PackCommand, PendingConfirmation,
@@ -150,22 +148,12 @@ fn apply_state(
 ) {
     match verdict {
         ConfirmationVerdict::Confirmed { class, .. } => {
-            if let (FlowClass::HoldVerified, Some(first)) = (
-                class,
-                state.pending.as_ref().and_then(|p| p.first_in_band_ms),
-            ) {
-                state.neutral_window_start_ms.get_or_insert(first);
-                state.neutral_window_last_ms = now_ms;
-            }
-            let covered = state
-                .pending
-                .as_ref()
-                .and_then(|p| p.first_in_band_ms)
-                .is_some_and(|first| {
-                    now_ms.saturating_sub(first)
-                        > i64::try_from(MAX_APPLICATION_DELAY_MS).unwrap_or(i64::MAX)
-                });
-            if class == FlowClass::HoldVerified && report.echo.is_some() && covered {
+            let causal = crate::dispatch::read_back::causality_ok(
+                report,
+                state.last_apply_attempt_ms.max(state.joined_at_ms),
+                state.last_neutral_ack_at_ms,
+            );
+            if class == FlowClass::HoldVerified && report.echo.is_some() && causal {
                 state.uncertain = false;
                 state.uncertain_reason = None;
                 state.uncertainty_cleared_by = Some("verified_hold");
@@ -225,6 +213,11 @@ impl<'a> Observer<'a> {
         pending.message_id = report.message_id;
         let verdict = fold(pending, report, now_ms, RAMP_MAX_MS);
         let was_uncertain = pack.uncertain;
+        let causal = crate::dispatch::read_back::causality_ok(
+            report,
+            pack.last_apply_attempt_ms.max(pack.joined_at_ms),
+            pack.last_neutral_ack_at_ms,
+        );
         apply_state(pack, report, verdict, now_ms);
         if pack.pause_until_ms > now_ms {
             pack.pause_target_w = Some(command.requested_w);
@@ -240,6 +233,8 @@ impl<'a> Observer<'a> {
         );
         if was_uncertain && !pack.uncertain {
             row.uncertainty_cleared_by = Some("verified_hold");
+        } else if was_uncertain && !causal {
+            row = row.reason("application_causality_unknown");
         }
         self.escalate(row, pack, &command, report, now_ms)
     }
@@ -257,7 +252,12 @@ impl<'a> Observer<'a> {
             row.applied_reason = AppliedReason::Deferred;
             return row;
         }
-        if report.echo.is_some() {
+        let causal = crate::dispatch::read_back::causality_ok(
+            report,
+            pack.last_apply_attempt_ms.max(pack.joined_at_ms),
+            pack.last_neutral_ack_at_ms,
+        );
+        if report.echo.is_some() && causal {
             pack.uncertain = false;
             pack.uncertain_reason = None;
             pack.uncertainty_cleared_by = Some("verified_hold");
@@ -270,7 +270,11 @@ impl<'a> Observer<'a> {
         )
         .reason("idle_verified")
         .reason("no_command_needed");
-        row.uncertainty_cleared_by = Some("verified_hold");
+        if causal {
+            row.uncertainty_cleared_by = Some("verified_hold");
+        } else if pack.uncertain {
+            row = row.reason("application_causality_unknown");
+        }
         row
     }
 

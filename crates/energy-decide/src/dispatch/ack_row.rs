@@ -193,6 +193,17 @@ pub fn from_attempt(
         WriteAttempt::Superseded { generation, .. } => {
             superseded_effect(command, generation, elapsed, context.budget_ms)
         }
+        WriteAttempt::TransportContractViolated { generation, .. } => {
+            let mut effect = timeout_row(command, elapsed, context.budget_ms);
+            effect.row.generation = generation;
+            effect.row = effect
+                .row
+                .reason("transport_contract_violated")
+                .reason("controller_uncertain");
+            effect.row.applied_reason = crate::dispatch::AppliedReason::TransportContractViolated;
+            effect.uncertain_reason = Some("transport_contract_violated");
+            effect
+        }
         WriteAttempt::BoundExceeded { generation, .. } => {
             let mut effect = timeout_row(command, elapsed, context.budget_ms);
             effect.row.generation = generation;

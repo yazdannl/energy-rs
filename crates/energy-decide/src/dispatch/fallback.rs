@@ -36,6 +36,7 @@ pub fn write_fallback(
         clock: context.clock,
         late: context.late,
         bound: context.bound,
+        transport_bound_ms: context.transport_bound_ms,
         max_polls: context.max_polls,
     };
     for offset in FALLBACK_RETRY_MS {
@@ -51,7 +52,7 @@ pub fn write_fallback(
         let tx_id = context.io.begin(&hold.pack_id);
         let guard =
             crate::dispatch::TransactionGuard::new(Arc::clone(context.io), &hold.pack_id, tx_id);
-        let future = WriteFuture::start(context.io, &hold, guard, left);
+        let future = WriteFuture::start(context.io, &hold, guard, left, context.transport_bound_ms);
         let outcome = drive(vec![future], &driver);
         if let Some(WriteAttempt::Ack { ack, .. }) = outcome.attempts.into_iter().next() {
             let accepted = ack.accepted();

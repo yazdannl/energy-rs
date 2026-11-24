@@ -11,6 +11,9 @@ use crate::dispatch::{FlowReport, PackCommand, WriteAck};
 /// there is no channel and no second claimant. Once a request has left for the device it
 /// cannot be un-sent: cancellation and generation fencing prevent STATE contamination only.
 /// A cancelled write that ignores the token stays unresolved until reconciliation joins it.
+/// Hard contract: `write` MUST return success, refusal or error within `TRANSPORT_BOUND_MS`
+/// and MUST be unwind-safe. A write that blocks forever is a CONTRACT VIOLATION: M4 latches
+/// that pack and reports it, but cannot release a transaction the consumer never returns.
 /// Physical application MAY occur after `write` returns; M4 assumes yes and requires
 /// evidence strictly after the future is joined before clearing uncertainty.
 pub trait PackIo: Send + Sync + 'static {
@@ -25,6 +28,7 @@ pub trait PackIo: Send + Sync + 'static {
 
     /// Send one command under this transaction. The future token is set at the deadline;
     /// implementations must check it and return promptly when cancellation is requested.
+    /// Must return within `TRANSPORT_BOUND_MS` and unwind safely on every path.
     fn write(
         &self,
         pack_id: &str,

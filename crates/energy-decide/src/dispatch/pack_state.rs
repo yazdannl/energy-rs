@@ -15,6 +15,8 @@ pub struct PackState {
     pub uncertainty_cleared_by: Option<&'static str>,
     /// True once every transport future carrying this pack's command is gone.
     pub transport_gone: bool,
+    /// Latched after a hard transport-contract violation; cleared only by reconcile.
+    pub transport_contract_violated: bool,
     /// Slot time of the last write that could physically apply, epoch milliseconds.
     pub last_apply_attempt_ms: i64,
     /// Slot time when that write's future was joined, epoch milliseconds.
@@ -31,10 +33,8 @@ pub struct PackState {
     pub partial_retries: usize,
     /// Consecutive fresh neutral reports while no command is standing.
     pub idle_reports: usize,
-    /// Anchor of the current neutral-evidence window, epoch milliseconds.
-    pub neutral_window_start_ms: Option<i64>,
-    /// Latest neutral observation in that window, epoch milliseconds.
-    pub neutral_window_last_ms: i64,
+    /// Device timestamp of the last accepted neutralising hold, epoch milliseconds.
+    pub last_neutral_ack_at_ms: i64,
     /// Monotonic generation of the latest write; late older writes are ignored.
     pub generation: u64,
     /// Last command identity tracked for this pack, accepted or not.
@@ -49,6 +49,7 @@ impl Default for PackState {
             uncertain_reason: None,
             uncertainty_cleared_by: None,
             transport_gone: true,
+            transport_contract_violated: false,
             last_apply_attempt_ms: 0,
             joined_at_ms: 0,
             backoff_until_ms: 0,
@@ -57,8 +58,7 @@ impl Default for PackState {
             pause_target_w: None,
             partial_retries: 0,
             idle_reports: 0,
-            neutral_window_start_ms: None,
-            neutral_window_last_ms: 0,
+            last_neutral_ack_at_ms: 0,
             generation: 0,
             last_command: None,
         }
@@ -68,6 +68,9 @@ impl Default for PackState {
 impl PackState {
     /// Whether ordinary traffic is currently deferred.
     pub fn ordinary_blocked(&self, now_ms: i64) -> bool {
-        self.uncertain || now_ms < self.backoff_until_ms || now_ms < self.pause_until_ms
+        self.uncertain
+            || self.transport_contract_violated
+            || now_ms < self.backoff_until_ms
+            || now_ms < self.pause_until_ms
     }
 }

@@ -31,5 +31,7 @@ pub fn report(
         device_min_soc_pct: 10.0,
         echo: None,
         message_id,
+        device_clock_ok: true,
+        device_clock_coherent: true,
     }
 }

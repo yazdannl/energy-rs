@@ -2,6 +2,10 @@
 
 /// End-to-end budget for apply + echo + fail-safe fallback, W-free milliseconds.
 pub const PACK_IO_BUDGET_MS: u64 = 20_000;
+/// Hard transport contract: `PackIo::write` must return within this bound.
+/// The live engine already enforces 5 s read/write transport timeouts and a 6 s
+/// write-transaction timeout in `crates/energy-battery`; M4 uses the 6 s bound.
+pub const TRANSPORT_BOUND_MS: u64 = 6_000;
 /// Maximum allowed ramp before flow must be measured in band.
 pub const RAMP_MAX_MS: u64 = 45_000;
 /// Deadband below which a commanded power is a hold, W.
@@ -20,10 +24,6 @@ pub const MAX_DRIVE_POLLS_PER_TICK: u64 = 4_096;
 pub const DRIVE_POLL_INTERVAL_MS: u64 = 1;
 /// Freshness bound for the latest read-back report and its echo, milliseconds.
 pub const READBACK_FRESHNESS_MS: u64 = 5_000;
-/// Maximum delay from write return to a possible physical application, milliseconds.
-/// Justified by the live 0/2/6 s fail-safe ladder: no observed pack applied a returned
-/// write later than 6 s. Neutrality must span this whole window before clearance.
-pub const MAX_APPLICATION_DELAY_MS: u64 = 6_000;
 /// Upper SoC band in which a faultLevel-0 refusal is treated as a capability shortfall.
 /// Live evidence: three of four packs refused discharge at 31-34 % with device minSoc 10 %.
 pub const SHORTFALL_SOC_MAX_PCT: f64 = 40.0;

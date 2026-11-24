@@ -14,6 +14,8 @@ pub struct DriveContext<'a> {
     pub late: &'a Arc<Mutex<Vec<LateWrite>>>,
     /// Driver-loop bound violations.
     pub bound: &'a Arc<Mutex<Vec<DriveBoundEvent>>>,
+    /// Hard transport return-time bound; exceeding it latches the pack.
+    pub transport_bound_ms: u64,
     /// Maximum arbiter polls in one tick; guards loops, never restarts a future.
     pub max_polls: u64,
 }

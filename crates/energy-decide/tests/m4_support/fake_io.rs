@@ -216,6 +216,14 @@ impl FakeIo {
                 Self::wait_cancel(token, *max_wait_ms, command.issued_at_ms)
             }
             Behavior::Never => Self::wait_cancel(token, 5_000, command.issued_at_ms),
+            Behavior::Blocked { return_after_ms } => {
+                let _ = token;
+                thread::sleep(Duration::from_millis(*return_after_ms));
+                WriteAck::Failed {
+                    reason: "transport_contract_violation",
+                    at_ms: command.issued_at_ms,
+                }
+            }
             Behavior::Late { after_ms } => {
                 thread::sleep(Duration::from_millis(deadline_ms.saturating_add(*after_ms)));
                 self.accepted(pack_id, command)

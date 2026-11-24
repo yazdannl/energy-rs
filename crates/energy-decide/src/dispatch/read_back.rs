@@ -1,18 +1,23 @@
-//! Causal, fresh and neutral validation for truth re-establishment.
+//! Device-timestamp causality and neutrality for truth re-establishment.
 //!
-//! Transport contract: a physical application may occur after `write()` returns. M4
-//! assumes yes and never treats a join as physical completion. Clearance needs two
-//! consecutive neutral observations spanning `MAX_APPLICATION_DELAY_MS`, or a verified
-//! safety hold over the same window. An uncertain pack with neither exit is a defect,
-//! not a safe final state.
+//! No stopwatch can prove a late write has stopped applying. The only honest evidence
+//! is a device-generated report whose timestamp is causally after the last apply
+//! attempt and after the neutralising hold's acknowledgement. If the device clock is
+//! unavailable, incoherent or cannot be ordered, the pack stays `Uncertain`.
 
-use crate::dispatch::constants::{
-    HOLD_DEADBAND_W, MAX_APPLICATION_DELAY_MS, READBACK_FRESHNESS_MS,
-};
+use crate::dispatch::constants::{HOLD_DEADBAND_W, READBACK_FRESHNESS_MS};
 use crate::dispatch::{
     AppliedReason, DispatchOutcome, DispatchRow, EvidenceKind, FlowReport, FlowStatus, PackCommand,
     PackState, status_direction,
 };
+
+/// Whether device ordering proves this report postdates every pending application.
+pub fn causality_ok(report: &FlowReport, apply_attempt_ms: i64, neutral_ack_ms: i64) -> bool {
+    report.device_clock_ok
+        && report.device_clock_coherent
+        && report.at_ms > apply_attempt_ms
+        && report.at_ms > neutral_ack_ms
+}
 
 /// Reject missing, stale, non-causal, non-neutral or non-finite evidence.
 pub fn rejection(
@@ -20,6 +25,7 @@ pub fn rejection(
     report: &FlowReport,
     now_ms: i64,
     evidence_after_ms: i64,
+    neutral_ack_ms: i64,
 ) -> Option<&'static str> {
     if !transport_gone {
         return Some("transport_still_outstanding");
@@ -29,6 +35,9 @@ pub fn rejection(
     };
     if !report.measured_w.is_finite() || !echo.limit_w.is_finite() {
         return Some("readback_non_finite");
+    }
+    if !causality_ok(report, evidence_after_ms, neutral_ack_ms) {
+        return Some("application_causality_unknown");
     }
     let fresh = |at_ms: i64| {
         at_ms <= now_ms
@@ -40,9 +49,6 @@ pub fn rejection(
     }
     if !fresh(echo.at_ms) {
         return Some("readback_stale_echo");
-    }
-    if report.at_ms <= evidence_after_ms || echo.at_ms <= evidence_after_ms {
-        return Some("readback_not_causal");
     }
     if echo.limit_w.abs() > HOLD_DEADBAND_W {
         return Some("readback_not_neutral");
@@ -80,21 +86,16 @@ pub fn clear(
     now_ms: i64,
 ) -> DispatchRow {
     let evidence_after_ms = pack.last_apply_attempt_ms.max(pack.joined_at_ms);
-    let Some(reason) = rejection(pack.transport_gone, report, now_ms, evidence_after_ms) else {
-        let bound = i64::try_from(MAX_APPLICATION_DELAY_MS).unwrap_or(i64::MAX);
-        let start = pack.neutral_window_start_ms.get_or_insert(report.at_ms);
-        pack.neutral_window_last_ms = report.at_ms;
-        if report.at_ms <= start.saturating_add(bound) {
-            let mut pending = row.reason("application_bound_not_covered");
-            pending.applied_reason = AppliedReason::ReadbackRejected;
-            pending.controller_uncertain = pack.uncertain;
-            return pending;
-        }
+    let Some(reason) = rejection(
+        pack.transport_gone,
+        report,
+        now_ms,
+        evidence_after_ms,
+        pack.last_neutral_ack_at_ms,
+    ) else {
         pack.uncertain = false;
         pack.uncertain_reason = None;
         pack.uncertainty_cleared_by = Some("read_back");
-        pack.neutral_window_start_ms = None;
-        pack.neutral_window_last_ms = 0;
         row = row
             .outcome(
                 DispatchOutcome::Confirmed,
@@ -104,8 +105,6 @@ pub fn clear(
         row.uncertainty_cleared_by = Some("read_back");
         return row;
     };
-    pack.neutral_window_start_ms = None;
-    pack.neutral_window_last_ms = 0;
     row = row.reason(reason);
     row.applied_reason = AppliedReason::ReadbackRejected;
     row.controller_uncertain = pack.uncertain;

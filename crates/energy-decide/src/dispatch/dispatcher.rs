@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use crate::dispatch::constants::MAX_DRIVE_POLLS_PER_TICK;
+use crate::dispatch::constants::{MAX_DRIVE_POLLS_PER_TICK, TRANSPORT_BOUND_MS};
 use crate::dispatch::driver::drive;
 use crate::dispatch::preparation::{Preparation, prepare};
 use crate::dispatch::{
@@ -19,6 +19,7 @@ pub struct Dispatcher<S: SafetyGate, A: WriteAuthority, C: RetryClock> {
     authority: A,
     clock: C,
     budget_ms: u64,
+    transport_bound_ms: u64,
     max_polls: u64,
     late: Arc<Mutex<Vec<LateWrite>>>,
     bound: Arc<Mutex<Vec<DriveBoundEvent>>>,
@@ -44,6 +45,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             authority,
             clock,
             budget_ms,
+            transport_bound_ms: TRANSPORT_BOUND_MS,
             max_polls: MAX_DRIVE_POLLS_PER_TICK,
             late: Arc::new(Mutex::new(Vec::new())),
             bound: Arc::new(Mutex::new(Vec::new())),
@@ -60,6 +62,14 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             clock,
             crate::dispatch::constants::PACK_IO_BUDGET_MS,
         )
+    }
+
+    /// Lower the hard transport bound for deterministic contract-violation tests.
+    /// Production always uses `TRANSPORT_BOUND_MS` from the live engine contract.
+    #[must_use]
+    pub fn with_transport_bound_ms(mut self, transport_bound_ms: u64) -> Self {
+        self.transport_bound_ms = transport_bound_ms;
+        self
     }
 
     /// Lower the arbiter poll bound for deterministic loop-bound tests.
@@ -102,6 +112,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             bound: &self.bound,
             max_polls: self.max_polls,
             budget_ms: self.budget_ms,
+            transport_bound_ms: self.transport_bound_ms,
             now_ms,
         };
         let driver = DriveContext {
@@ -109,6 +120,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             clock: context.clock,
             late: context.late,
             bound: context.bound,
+            transport_bound_ms: context.transport_bound_ms,
             max_polls: context.max_polls,
         };
         (context, driver)
@@ -153,6 +165,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
                     &write.command,
                     guard,
                     self.budget_ms,
+                    self.transport_bound_ms,
                 ));
             }
         }
@@ -163,14 +176,12 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             .iter()
             .map(|future| future.pack_id().to_owned())
             .collect::<BTreeSet<_>>();
-        self.unresolved
+        let mut pending = self
+            .unresolved
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend(result.unresolved);
-        self.unresolved
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend(result.retired);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        pending.extend(result.unresolved);
+        pending.extend(result.retired);
         crate::dispatch::slot_collector::collect(
             state,
             preparations,
@@ -206,6 +217,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             }
             let pack = state.pack(&pack_id);
             pack.transport_gone = true;
+            pack.transport_contract_violated = false;
             pack.joined_at_ms = now_ms;
             gone.insert(pack_id);
         }
@@ -258,6 +270,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
             clock: &self.clock,
             late: &self.late,
             bound: &self.bound,
+            transport_bound_ms: self.transport_bound_ms,
             max_polls: self.max_polls,
             budget_ms: self.budget_ms,
         };

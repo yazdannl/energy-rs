@@ -17,6 +17,8 @@ pub enum AppliedReason {
     ReadbackRejected,
     /// The per-pack budget expired during transport.
     TransportDeadline,
+    /// The consumer write transport broke its hard return-time contract.
+    TransportContractViolated,
     /// Completion arrived after its generation was superseded and was ignored.
     LateSuperseded,
     /// Transport failed before acceptance.
