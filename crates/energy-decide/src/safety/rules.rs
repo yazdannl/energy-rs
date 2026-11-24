@@ -2,47 +2,57 @@
 
 use crate::dispatch::constants::HOLD_DEADBAND_W;
 use crate::dispatch::{SafetyAction, SlotRequest};
-use crate::safety::ladder::ImportLatch;
-use crate::safety::ladder::LadderState;
+use crate::safety::state::LadderState;
 use crate::safety::{
-    CELL_RESUME_V, CELL_TRIGGER_V, EMERGENCY_CHARGE_W, RESTART_GRACE_MS, Rule, SafetyInput,
+    AGGREGATE_EMERGENCY_W, CELL_NOMINAL_V, CELL_RESUME_V, CELL_TRIGGER_V, EMERGENCY_DURATION_MS,
+    HoldProof, RESTART_GRACE_MS, Rule, SafetyInput,
 };
 
-/// One fired rule, its reason and the command it selects.
+/// One fired rule, its reason and the command or deferral it selects.
 #[derive(Debug, Clone)]
 pub(crate) struct Candidate {
     pub rule: Rule,
     pub reason: &'static str,
     pub action: Option<SafetyAction>,
     pub binding_limits: Vec<&'static str>,
+    pub extra_reasons: Vec<&'static str>,
     pub blocked: bool,
+    pub defer_until_ms: Option<i64>,
 }
 
-fn candidate(rule: Rule, action: Option<SafetyAction>) -> Candidate {
+pub(crate) fn candidate(rule: Rule, action: Option<SafetyAction>) -> Candidate {
     Candidate {
         rule,
         reason: rule.reason(),
         action,
         binding_limits: Vec::new(),
+        extra_reasons: Vec::new(),
         blocked: false,
+        defer_until_ms: None,
     }
 }
 
-fn blocked(rule: Rule, reason: &'static str, limits: Vec<&'static str>) -> Candidate {
+pub(crate) fn blocked(rule: Rule, reason: &'static str, limits: Vec<&'static str>) -> Candidate {
     Candidate {
         rule,
         reason,
         action: Some(SafetyAction::NeutralHold),
         binding_limits: limits,
+        extra_reasons: Vec::new(),
         blocked: true,
+        defer_until_ms: None,
     }
 }
 
-fn hold(rule: Rule) -> Candidate {
+pub(crate) fn hold(rule: Rule) -> Candidate {
     candidate(rule, Some(SafetyAction::NeutralHold))
 }
 
-fn physical_limits(input: &SafetyInput, charge: bool, required_w: f64) -> Vec<&'static str> {
+pub(crate) fn physical_limits(
+    input: &SafetyInput,
+    charge: bool,
+    required_w: f64,
+) -> Vec<&'static str> {
     let mut limits = Vec::new();
     if !input.temperature_ok {
         limits.push("temperature_range");
@@ -66,6 +76,26 @@ fn physical_limits(input: &SafetyInput, charge: bool, required_w: f64) -> Vec<&'
     limits
 }
 
+pub(crate) fn demand_w(input: &SafetyInput) -> Option<f64> {
+    input
+        .grid_w
+        .zip(input.battery_w)
+        .map(|(grid, battery)| grid - battery)
+}
+
+pub(crate) fn coordinated_w(input: &SafetyInput) -> f64 {
+    input
+        .coordinated_pack_w
+        .iter()
+        .copied()
+        .filter(|w| w.is_finite())
+        .sum()
+}
+
+pub(crate) fn projected_import(input: &SafetyInput, self_w: f64) -> Option<f64> {
+    demand_w(input).map(|demand| demand + coordinated_w(input) + self_w)
+}
+
 pub(crate) fn cell_hold(input: &SafetyInput) -> Option<Candidate> {
     if input.cell_latch || (input.cell_min_v < CELL_TRIGGER_V && !input.cell_force_charge) {
         return Some(hold(Rule::CellLatch));
@@ -73,30 +103,49 @@ pub(crate) fn cell_hold(input: &SafetyInput) -> Option<Candidate> {
     None
 }
 
+fn emergency_target_w(input: &SafetyInput) -> f64 {
+    let deficit_v = (CELL_RESUME_V - input.cell_min_v).max(0.0);
+    let deficit_kwh = input.pack_capacity_kwh * deficit_v / CELL_NOMINAL_V;
+    let needed_w = deficit_kwh * 1_000.0 * 3_600_000.0 / f64::from(EMERGENCY_DURATION_MS as u32);
+    let aggregate_share = AGGREGATE_EMERGENCY_W / input.fleet_pack_count.max(1) as f64;
+    needed_w
+        .min(input.max_charge_w)
+        .min(aggregate_share)
+        .max(0.0)
+}
+
 pub(crate) fn cell_emergency(input: &SafetyInput) -> Option<Candidate> {
-    if !input.cell_force_charge || input.cell_stale() || input.cell_min_v >= CELL_RESUME_V {
+    if !input.cell_force_charge || input.cell_min_v >= CELL_RESUME_V {
         return None;
     }
-    let target_w = EMERGENCY_CHARGE_W.max(input.plan_w);
-    let limits = physical_limits(input, true, target_w);
+    if input.cell_command_sample_stale() {
+        return Some(blocked(
+            Rule::CellEmergency,
+            "emergency_charge_impossible",
+            vec!["cell_sample_stale"],
+        ));
+    }
+    let target_w = emergency_target_w(input);
+    let mut limits = physical_limits(input, true, target_w);
+    let projected = projected_import(input, target_w);
+    if projected.is_some_and(|grid| grid > input.physical_service_limit_w) {
+        limits.push("physical_service_limit");
+    }
     if limits.is_empty() {
-        return Some(candidate(
+        let mut result = candidate(
             Rule::CellEmergency,
             Some(SafetyAction::EmergencyCharge { target_w }),
-        ));
+        );
+        if projected.is_some_and(|grid| grid > input.import_ceiling_w) {
+            result.extra_reasons.push("import_margin_breached");
+        }
+        return Some(result);
     }
     Some(blocked(
         Rule::CellEmergency,
         "emergency_charge_impossible",
         limits,
     ))
-}
-
-fn demand_w(input: &SafetyInput) -> Option<f64> {
-    input
-        .grid_w
-        .zip(input.battery_w)
-        .map(|(grid, battery)| grid - battery)
 }
 
 pub(crate) fn soc_floor(input: &SafetyInput) -> Option<Candidate> {
@@ -113,67 +162,9 @@ pub(crate) fn soc_floor(input: &SafetyInput) -> Option<Candidate> {
     }
 }
 
-pub(crate) fn import_ceiling(
-    input: &SafetyInput,
-    state: &mut LadderState,
-    now_ms: i64,
-) -> Option<Candidate> {
-    let latch = state
-        .imports
-        .entry(input.pack_id.clone())
-        .or_insert(ImportLatch {
-            armed: input.import_armed,
-            ask_w: 0.0,
-            at_ms: now_ms,
-        });
-    let demand = demand_w(input);
-    if let Some(demand) = demand
-        && demand > input.import_ceiling_w + input.import_deadband_w
-    {
-        latch.armed = true;
-        latch.ask_w = input.import_ceiling_w - demand;
-        latch.at_ms = now_ms;
-    }
-    let released = input
-        .settled_grid_w
-        .is_some_and(|grid| grid <= input.import_ceiling_w - input.import_deadband_w);
-    if released {
-        latch.armed = false;
-        return None;
-    }
-    if !latch.armed && input.grid_w.is_none() {
-        let mut item = hold(Rule::ImportCeiling);
-        item.reason = "grid_telemetry_missing";
-        return Some(item);
-    }
-    if !latch.armed {
-        return None;
-    }
-    let mut result = candidate(
-        Rule::ImportCeiling,
-        Some(SafetyAction::ProtectiveDischarge {
-            target_w: latch.ask_w,
-        }),
-    );
-    let limits = physical_limits(input, false, latch.ask_w);
-    if !limits.is_empty() {
-        let floor_only = limits.len() == 1 && limits[0] == "soc_floor";
-        let reason = if floor_only {
-            Rule::ImportCeiling.reason()
-        } else {
-            "import_remedy_blocked"
-        };
-        result = blocked(Rule::ImportCeiling, reason, limits);
-    }
-    if input.grid_w.is_none() {
-        result.reason = "grid_telemetry_missing";
-    }
-    Some(result)
-}
-
 pub(crate) fn full_charge(input: &SafetyInput) -> Option<Candidate> {
     if input.at_ceiling() && input.plan_w > 0.0 {
-        let mut result = candidate(Rule::FullCharge, Some(SafetyAction::NeutralHold));
+        let mut result = hold(Rule::FullCharge);
         result.binding_limits.push("soc_ceiling");
         return Some(result);
     }
@@ -189,25 +180,61 @@ pub(crate) fn export_guard(input: &SafetyInput) -> Option<Candidate> {
     None
 }
 
-pub(crate) fn transition(input: &SafetyInput, now_ms: i64) -> Vec<Candidate> {
-    let mut found = Vec::new();
+pub(crate) fn stale_pack(input: &SafetyInput) -> Option<Candidate> {
     if input.sample_stale() {
-        found.push(hold(Rule::StaleSample));
+        return Some(hold(Rule::StaleSample));
     }
+    None
+}
+
+pub(crate) fn stale_command(input: &SafetyInput, request: &SlotRequest) -> Option<Candidate> {
+    if input.command_sample_stale() && request.requested_w.abs() > HOLD_DEADBAND_W {
+        return Some(hold(Rule::StaleCommand));
+    }
+    None
+}
+
+pub(crate) fn orphan_hold(input: &SafetyInput) -> Option<Candidate> {
     if input.ownership_lost {
-        found.push(hold(Rule::OrphanHold));
+        return Some(hold(Rule::OrphanHold));
     }
+    None
+}
+
+pub(crate) fn cancel_ramp(input: &SafetyInput) -> Option<Candidate> {
     if input.cancel_ramp && input.standing_command_w.abs() > HOLD_DEADBAND_W {
-        found.push(hold(Rule::CancelRamp));
+        return Some(hold(Rule::CancelRamp));
     }
+    None
+}
+
+pub(crate) fn restart_grace(input: &SafetyInput, now_ms: i64) -> Option<Candidate> {
     if input
         .restart_at_ms
         .is_some_and(|at| now_ms - at <= RESTART_GRACE_MS)
         && (input.standing_command_w.abs() > HOLD_DEADBAND_W || input.uncertain)
     {
-        found.push(hold(Rule::RestartGrace));
+        return Some(hold(Rule::RestartGrace));
     }
-    found
+    None
+}
+
+pub(crate) fn unverified_hold(
+    state: &LadderState,
+    input: &SafetyInput,
+    request: &SlotRequest,
+) -> Option<Candidate> {
+    if request.safety_traffic {
+        return None;
+    }
+    let unresolved = state
+        .holds
+        .get(&input.pack_id)
+        .is_some_and(HoldProof::blocks_ordinary);
+    if unresolved {
+        return Some(hold(Rule::UnverifiedHold));
+    }
+    None
 }
 
 pub(crate) fn uncertain(input: &SafetyInput, request: &SlotRequest) -> Option<Candidate> {
@@ -230,7 +257,9 @@ pub(crate) fn backoff(
     if request.safety_traffic || now_ms >= input.backoff_until_ms {
         return None;
     }
-    Some(candidate(Rule::FaultBackoff, None))
+    let mut result = candidate(Rule::FaultBackoff, None);
+    result.defer_until_ms = Some(input.backoff_until_ms);
+    Some(result)
 }
 
 pub(crate) fn no_command(input: &SafetyInput, request: &SlotRequest) -> Option<Candidate> {

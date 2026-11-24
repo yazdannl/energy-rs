@@ -13,4 +13,6 @@ pub struct SafetyReceipt {
     pub attempt_id: u64,
     /// Measured report, including echo and flow.
     pub report: FlowReport,
+    /// Independently observed cell threshold result for an emergency charge.
+    pub emergency_resolved: Option<bool>,
 }

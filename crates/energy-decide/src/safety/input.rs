@@ -26,6 +26,10 @@ pub struct SafetyInput {
     pub battery_w: Option<f64>,
     /// Settled grid estimate used to release the import latch; a transient dip is not enough.
     pub settled_grid_w: Option<f64>,
+    /// Observation time of the settled estimate, epoch milliseconds.
+    pub settled_at_ms: Option<i64>,
+    /// Commands already selected for the other packs in this coordinated slot, W.
+    pub coordinated_pack_w: Vec<f64>,
     /// Measured non-battery house load, W; `None` is missing telemetry.
     pub load_w: Option<f64>,
     /// Measured PV generation, W; `None` is missing telemetry.
@@ -36,12 +40,18 @@ pub struct SafetyInput {
     pub solar_reserve_kwh: f64,
     /// Horizon length used for the advisory headroom, hours.
     pub horizon_hours: f64,
+    /// Number of packs in the coordinated fleet, for the emergency aggregate bound.
+    pub fleet_pack_count: usize,
+    /// Usable capacity of this pack, kWh, for the emergency charge estimate.
+    pub pack_capacity_kwh: f64,
     /// Time of the solar/load sample; `None` is missing telemetry.
     pub solar_sample_at_ms: Option<i64>,
     /// Import guard currently armed by a measured breach.
     pub import_armed: bool,
     /// Effective import ceiling after margin, W.
     pub import_ceiling_w: f64,
+    /// Physical service limit; an emergency may breach the margin, never this fuse.
+    pub physical_service_limit_w: f64,
     /// Import release deadband, W.
     pub import_deadband_w: f64,
     /// Export/self-consumption hard ceiling magnitude, W.
@@ -95,14 +105,19 @@ impl SafetyInput {
             grid_w: Some(0.0),
             battery_w: Some(0.0),
             settled_grid_w: None,
+            settled_at_ms: None,
+            coordinated_pack_w: Vec::new(),
             load_w: Some(0.0),
             pv_w: Some(0.0),
             forecast_future_pv_kwh: 0.0,
             solar_reserve_kwh: 0.0,
             horizon_hours: 30.0,
+            fleet_pack_count: 4,
+            pack_capacity_kwh: 1.92,
             solar_sample_at_ms: Some(at_ms),
             import_armed: false,
             import_ceiling_w: crate::IMPORT_CEILING_W,
+            physical_service_limit_w: 7_700.0,
             import_deadband_w: 10.0,
             export_ceiling_w: f64::INFINITY,
             soc_kwh: 4.0,
@@ -141,11 +156,25 @@ impl SafetyInput {
             .is_none_or(|at| self.at_ms - at > 180_000)
     }
 
-    /// Pack samples are older than the M5 stale-sample TTL.
+    /// Pack samples are older than the M5 economic-reachability TTL.
     pub fn sample_stale(&self) -> bool {
         self.at_ms - self.last_sample_at_ms > STALE_SAMPLE_MS
+    }
+
+    /// Pack samples are too old to permission a nonzero command (2x sampler period).
+    pub fn command_sample_stale(&self) -> bool {
+        self.at_ms - self.last_sample_at_ms > COMMAND_SAMPLE_MAX_MS
+    }
+
+    /// Cell sample is too old to permission an emergency charge.
+    pub fn cell_command_sample_stale(&self) -> bool {
+        self.cell_observed_at_ms
+            .is_none_or(|at| self.at_ms - at > COMMAND_SAMPLE_MAX_MS)
     }
 }
 
 /// Documented TTL after which a sample-stale pack stops reserving a share silently.
+/// This is an economic-reachability bound only, not permission to keep a nonzero command.
 pub const STALE_SAMPLE_MS: i64 = 300_000;
+/// Two 20 s tick/sampler periods: no nonzero command may be granted on older evidence.
+pub const COMMAND_SAMPLE_MAX_MS: i64 = 40_000;

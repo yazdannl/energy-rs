@@ -1,15 +1,18 @@
 //! M5 safety ladder: one ordered rule list, verified holds, bounded escalation.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::dispatch::{SafetyAction, SafetyGate, SafetyIntervention, SlotRequest};
+use crate::safety::escalation::SAFETY_ATTEMPT_DEADLINE_MS;
 use crate::safety::rules::{
-    Candidate, backoff, cell_emergency, cell_hold, export_guard, full_charge, import_ceiling,
-    no_command, soc_floor, transition, uncertain,
+    Candidate, backoff, cancel_ramp, cell_emergency, cell_hold, export_guard, full_charge,
+    no_command, orphan_hold, restart_grace, soc_floor, stale_command, stale_pack, uncertain,
+    unverified_hold,
 };
+use crate::safety::rules_import::import_ceiling;
+use crate::safety::state::{LadderState, advance_due, note, proof_for};
 use crate::safety::{
-    DecisionOutcome, Escalation, HoldProof, SafetyDecision, SafetyInput, SafetyReceipt,
+    DecisionOutcome, Escalation, HoldProof, Rule, SafetyDecision, SafetyInput, SafetyReceipt,
     SolarHeadroom,
 };
 
@@ -17,26 +20,16 @@ use crate::safety::{
 pub const CELL_TRIGGER_V: f64 = 3.00;
 /// Resume threshold for a latched emergency charge.
 pub const CELL_RESUME_V: f64 = 3.18;
-/// Shipped emergency-charge default, W.
+/// Shipped emergency-charge default, retained for reporting compatibility.
 pub const EMERGENCY_CHARGE_W: f64 = 800.0;
 /// Restart grace window from SPEC M5, milliseconds.
 pub const RESTART_GRACE_MS: i64 = 120_000;
-
-#[derive(Debug, Clone)]
-pub(crate) struct ImportLatch {
-    pub armed: bool,
-    pub ask_w: f64,
-    pub at_ms: i64,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct LadderState {
-    pub(crate) inputs: HashMap<String, SafetyInput>,
-    pub(crate) decisions: Vec<SafetyDecision>,
-    pub(crate) holds: HashMap<String, HoldProof>,
-    pub(crate) imports: HashMap<String, ImportLatch>,
-    pub(crate) seq: u64,
-}
+/// Maximum emergency-charge duration before escalation, milliseconds.
+pub const EMERGENCY_DURATION_MS: i64 = 180_000;
+/// Nominal cell voltage used to convert a voltage deficit into stored energy, V.
+pub const CELL_NOMINAL_V: f64 = 3.7;
+/// Aggregate emergency-charge bound; divided over the coordinated fleet.
+pub const AGGREGATE_EMERGENCY_W: f64 = crate::FLEET_POWER_W;
 
 /// Pure decision core for the safety ladder. It never writes and never waits.
 #[derive(Debug, Default)]
@@ -61,7 +54,7 @@ impl SafetyLadder {
         state.inputs.insert(input.pack_id.clone(), input);
     }
 
-    /// Fold a correlated receipt into the open hold proof; echo alone cannot verify it.
+    /// Fold a correlated receipt into the open proof; echo alone cannot verify it.
     pub fn observe_hold(&self, receipt: &SafetyReceipt, now_ms: i64) {
         let mut state = self.lock();
         if let Some(proof) = state.holds.get_mut(&receipt.pack_id) {
@@ -85,6 +78,14 @@ impl SafetyLadder {
         }
     }
 
+    /// Clear terminal retention after the pack is explicitly recovered.
+    pub fn recover_hold(&self, pack_id: &str, _at_ms: i64) {
+        let mut state = self.lock();
+        if state.holds.remove(pack_id).is_some() {
+            note(&mut state, pack_id, "hold_recovered");
+        }
+    }
+
     /// Last decision recorded for one pack, including explicit no-action decisions.
     pub fn last_decision(&self, pack_id: &str) -> Option<SafetyDecision> {
         self.lock()
@@ -100,7 +101,7 @@ impl SafetyLadder {
         self.lock().decisions.clone()
     }
 
-    /// Current hold proof for one pack, when a safety hold was issued.
+    /// Current proof for one pack, when a safety command was issued.
     pub fn hold_proof(&self, pack_id: &str) -> Option<HoldProof> {
         self.lock().holds.get(pack_id).cloned()
     }
@@ -116,13 +117,29 @@ impl SafetyLadder {
         input.at_ms = now_ms;
         input.plan_w = request.requested_w;
         state.inputs.insert(input.pack_id.clone(), input.clone());
+        advance_due(&mut state, now_ms);
         let solar = SolarHeadroom::evaluate(&input);
         let candidates = evaluate(&input, request, &mut state, now_ms);
         let mut decision = build(&input, &candidates, solar, now_ms);
-        if decision.action == Some(SafetyAction::NeutralHold) {
-            let proof = hold(&mut state, &input.pack_id, now_ms);
-            decision.retry_at_ms = proof.escalation.retry_at_ms;
-            decision.steps.extend(proof.steps);
+        if let Some(action) = decision.action {
+            let duration = if decision.rule == Rule::CellEmergency {
+                EMERGENCY_DURATION_MS
+            } else {
+                i64::try_from(SAFETY_ATTEMPT_DEADLINE_MS).unwrap_or(i64::MAX)
+            };
+            let proof = proof_for(&mut state, &input, decision.rule, action, now_ms, duration);
+            decision.retry_at_ms = proof
+                .escalation
+                .retry_at_ms
+                .or_else(|| (!proof.verified).then(|| proof.deadline_ms()));
+            decision.steps.push("hold_proof_attached");
+            decision
+                .steps
+                .extend(proof.escalation.steps.iter().copied());
+            if proof.escalation.exhausted() && !proof.verified {
+                decision.outcome = DecisionOutcome::Failed;
+                decision.steps.push("ownership_retention");
+            }
         }
         state.decisions.push(decision.clone());
         decision
@@ -138,6 +155,12 @@ impl SafetyLadder {
 impl SafetyGate for SafetyLadder {
     fn preempt(&self, request: &SlotRequest, now_ms: i64) -> SafetyIntervention {
         let decision = self.decide(request, now_ms);
+        if decision.outcome == DecisionOutcome::Deferred {
+            return SafetyIntervention::Defer {
+                reason: decision.reason,
+                retry_at_ms: decision.retry_at_ms,
+            };
+        }
         match decision.action {
             Some(action) => SafetyIntervention::Hold {
                 action,
@@ -146,34 +169,6 @@ impl SafetyGate for SafetyLadder {
             None => SafetyIntervention::Proceed,
         }
     }
-}
-
-fn note(state: &mut LadderState, pack_id: &str, step: &'static str) {
-    if let Some(decision) = state
-        .decisions
-        .iter_mut()
-        .rev()
-        .find(|d| d.pack_id == pack_id)
-    {
-        decision.steps.push(step);
-    }
-}
-
-fn hold(state: &mut LadderState, pack_id: &str, at_ms: i64) -> HoldProof {
-    let fresh = state
-        .holds
-        .get(pack_id)
-        .is_none_or(|proof| proof.verified || proof.escalation.exhausted());
-    if fresh {
-        state.seq = state.seq.saturating_add(1);
-        let proof = HoldProof::new(state.seq, at_ms, 0.0);
-        state.holds.insert(pack_id.to_owned(), proof);
-    }
-    state
-        .holds
-        .get(pack_id)
-        .cloned()
-        .unwrap_or_else(|| HoldProof::new(0, at_ms, 0.0))
 }
 
 fn evaluate(
@@ -189,7 +184,12 @@ fn evaluate(
     push_if(import_ceiling(input, state, now_ms), &mut found);
     push_if(full_charge(input), &mut found);
     push_if(export_guard(input), &mut found);
-    found.extend(transition(input, now_ms));
+    push_if(stale_pack(input), &mut found);
+    push_if(stale_command(input, request), &mut found);
+    push_if(orphan_hold(input), &mut found);
+    push_if(cancel_ramp(input), &mut found);
+    push_if(restart_grace(input, now_ms), &mut found);
+    push_if(unverified_hold(state, input, request), &mut found);
     push_if(uncertain(input, request), &mut found);
     push_if(backoff(input, request, now_ms), &mut found);
     push_if(no_command(input, request), &mut found);
@@ -210,9 +210,15 @@ fn build(
 ) -> SafetyDecision {
     let mut ordered: Vec<&Candidate> = candidates.iter().collect();
     ordered.sort_by_key(|item| item.rule.position());
-    let reasons: Vec<&'static str> = ordered.iter().map(|item| item.reason).collect();
-    let Some(winner) = ordered.iter().find(|item| item.action.is_some()) else {
-        let mut reasons = reasons;
+    let mut reasons: Vec<&'static str> = Vec::new();
+    for item in &ordered {
+        reasons.push(item.reason);
+        reasons.extend(item.extra_reasons.iter().copied());
+    }
+    let Some(winner) = ordered
+        .iter()
+        .find(|item| item.action.is_some() || item.defer_until_ms.is_some())
+    else {
         reasons.push(solar.reason);
         return SafetyDecision::no_action(
             &input.pack_id,
@@ -231,7 +237,9 @@ fn build(
         pack_id: input.pack_id.clone(),
         at_ms: now_ms,
         rule: winner.rule,
-        outcome: if winner.blocked {
+        outcome: if winner.defer_until_ms.is_some() {
+            DecisionOutcome::Deferred
+        } else if winner.blocked {
             DecisionOutcome::Blocked
         } else {
             DecisionOutcome::Commanded
@@ -247,6 +255,6 @@ fn build(
         verification: winner.rule.verification(),
         escalation: Some(Escalation::new(winner.rule.escalation())),
         steps,
-        retry_at_ms: None,
+        retry_at_ms: winner.defer_until_ms,
     }
 }

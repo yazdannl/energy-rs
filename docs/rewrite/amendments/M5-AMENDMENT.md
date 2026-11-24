@@ -3,31 +3,33 @@
 Ruling: `SCENARIOS.md` rows beat `SPEC.md` prose; the owner's M5 brief and its 2026-11-24 solar
 ruling outrank both where no row exists; anything still undecided is asked as a single point, not
 silently invented. New rows start at S260. Every row below needs reviewer sign-off before merge.
-These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`.
+These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 2 adds S280-S289.
 
 The SPEC M5 acceptance paragraph names S33–S42, S93–S99, S132–S137, S150, S159, S160, S165 and S169.
 S132/S133 belong to M4 flow receipts and S169 to M7 durable sessions; this module claims
 S33–S40, S42, S93–S99, S134–S137, S150, S159, S160, S165, S171–S178, S183, S187 and the new
-S260–S277 below. M4/M6/M7-only rows are not claimed as M5 tests.
+S260–S289 below. M4/M6/M7-only rows are not claimed as M5 tests.
 
 ## Implemented override order (one list, first firing command wins)
 
 | Position | Rule | Reason code | Command | Verification | Escalation on verification failure |
 |---|---|---|---|---|---|
-| 1 | cell discharge latch | `cell_voltage_guard` | 0 W neutral hold | echo + two fresh measured `(0,0)` reports | retry 0/2/6 s, then `safety_write_unverified` + `ownership_retention` |
-| 2 | cell emergency charge | `cell_voltage_emergency_charge`; impossible: `emergency_charge_impossible` | `max(800 W, requested)` if physics allows, else 0 W hold | echo + measured charge flow in band; hold path as position 1 | same bounded retry + ownership retention |
+| 1 | cell discharge latch | `cell_voltage_guard` | 0 W neutral hold | echo + two fresh, distinct, ordered measured `(0,0)` reports | retry 0/2/6 s, then `safety_write_unverified` + `ownership_retention` |
+| 2 | cell emergency charge | `cell_voltage_emergency_charge`; impossible: `emergency_charge_impossible` | minimum bounded charge from the cell deficit, capped by pack and aggregate limits; never past the physical service limit; else 0 W hold | echo + cell voltage reaching the resume threshold; escalation at 180 s if unresolved | `emergency_charge_unresolved` + ownership retention; hold path as position 1 |
 | 3 | low-SoC / minSoc floor | `soc_floor` | no discharge; 0 W hold when a discharge was asked | measured idle flow | same bounded retry + ownership retention |
-| 4 | import ceiling | `grid_import_ceiling`; impossible: `import_remedy_blocked`; meter gone while armed: `grid_telemetry_missing` | protective discharge if physics allows, else 0 W hold | measured settled grid ≤ ceiling − deadband | same bounded retry + ownership retention |
+| 4 | import ceiling | `grid_import_ceiling`; impossible: `import_remedy_blocked`; meter gone while armed: `grid_telemetry_missing` | protective discharge/charge reduction from **projected** import (demand + requested + coordinated pack commands); else 0 W hold | fresh post-breach settled grid ≤ ceiling − deadband | same bounded retry + ownership retention |
 | 5 | full charge / SoC ceiling | `full_charge_protection` | 0 W hold; never charge a 100 % pack | measured idle flow | same bounded retry + ownership retention |
 | 6 | export/self-consumption guard | `self_consumption_guard` | 0 W hold when a discharge would export past the hard ceiling | measured flow within the ceiling | same bounded retry + ownership retention |
-| 7 | stale pack samples | `stale_sample_unreachable` | 0 W verified hold | as position 1 | as position 1 |
-| 8 | orphan hold | `orphan_hold` | 0 W verified hold | as position 1 | as position 1 |
-| 9 | cancel ramp | `cancel_ramp` | 0 W verified hold before a changed target | as position 1 | as position 1 |
-| 10 | restart grace | `restart_grace` | no ordinary write; 0 W hold if a command is standing | as position 1 | `restart_neutral_unverified` then ownership retention |
-| 11 | uncertain write | `controller_uncertain` | 0 W hold for ordinary traffic; safety traffic is never blocked | as position 1 | as position 1 |
-| 12 | ordinary fault backoff | `ordinary_backoff` | no safety command; defer ordinary traffic to `retry_at` | none; M4 owns the ordinary retry | none |
-| 13 | no command standing | `no_command_needed` | no command; `idle_verified` needs two neutral reports | two fresh `(0,0)` reports | none |
-| 14 | ordinary request | `no_safety_hazard` | economic request proceeds | normal M4 receipt | none |
+| 7 | stale pack samples (> 300 s) | `stale_sample_unreachable` | 0 W verified hold; economic reachability only | as position 1 | as position 1 |
+| 8 | samples older than two tick periods | `stale_command_sample` | no nonzero command; 0 W verified hold fallback | as position 1 | as position 1 |
+| 9 | orphan hold | `orphan_hold` | 0 W verified hold | as position 1 | as position 1 |
+| 10 | cancel ramp | `cancel_ramp` | 0 W verified hold before a changed target | as position 1 | as position 1 |
+| 11 | restart grace | `restart_grace` | no ordinary write; 0 W hold if a command is standing | as position 1 | `restart_neutral_unverified` then ownership retention |
+| 12 | unresolved safety hold | `hold_unverified` | 0 W hold until the same attempt is verified or a higher rule supersedes it | as position 1 | retry 0/2/6 s then terminal retention until explicit recovery |
+| 13 | uncertain write | `controller_uncertain` | 0 W hold for ordinary traffic; safety traffic is never blocked | as position 1 | as position 1 |
+| 14 | ordinary fault backoff | `ordinary_backoff` | no command; explicit `Deferred` outcome carrying `retry_at_ms` | no safety command to verify | none; M4 owns the ordinary retry |
+| 15 | no command standing | `no_command_needed` | no command; `idle_verified` needs two neutral reports | two fresh `(0,0)` reports | none |
+| 16 | ordinary request | `no_safety_hazard` | economic request proceeds | normal M4 receipt | none |
 
 Solar PV reserve has **no position** in this list. The owner's ruling is verbatim: it never commands,
 never constrains feasibility and never reduces or zeroes a planned charge. It reports PV-sourced
@@ -60,25 +62,43 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S278 | M5 | import latch needs settled-grid evidence to release | breach at 7900 W arms the guard; a transient 7400 W sample follows; settled estimate 7480 W arrives later | ladder evaluates each snapshot | transient dip alone does not release the guard; only `settled_grid_w ≤ ceiling − deadband` releases it, with the guard latched until then | regression | yes | IN SCOPE | S35: release only at or below 7500 − 10 W even if a transient meter dip reads 7400 W. |
 | S279 | M5 | safety receipt is correlated to seq and attempt | hold seq 7, attempt A1 fails; a late A0 receipt and a fresh A1 receipt both arrive | proof folds each receipt | A0 is `late_uncorrelated` and advances no evidence; only A1's echo plus measured idle flow counts; the retry gets a fresh `attempt_id` | regression | yes | IN SCOPE (M4 transport must expose seq/attempt on the real receipt — REQUIRES WIRING) | S137: a receipt matching both ids alone advances safety state. |
 
+| S280 | M5 | import guard prices the requested and coordinated charge | demand 7400 W, ceiling 7500 W, four 800 W pack commands including self | ladder evaluates the slot | projected import 10.6 kW arms `grid_import_ceiling`; the remedy includes the coordinated W | regression | yes | IN SCOPE | Review item 35: demand alone hid the planned breach. |
+| S281 | M5 | settled release needs fresh post-breach evidence | breach latched; later contradictory or retained low settled samples; then a fresh post-breach sample | ladder evaluates each snapshot | no release while current evidence breaches or the settled sample is old/pre-breach; release only on fresh post-breach settled evidence after the hold is proven/recovered | regression | yes | IN SCOPE | Review item 36: a retained low estimate cancelled a live breach. |
+| S282 | M5 | an unresolved hold blocks economic traffic | cell hold issued, hazard clears before any neutral receipt | ladder evaluates the next economic request | `hold_unverified` keeps a 0 W hold until the same attempt verifies or explicit recovery; higher-priority rules still supersede | regression | yes | IN SCOPE | Review item 37: predicate clearance allowed an economic write before neutrality. |
+| S283 | M5 | neutral evidence is distinct, ordered and unbroken | duplicate, out-of-order and nonzero reports interleaved with neutral ones | proof folds receipts | duplicates/out-of-order reports advance nothing; nonzero flow invalidates the neutral run; resumed flow forces re-proof | regression | yes | IN SCOPE | Review item 38: repeated/contradicted reports could verify and stay verified. |
+| S284 | M5 | retries never inherit evidence | attempt 1 has echo + neutral; attempt 1 receipts replay after failure | proof retries to attempt 2 | all attempt-local evidence and issue time reset; an old echo plus old neutral plus one new neutral does not verify | regression | yes | IN SCOPE | Review item 39: retries verified from the old attempt. |
+| S285 | M5 | escalation advances from elapsed time and stays terminal | no receipts arrive; repeated ticks cross 74 s, retries 0/2/6 s and exhaustion | ladder decides on each tick | deadline/retry transitions happen inside the core; after three failures the outcome is `Failed`, the proof is retained, and only explicit recovery clears it | regression | no | IN SCOPE | Review item 40: missing receipts stayed pending forever and a later tick reset the budget. |
+| S286 | M5/M4 | backoff is a deferral, not permission | backoff is the only firing rule | gate and M4 row are evaluated | `DecisionOutcome::Deferred` and `SafetyIntervention::Defer` carry `retry_at_ms`; the M4 row is `Deferred`, never `Proceed` | regression | no | IN SCOPE (M4 port extended; existing variants unchanged) | Review item 41: an actionless candidate became `no_safety_hazard`. |
+| S287 | M5 | stale samples stop every nonzero action | 41 s old cell/meter/pack samples under emergency, import and ordinary charge rules | ladder evaluates each case | no nonzero command is granted; each path falls back to a verified hold and bounded escalation; 300 s remains only the economic-reachability TTL | regression | yes | IN SCOPE | Review item 42 and J2: a stale hold sat below the nonzero actions. |
+| S288 | M5 | emergency charge is minimum, bounded and time-limited | cell deficit, 1200 W pack cap, four-pack fleet, meter over/under fuse | ladder decides and proof is opened | target is the voltage-deficit estimate capped by pack and 3200 W aggregate share; economic margin may be breached with reason, physical fuse never; proof duration 180 s | contract | no | IN SCOPE | Reviewer ruling J1; replaces `max(800 W, requested)`. |
+| S289 | M5/M4 | incident regressions assert the execution boundary | each of S260/S261/S262/S263/S264 plus its mutation | dispatcher runs and row/device power are joined to the decision | fixed path asserts device W and report steps; mutation case proves the old defect would be caught at that boundary | regression | yes | IN SCOPE (S276/S277/S279 remain wiring-only) | Review item 43: decision-only assertions could not detect downstream clamps or missing deferral. |
+
 ## Interpretations that need reviewer attention
 
 * The owner was asked about solar headroom before implementation and ruled "advisory headroom only":
   no precedence slot, no command, no feasibility effect, zero-on-missing-telemetry means grant nothing.
   This is implemented literally in `safety::solar` and recorded as S262/S263/S275.
 * The owner also ruled that a permanently stale reservation is unsafe and asked for a documented
-  bound. M5 uses `STALE_SAMPLE_MS = 300_000` (5 min), aligned with the existing 300 s no-flow
-  backoff. It is a new number, not a value from the frozen spec, and needs sign-off (S270).
+  bound. Two numbers now apply. `STALE_SAMPLE_MS = 300_000` (5 min) is only the economic
+  reachability/unreachable escalation bound (S270). A nonzero command needs a sample no older than
+  `COMMAND_SAMPLE_MAX_MS = 40_000`: two 20 s tick/sampler periods, so one missed sample does not
+  revoke permission but two consecutive missed periods do. Past 40 s M5 stops granting the nonzero
+  command, issues a verified-hold fallback and escalates (S287). Reviewer ruling J2, 2026-11-24.
 * SPEC's ordered list names six steps but omits the floor, ceiling, backoff, uncertainty and solar
   cases. SCENARIOS S37/S150/S225 decide floor and safety-lane exemption; the remaining positions
   follow M4's own `ordinary_deferral` order (transport, uncertainty, backoff, pause) and are listed
   above for sign-off.
 * M4's provisional `SafetyAction` had only hold and emergency charge. A protective discharge is a
   different signed command, so M5 adds `ProtectiveDischarge { target_w }` to that enum. Existing
-  variants and their `target_w()` values are untouched; the change is called out loudly in the
-  implementation report. No M4 dispatch logic was changed.
-* M5 verifies holds from echo plus two fresh measured `(0,0)` reports and device-clock coherent
-  status, reusing M4's `FlowStatus`/echo predicates. The 30 s report freshness bound and 74 s total
-  attempt deadline come from SPEC/0.15.12; the two-report requirement comes from S83/S99/S178.
+  variants and their `target_w()` values are untouched. `SafetyIntervention` also gains
+  `Defer { reason, retry_at_ms }`, and `preparation.rs` maps it to the existing `Deferred` M4 row;
+  existing safety variants remain unchanged. These public-enum additions are called out loudly in
+  the implementation report.
+* M5 verifies holds from echo plus two distinct, ordered, fresh measured `(0,0)` reports and
+  device-clock coherent status, reusing M4's `FlowStatus`/echo predicates. A contradictory report
+  invalidates the neutral run and resumed flow forces re-proof. The 30 s report freshness bound and
+  74 s total attempt deadline come from SPEC/0.15.12; the two-report requirement comes from
+  S83/S99/S178. Emergency charge uses a separate 180 s attempt duration (J1).
 * Clearance, latch persistence, dashboard text and all M6 authority states stay in M6. M5 only
   states what protection would do; M4 obeys and records, M6 authorises (S276).
 * The no-write guarantee in `dry_run_latched` is not reimplemented in M5; the gate is never asked

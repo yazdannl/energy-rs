@@ -114,6 +114,10 @@ pub fn prepare<S: SafetyGate, A: WriteAuthority>(
                 request: request.clone(),
                 interrupted,
             }),
+            SafetyIntervention::Defer {
+                reason,
+                retry_at_ms,
+            } => Preparation::Row(deferred_row(&command, reason, retry_at_ms, budget_ms)),
             SafetyIntervention::Hold { action, reason } => Preparation::Write(PreparedWrite {
                 command: safety_hold_command(request, action.target_w(), now_ms),
                 tx_id: 0,
