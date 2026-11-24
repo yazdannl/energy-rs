@@ -4,7 +4,7 @@ mod m4_support;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use energy_decide::dispatch::{
     AllowAllAuthority, DispatchOutcome, DispatchState, Dispatcher, Echo, FlowReport, PackCommand,
@@ -55,14 +55,20 @@ fn wait_outstanding(
     now_ms: i64,
     want: usize,
 ) -> usize {
-    for _ in 0..2_000 {
+    let started = Instant::now();
+    loop {
         dut.reconcile(state, now_ms);
-        if dut.outstanding_futures() == want {
-            return want;
+        let observed = dut.outstanding_futures();
+        if observed == want {
+            return observed;
         }
-        std::thread::yield_now();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "timed out after {elapsed:?} waiting for {want} outstanding futures; last observed {observed}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
     }
-    dut.outstanding_futures()
 }
 
 #[test]
