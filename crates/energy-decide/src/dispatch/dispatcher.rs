@@ -97,7 +97,7 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         std::mem::take(&mut *log)
     }
 
-    /// Futures still inside transport; never restarted within the same tick.
+    /// Unresolved futures still awaiting reaping; the observable reconcile condition.
     pub fn outstanding_futures(&self) -> usize {
         self.unresolved
             .lock()

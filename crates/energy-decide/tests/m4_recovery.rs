@@ -47,6 +47,24 @@ fn uncertain_state(pack_id: &str, ordered_application: Option<bool>) -> Dispatch
     state
 }
 
+type TestDispatcher = Dispatcher<ProceedSafety, AllowAllAuthority, ImmediateClock>;
+
+fn wait_outstanding(
+    dut: &TestDispatcher,
+    state: &mut DispatchState,
+    now_ms: i64,
+    want: usize,
+) -> usize {
+    for _ in 0..2_000 {
+        dut.reconcile(state, now_ms);
+        if dut.outstanding_futures() == want {
+            return want;
+        }
+        std::thread::yield_now();
+    }
+    dut.outstanding_futures()
+}
+
 #[test]
 fn s249_verified_hold_cannot_clear_while_transport_is_outstanding() {
     let io = FakeIo::new(&[(
@@ -276,8 +294,11 @@ fn s251_transport_gone_is_derived_from_remaining_writes() {
         }),
         at_ms: 120,
     });
-    std::thread::sleep(Duration::from_millis(30));
-    dut.reconcile(&mut state, 130);
+    assert_eq!(
+        wait_outstanding(&dut, &mut state, 130, 1),
+        1,
+        "first write was never reaped"
+    );
     assert!(
         !state.pack("P").transport_gone,
         "one reaped future must not mark a pack with another outstanding write as gone"
@@ -294,8 +315,11 @@ fn s251_transport_gone_is_derived_from_remaining_writes() {
         }),
         at_ms: 500,
     });
-    std::thread::sleep(Duration::from_millis(30));
-    dut.reconcile(&mut state, 500);
+    assert_eq!(
+        wait_outstanding(&dut, &mut state, 500, 0),
+        0,
+        "second write was never reaped"
+    );
     assert!(state.pack("P").transport_gone);
     let cleared = dut.read_back(&mut state, &neutral_echo("P", 600, 2), 600);
     assert_eq!(cleared.uncertainty_cleared_by, Some("read_back"));
