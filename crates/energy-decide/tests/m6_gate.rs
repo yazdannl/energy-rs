@@ -333,7 +333,7 @@ fn s102_operational_dry_run_request_is_rejected() {
 }
 
 #[test]
-fn s313_every_entry_point_is_counted_by_the_one_gate() {
+fn s313_enumerated_authorization_methods_are_counted_by_the_one_gate() {
     let fixture = auto_fixture(13_000);
     let entries = [
         EntryPoint::ModeEndpoint,

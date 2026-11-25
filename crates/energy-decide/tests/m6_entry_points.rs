@@ -1,6 +1,10 @@
-//! Authorization-level probes only (S333-S337), not real-path enforcement.
-//! The crate is unwired: no engine entry point, hardware neutralisation, settings mutation or
-//! websocket forwarding is invoked. Coverage of those paths is DEFERRED in M6-AMENDMENT.md.
+//! AUTHORIZATION-METHOD coverage only (S333-S337), not operational-path enforcement.
+//! The paired assertions cover the gate-facing authorization methods and, for S333-S334,
+//! `Dispatcher::dispatch_slot` with `FakeIo` write counts. No engine entry point, device
+//! neutralisation, settings mutation or websocket forwarding is invoked by these tests.
+//! DEFERRED to wiring (M6-AMENDMENT.md S325/S335-S337): engine boot and watchdog shutdown
+//! neutralisation command emission, settings/mode mutation persistence, and generic websocket
+//! `call` forwarding to HA, each with observable side effects.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod m4_support;
 mod m6_support;
@@ -47,17 +51,17 @@ fn dispatch_pair(safety: bool, at_ms: i64) {
 }
 
 #[test]
-fn s333_engine_dispatch_latched_refused_auto_proceeds() {
+fn s333_dispatcher_authorization_latched_refused_auto_proceeds() {
     dispatch_pair(false, 40_000);
 }
 
 #[test]
-fn s334_safety_traffic_latched_refused_auto_proceeds() {
+fn s334_dispatcher_safety_authorization_latched_refused_auto_proceeds() {
     dispatch_pair(true, 41_000);
 }
 
 #[test]
-fn s335_boot_shutdown_neutralisation_latched_refused_auto_proceeds() {
+fn s335_neutralisation_authorization_methods_latched_refused_auto_proceeds() {
     let latched = latched_fixture(42_000);
     assert!(
         !latched
@@ -86,7 +90,7 @@ fn s335_boot_shutdown_neutralisation_latched_refused_auto_proceeds() {
 }
 
 #[test]
-fn s336_settings_mode_control_plane_latched_refused_auto_proceeds() {
+fn s336_settings_authorization_method_latched_refused_auto_proceeds() {
     let latched = latched_fixture(43_000);
     assert!(
         !latched
@@ -103,7 +107,7 @@ fn s336_settings_mode_control_plane_latched_refused_auto_proceeds() {
 }
 
 #[test]
-fn s337_generic_ws_passthrough_latched_refused_auto_proceeds() {
+fn s337_websocket_authorization_method_latched_refused_auto_proceeds() {
     let caller = |at_ms| {
         Caller::system(
             EntryPoint::GenericWsPassthrough,

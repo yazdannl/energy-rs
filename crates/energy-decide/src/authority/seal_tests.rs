@@ -1,5 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
-//! Unit-level proof of the real bootstrap issuance boundary (S329-S331).
+//! Unit-level proof of the real bootstrap issuance boundary (S329-S331, S338).
 //!
 //! These tests are inside the crate because `begin` and the capability constructor are
 //! deliberately crate-private: durable state alone must not be enough to mint a capability.
@@ -170,7 +170,7 @@ impl AnchorStore for FailMarkerConsumption {
 }
 
 #[test]
-fn s338_bootstrap_issuance_fails_closed_when_marker_persistence_fails() {
+fn s338_bootstrap_issuance_fails_closed_with_no_transaction_when_marker_persistence_fails() {
     let dir = SealDir::new("failclose");
     let base = FileAnchorStore::in_dir(&dir.0);
     let (ledger, capability) = issued(&base, 1, 2, 7);
@@ -183,10 +183,8 @@ fn s338_bootstrap_issuance_fails_closed_when_marker_persistence_fails() {
 
     let attempt =
         BootstrapAuthorityTx::begin(ledger.clone(), 1_000, "authority", &anchors, &capability);
-    assert_eq!(
-        attempt.expect_err("issuance must fail closed"),
-        BootstrapTxError::CapabilityDenied
-    );
+    // No usable transaction is produced: the result isErr and the error is typed.
+    assert!(matches!(&attempt, Err(BootstrapTxError::CapabilityDenied)));
     assert_eq!(anchors.load().expect("anchor load"), Some(before_anchor));
     assert_eq!(ledger_shape(&ledger), before_ledger);
 }
