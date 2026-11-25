@@ -12,7 +12,7 @@ pub struct LatchToken {
 impl LatchToken {
     /// Mint a token for the sealed bootstrap transaction. Commit still requires provenance,
     /// matching event and an unused single-use nonce.
-    pub fn mint(generation: u64, seed: &str) -> Self {
+    pub(crate) fn mint(generation: u64, seed: &str) -> Self {
         let generation_text = generation.to_string();
         let digest = crate::authority::journal::hash_text(&format!("{seed}:{generation_text}"));
         Self {
@@ -22,7 +22,7 @@ impl LatchToken {
         }
     }
 
-    /// Reconstruct from storage exactly as written; malformed generations stay invalid.
+    /// Read-only evidence reconstruction from storage; never a mint capability.
     pub fn from_storage(generation_text: &str, seed: &str) -> Self {
         let generation = generation_text.parse::<u64>().ok();
         let digest = crate::authority::journal::hash_text(&format!("{seed}:{generation_text}"));

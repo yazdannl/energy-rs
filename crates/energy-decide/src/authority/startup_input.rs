@@ -12,4 +12,6 @@ pub struct StartupInput<'a> {
     pub resolutions: &'a dyn ResolutionStore,
     /// Startup instant, epoch milliseconds.
     pub now_ms: i64,
+    /// One live run identity used to bind the bootstrap capability.
+    pub run_id: u64,
 }

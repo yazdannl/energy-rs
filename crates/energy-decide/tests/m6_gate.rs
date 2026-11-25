@@ -139,7 +139,7 @@ fn s186_manual_token_edit_drops_to_recovery_and_refuses_authoritative_writes() {
             Caller::system(EntryPoint::TickDispatch, 5_100, "economic"),
             WriteClass::DeviceEconomic,
         ))),
-        "latch_token_invalid"
+        "authority_recovery_required"
     );
     assert_eq!(
         restarted.health().text,

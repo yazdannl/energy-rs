@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::authority::{BootstrapIssue, RecoveryEvidence};
+
 /// Anchor content. It lives in a separate file, never inside the ledger.
 ///
 /// A coherent rollback of BOTH ledger and anchor (a full add-on snapshot restore) is locally
@@ -24,6 +26,12 @@ pub struct AuthorityAnchor {
     pub pending_startup_ref: Option<u64>,
     /// Durable startup-resolution record id.
     pub last_startup_resolution_ref: Option<u64>,
+    /// Single-run issued marker for the sealed bootstrap transaction.
+    #[serde(default)]
+    pub bootstrap_issue: Option<BootstrapIssue>,
+    /// Durable recovery verdict; only authority reconcile may clear it.
+    #[serde(default)]
+    pub recovery: Option<RecoveryEvidence>,
 }
 
 impl AuthorityAnchor {
@@ -45,6 +53,8 @@ impl AuthorityAnchor {
             checkpoint_event_id,
             pending_startup_ref: None,
             last_startup_resolution_ref: Some(resolution_ref),
+            bootstrap_issue: None,
+            recovery: None,
         }
     }
 
@@ -74,5 +84,20 @@ impl AuthorityAnchor {
     pub fn adopt_pending(&mut self, head: u64) {
         self.committed_head = head;
         self.pending_head = 0;
+    }
+
+    /// Record the issued bootstrap capability in the separate file.
+    pub fn issue_bootstrap(&mut self, issue: BootstrapIssue) {
+        self.bootstrap_issue = Some(issue);
+    }
+
+    /// Lock recovery with its evidence and diagnostic record id.
+    pub fn lock_recovery(&mut self, evidence: RecoveryEvidence) {
+        self.recovery = Some(evidence);
+    }
+
+    /// Clear recovery only after a successful authority reconcile.
+    pub fn clear_recovery(&mut self) {
+        self.recovery = None;
     }
 }

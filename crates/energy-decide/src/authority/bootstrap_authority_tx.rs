@@ -2,9 +2,9 @@
 
 use crate::authority::provenance::Provenance;
 use crate::authority::{
-    AuthorityEventKind, AuthorityLedger, AuthorityState, BootstrapCapability, BootstrapReason,
-    BootstrapTxError, CommittedBootstrap, InitializationOrRecoveryEvent, LatchToken,
-    WRITE_AUTHORITY_SCHEMA, journal,
+    AnchorStore, AuthorityEventKind, AuthorityLedger, AuthorityState, BootstrapCapability,
+    BootstrapReason, BootstrapTxError, CommittedBootstrap, InitializationOrRecoveryEvent,
+    IssuedBootstrapCapability, LatchToken, WRITE_AUTHORITY_SCHEMA,
 };
 
 /// Non-extendable transaction scope. Private fields; no device, queue, settings or append API.
@@ -22,19 +22,36 @@ pub struct BootstrapAuthorityTx {
 }
 
 impl BootstrapAuthorityTx {
-    /// Begin only when provenance positively permits a bootstrap.
-    pub fn begin(
+    /// Begin only with an issued, unconsumed, run-bound bootstrap capability.
+    pub(crate) fn begin(
         ledger: AuthorityLedger,
         at_ms: i64,
         actor: &str,
+        anchors: &dyn AnchorStore,
+        capability: &IssuedBootstrapCapability,
     ) -> Result<Self, BootstrapTxError> {
+        let issue = anchors
+            .load()
+            .ok()
+            .flatten()
+            .and_then(|anchor| anchor.bootstrap_issue)
+            .ok_or(BootstrapTxError::CapabilityDenied)?;
+        if issue.consumed {
+            return Err(BootstrapTxError::ReplayDenied);
+        }
+        if issue.run_id != capability.run_id()
+            || issue.tx_id != capability.tx_id()
+            || issue.nonce != capability.nonce
+        {
+            return Err(BootstrapTxError::CapabilityDenied);
+        }
         let (reason, previous_mode) = match crate::authority::provenance::decide(&ledger) {
             Provenance::FreshInstall => (BootstrapReason::FreshInstall, None),
             Provenance::Legacy(reason) => (reason, ledger.persisted_mode().map(str::to_owned)),
             Provenance::Recovery => return Err(BootstrapTxError::ProvenanceAmbiguous),
         };
         let source_release = ledger.source_release().to_owned();
-        let nonce = journal::hash_bytes(0x9e37_79b9_7f4a_7c15, ledger.seed().as_bytes());
+        let nonce = issue.nonce;
         Ok(Self {
             ledger,
             expected_reason: reason,
@@ -45,6 +62,25 @@ impl BootstrapAuthorityTx {
             nonce,
             token: None,
             event: None,
+        })
+    }
+
+    /// Attempt to reconstruct the capability from durable state; always a typed refusal.
+    pub fn begin_external(
+        _ledger: AuthorityLedger,
+        _at_ms: i64,
+        _actor: &str,
+        anchors: &dyn AnchorStore,
+    ) -> Result<Self, BootstrapTxError> {
+        let issue = anchors
+            .load()
+            .ok()
+            .flatten()
+            .and_then(|anchor| anchor.bootstrap_issue);
+        Err(if issue.is_some_and(|value| value.consumed) {
+            BootstrapTxError::ReplayDenied
+        } else {
+            BootstrapTxError::CapabilityDenied
         })
     }
 

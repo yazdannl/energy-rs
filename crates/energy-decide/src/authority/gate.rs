@@ -25,12 +25,23 @@ pub(crate) fn decide(
     if request.class == WriteClass::OperationalDryRun {
         return GateOutcome::Refused(AuthorityRefusal::DryRunNotOperational);
     }
-    if let WriteClass::ClearanceAuthorization { valid } = request.class {
-        return if valid {
+    if request.class == WriteClass::BootstrapCapability {
+        return GateOutcome::Refused(AuthorityRefusal::BootstrapTxCapabilityDenied);
+    }
+    if let WriteClass::ReconcileAuthorization { valid } = request.class {
+        return if valid
+            && request.caller.entry() == EntryPoint::InternalRecovery
+            && request.caller.is_authority_internal()
+        {
             GateOutcome::Authorized
         } else {
-            GateOutcome::Refused(AuthorityRefusal::ClearanceAuthorizationInvalid)
+            GateOutcome::Refused(AuthorityRefusal::ReconcileDenied)
         };
+    }
+    // Recovery-required outranks an invalid phase: consumers must always see the
+    // actionable verdict, with the failing evidence carried in the audit detail.
+    if resolution == StartupResolution::RecoveryRequired {
+        return GateOutcome::Refused(AuthorityRefusal::AuthorityRecoveryRequired);
     }
     if phase == AuthorityPhase::Uninitialized {
         return GateOutcome::Refused(AuthorityRefusal::AuthorityUninitialized);
@@ -38,8 +49,12 @@ pub(crate) fn decide(
     if phase == AuthorityPhase::Invalid {
         return GateOutcome::Refused(AuthorityRefusal::LatchTokenInvalid);
     }
-    if resolution == StartupResolution::RecoveryRequired {
-        return GateOutcome::Refused(AuthorityRefusal::AuthorityRecoveryRequired);
+    if let WriteClass::ClearanceAuthorization { valid } = request.class {
+        return if valid {
+            GateOutcome::Authorized
+        } else {
+            GateOutcome::Refused(AuthorityRefusal::ClearanceAuthorizationInvalid)
+        };
     }
     let outcome = decide_initialized(request, state, used_fences);
     if !outcome.authorized()
@@ -88,6 +103,8 @@ fn decide_initialized(
         }
         WriteClass::OperationalDryRun
         | WriteClass::ClearanceAuthorization { .. }
+        | WriteClass::ReconcileAuthorization { .. }
+        | WriteClass::BootstrapCapability
         | WriteClass::CheckpointWrite => {
             GateOutcome::Refused(AuthorityRefusal::WriteDeniedByAuthorityGate)
         }

@@ -23,8 +23,10 @@ pub struct AuditEvent {
     pub outcome: GateOutcome,
     /// Why the caller asked.
     pub why: String,
-    /// Typed detail slug, for example the path preserved in `dry_run_latch_preserved`.
-    pub detail: &'static str,
+    /// Typed detail slug or durable evidence text.
+    pub detail: String,
+    /// Structured recovery evidence when the refusal is `authority_recovery_required`.
+    pub evidence: Option<crate::authority::RecoveryEvidence>,
 }
 
 impl AuditEvent {

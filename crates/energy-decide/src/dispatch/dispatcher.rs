@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
+use crate::authority::ReconcilePermit;
 use crate::dispatch::constants::{MAX_DRIVE_POLLS_PER_TICK, TRANSPORT_BOUND_MS};
 use crate::dispatch::driver::drive;
 use crate::dispatch::preparation::{Preparation, prepare};
@@ -193,8 +194,13 @@ impl<S: SafetyGate, A: WriteAuthority, C: RetryClock> Dispatcher<S, A, C> {
         )
     }
 
-    /// Join finished futures, then derive each pack's transport_gone from the futures left.
-    pub fn reconcile(&self, state: &mut DispatchState, now_ms: i64) -> usize {
+    /// Join finished futures only with an unforgeable authority reconcile permit.
+    pub fn reconcile(
+        &self,
+        state: &mut DispatchState,
+        now_ms: i64,
+        _permit: &ReconcilePermit,
+    ) -> usize {
         let mut unresolved = self
             .unresolved
             .lock()

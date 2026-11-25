@@ -10,7 +10,7 @@ use energy_decide::dispatch::{
     AllowAllAuthority, DispatchOutcome, DispatchState, Dispatcher, Echo, FlowReport, PackCommand,
     PackIo, PendingConfirmation, ProceedSafety, SlotRequest, WriteAck,
 };
-use m4_support::{Behavior, FakeIo, ImmediateClock, report};
+use m4_support::{Behavior, FakeIo, ImmediateClock, reconcile_permit, report};
 
 fn economic(pack: &str, target_w: f64) -> SlotRequest {
     SlotRequest::economic(pack, target_w, 0, "recovery_test")
@@ -57,7 +57,7 @@ fn wait_outstanding(
 ) -> usize {
     let started = Instant::now();
     loop {
-        dut.reconcile(state, now_ms);
+        dut.reconcile(state, now_ms, &reconcile_permit());
         let observed = dut.outstanding_futures();
         if observed == want {
             return observed;
@@ -131,7 +131,7 @@ fn s250_without_ordered_application_needs_explicit_reconcile() {
     assert!(absent.reasons.contains(&"automatic_recovery_unsupported"));
     assert!(state.pack("P").uncertain);
 
-    dut.reconcile(&mut state, 600);
+    dut.reconcile(&mut state, 600, &reconcile_permit());
     assert!(!state.pack("P").uncertain);
     assert_eq!(
         state.pack("P").uncertainty_cleared_by,
@@ -197,7 +197,7 @@ fn s250_port_capability_is_propagated_to_the_pack() {
     let row = dut.read_back(&mut state, &neutral_echo("P", 100, 1), 100);
     assert!(row.reasons.contains(&"automatic_recovery_unsupported"));
     assert!(state.pack("P").uncertain);
-    dut.reconcile(&mut state, 120);
+    dut.reconcile(&mut state, 120, &reconcile_permit());
     assert_eq!(
         state.pack("P").uncertainty_cleared_by,
         Some("explicit_reconcile")

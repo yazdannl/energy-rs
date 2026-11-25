@@ -4,12 +4,25 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::PoisonError;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::authority::{
     AnchorStore, AuditEvent, AuditLog, AuthorityEventKind, AuthorityLedger, AuthorityPhase,
-    AuthorityRefusal, AuthorityState, GateOutcome, HealthReport, ResolutionStore, StartupOutcome,
-    StartupResolution, WriteRequest, gate, health, startup,
+    AuthorityRefusal, AuthorityState, Caller, GateOutcome, HealthReport, RecoveryEvidence,
+    ResolutionStore, StartupOutcome, StartupResolution, WriteClass, WriteRequest, gate, health,
+    startup,
 };
+
+static RUN_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn next_run_id(now_ms: i64) -> u64 {
+    let sequence = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
+    u64::from_ne_bytes(now_ms.to_ne_bytes())
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        .wrapping_add(u64::from(std::process::id()).wrapping_mul(0x85eb_ca6b))
+        .wrapping_add(sequence)
+        | 1
+}
 
 pub(crate) struct AuthorityCore {
     pub(crate) ledger: AuthorityLedger,
@@ -20,6 +33,7 @@ pub(crate) struct AuthorityCore {
     pub(crate) audit: AuditLog,
     pub(crate) used_fences: HashSet<String>,
     pub(crate) clearance_seq: Option<u64>,
+    pub(crate) recovery_evidence: Option<RecoveryEvidence>,
 }
 
 /// The only owner of write authority; every entry point asks this object.
@@ -41,8 +55,10 @@ impl Authority {
             anchors,
             resolutions,
             now_ms,
+            run_id: next_run_id(now_ms),
         };
         let (startup, ledger) = startup::resolve(&input, &mut audit);
+        let recovery_evidence = startup.evidence.clone();
         Self {
             core: Mutex::new(AuthorityCore {
                 ledger,
@@ -53,6 +69,7 @@ impl Authority {
                 audit,
                 used_fences: HashSet::new(),
                 clearance_seq: None,
+                recovery_evidence,
             }),
         }
     }
@@ -80,7 +97,12 @@ impl Authority {
     /// Health payload mirrored by dashboard and API.
     pub fn health(&self) -> HealthReport {
         let core = self.lock();
-        health::report(core.state, core.phase, core.resolution)
+        health::report(
+            core.state,
+            core.phase,
+            core.resolution,
+            core.recovery_evidence.as_ref(),
+        )
     }
     /// All gate decisions in order.
     pub fn audit(&self) -> Vec<AuditEvent> {
@@ -105,7 +127,15 @@ impl Authority {
             core.resolution,
             &core.used_fences,
         );
-        let detail = detail_for(&outcome, core.state);
+        let detail = detail_for(&outcome, core.state, core.recovery_evidence.as_ref());
+        let evidence = if matches!(
+            outcome,
+            GateOutcome::Refused(AuthorityRefusal::AuthorityRecoveryRequired)
+        ) {
+            core.recovery_evidence.clone()
+        } else {
+            None
+        };
         let event = AuditEvent {
             seq: 0,
             at_ms: request.caller.at_ms(),
@@ -117,6 +147,7 @@ impl Authority {
             outcome: outcome.clone(),
             why: request.caller.why().to_owned(),
             detail,
+            evidence,
         };
         core.audit.record(event);
         if outcome.authorized() {
@@ -140,11 +171,33 @@ impl Authority {
     }
 }
 
-fn detail_for(outcome: &GateOutcome, state: AuthorityState) -> &'static str {
+fn detail_for(
+    outcome: &GateOutcome,
+    state: AuthorityState,
+    evidence: Option<&RecoveryEvidence>,
+) -> String {
     match outcome {
-        GateOutcome::Authorized => "authorized",
-        GateOutcome::Refused(AuthorityRefusal::PersistenceDenied(_)) => "persistence_denied",
-        GateOutcome::Refused(AuthorityRefusal::WriteDeniedByAuthorityGate) => state.as_str(),
-        GateOutcome::Refused(refusal) => refusal.slug(),
+        GateOutcome::Authorized => "authorized".to_owned(),
+        GateOutcome::Refused(AuthorityRefusal::PersistenceDenied(_)) => {
+            "persistence_denied".to_owned()
+        }
+        GateOutcome::Refused(AuthorityRefusal::WriteDeniedByAuthorityGate) => {
+            state.as_str().to_owned()
+        }
+        GateOutcome::Refused(AuthorityRefusal::AuthorityRecoveryRequired) => evidence.map_or_else(
+            || "authority_recovery_required".to_owned(),
+            RecoveryEvidence::detail,
+        ),
+        GateOutcome::Refused(refusal) => refusal.slug().to_owned(),
+    }
+}
+
+impl Authority {
+    /// Reject any attempt to rebuild the sealed bootstrap capability from durable state.
+    pub fn reject_bootstrap_reconstruction(&self, caller: Caller) -> AuthorityRefusal {
+        match self.decide(&WriteRequest::new(caller, WriteClass::BootstrapCapability)) {
+            GateOutcome::Authorized => AuthorityRefusal::WriteDeniedByAuthorityGate,
+            GateOutcome::Refused(reason) => reason,
+        }
     }
 }

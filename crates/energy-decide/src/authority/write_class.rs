@@ -19,6 +19,10 @@ pub enum WriteClass {
     OperationalDryRun,
     /// Clearance command validation; the boolean is the only payload.
     ClearanceAuthorization { valid: bool },
+    /// Authority-only reconcile attempt; only an internal caller may carry `valid`.
+    ReconcileAuthorization { valid: bool },
+    /// Attempt to rebuild the sealed bootstrap capability from durable state.
+    BootstrapCapability,
     /// Ordinary append trying to write or replace the authority checkpoint.
     CheckpointWrite,
 }

@@ -9,7 +9,7 @@ use energy_decide::dispatch::{
     DriveContext, DriveResult, Echo, LateWrite, PackCommand, PackIo, ProceedSafety, SlotRequest,
     TransactionGuard, WriteAck, WriteAttempt, WriteFuture, WriteResult, drive,
 };
-use m4_support::{Behavior, FakeIo, ImmediateClock, report};
+use m4_support::{Behavior, FakeIo, ImmediateClock, reconcile_permit, report};
 
 fn dispatcher(
     io: FakeIo,
@@ -100,7 +100,7 @@ fn s235_late_completion_cannot_overwrite_a_later_hold() {
     let second = dut.dispatch_slot(&mut state, &[hold], 1_000);
     assert!(second[0].written);
     thread::sleep(Duration::from_millis(800));
-    dut.reconcile(&mut state, 1_000);
+    dut.reconcile(&mut state, 1_000, &reconcile_permit());
     let late = dut.take_late_writes();
     assert_eq!(late.len(), 1);
     assert_eq!(late[0].pack_id, "P");
@@ -133,7 +133,7 @@ fn s235_consecutive_deadlines_do_not_accumulate_workers() {
         assert!(wait_for_workers(&io, Duration::from_millis(500)));
         assert_eq!(io.active_workers(), 0);
         assert_eq!(io.peak_workers(), 1);
-        dut.reconcile(&mut state, 200);
+        dut.reconcile(&mut state, 200, &reconcile_permit());
         assert_eq!(dut.outstanding_futures(), 0);
     }
     assert_eq!(io.released().len(), 5);
@@ -210,7 +210,7 @@ fn s239_drive_bound_prevents_a_restart_loop() {
     assert_eq!(io.write_count(), 1);
     assert!(wait_for_workers(&io, Duration::from_millis(500)));
     thread::sleep(Duration::from_millis(20));
-    dut.reconcile(&mut state, 31_000);
+    dut.reconcile(&mut state, 31_000, &reconcile_permit());
     assert_eq!(dut.outstanding_futures(), 0);
 }
 
@@ -255,7 +255,7 @@ fn s240_read_back_rejects_stale_and_non_neutral_evidence() {
 
     assert!(wait_for_workers(&io, Duration::from_millis(1_500)));
     assert_eq!(io.device_w("P"), Some(-800.0));
-    dut.reconcile(&mut state, 200);
+    dut.reconcile(&mut state, 200, &reconcile_permit());
     assert_eq!(dut.outstanding_futures(), 0);
 
     let mut stale = readback_from_device(&io, "P", 0, 2);
@@ -284,7 +284,7 @@ fn s240_read_back_clears_only_after_coherent_neutralisation() {
     let entries_before = io.writes().len();
 
     thread::sleep(Duration::from_millis(260));
-    dut.reconcile(&mut state, 400);
+    dut.reconcile(&mut state, 400, &reconcile_permit());
     io.set_behavior("P", Behavior::Accept { echo: true });
     let neutral = dut.dispatch_slot(
         &mut state,
@@ -294,7 +294,7 @@ fn s240_read_back_clears_only_after_coherent_neutralisation() {
     assert!(neutral[0].written);
     assert_eq!(io.device_w("P"), Some(0.0));
     assert_eq!(state.pack("P").last_neutral_ack_at_ms, 400);
-    dut.reconcile(&mut state, 400);
+    dut.reconcile(&mut state, 400, &reconcile_permit());
 
     let proof = readback_from_device(&io, "P", 410, 1);
     let row = dut.read_back(&mut state, &proof, 410);
@@ -326,7 +326,7 @@ fn s241_rejected_and_cancelled_writes_do_not_apply() {
     assert_eq!(rows[1].outcome, DispatchOutcome::Uncertain);
     assert_eq!(rows[2].outcome, DispatchOutcome::ConfirmationPending);
     thread::sleep(Duration::from_millis(30));
-    dut.reconcile(&mut state, 200);
+    dut.reconcile(&mut state, 200, &reconcile_permit());
     assert_eq!(io.writes().len(), 3);
     let applied = io.applied_commands();
     assert_eq!(applied.len(), 1);
@@ -348,7 +348,7 @@ fn timed_out_pack(
     let rows = dut.dispatch_slot(&mut state, &[economic(pack, -800.0)], 0);
     assert_eq!(rows[0].outcome, DispatchOutcome::Uncertain);
     assert!(wait_for_workers(&io, Duration::from_millis(1_500)));
-    dut.reconcile(&mut state, 200);
+    dut.reconcile(&mut state, 200, &reconcile_permit());
     (io, dut, state)
 }
 #[test]

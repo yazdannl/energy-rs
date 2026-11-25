@@ -44,8 +44,13 @@ impl Caller {
 
     /// Only crate-internal authority code can build this caller.
     pub(crate) fn internal(entry: EntryPoint, at_ms: i64, why: &str) -> Self {
+        Self::internal_named(entry, "authority", at_ms, why)
+    }
+
+    /// Named internal caller for audited wiring operations.
+    pub(crate) fn internal_named(entry: EntryPoint, actor: &str, at_ms: i64, why: &str) -> Self {
         Self {
-            actor: "authority".to_owned(),
+            actor: actor.to_owned(),
             entry,
             at_ms,
             why: why.to_owned(),

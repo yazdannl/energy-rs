@@ -36,6 +36,18 @@ pub enum AuthorityEventKind {
     },
     /// Non-authoritative attempt or operator journal note.
     JournalNote { text: String },
+    /// A startup locked the write-free recovery invariant with failing evidence.
+    RecoveryRequired {
+        reason: String,
+        evidence: String,
+        record_id: u64,
+    },
+    /// Authority-only reconcile acknowledged repaired evidence and cleared recovery.
+    RecoveryReconciled {
+        who: String,
+        why: String,
+        evidence: String,
+    },
     /// Entry point that requested a write was gated.
     GateRefusal { path: EntryPoint, reason: String },
 }
@@ -51,6 +63,8 @@ impl AuthorityEventKind {
             Self::DryRunLatchPreserved { .. } => "dry_run_latch_preserved",
             Self::StartupResolution { .. } => "startup_resolution",
             Self::JournalNote { .. } => "journal_note",
+            Self::RecoveryRequired { .. } => "recovery_required",
+            Self::RecoveryReconciled { .. } => "recovery_reconciled",
             Self::GateRefusal { .. } => "gate_refusal",
         }
     }

@@ -1,15 +1,16 @@
 //! M6 bootstrap and sealed-transaction scenarios: S190-S194, S198, S199, S202-S205, S210.
 //! Production lines caught by these regressions:
 //! `BootstrapAuthorityTx::{begin,write_token,write_event,commit}` (audited provenance,
-//! single-use commit, no out-of-scope capability); `startup_steps::bootstrap` and
-//! `startup_steps::phase_for` (no mode-based authority, no silent repair).
+//! single-use commit, issued run/tx marker, no out-of-scope capability);
+//! `startup_steps::bootstrap` and `startup_steps::phase_for` (no mode-based authority,
+//! no silent repair, recovery survives a restart until authority reconcile).
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod m6_support;
 
 use energy_decide::authority::{
-    AuthorityAnchor, AuthorityEventKind, AuthorityLedger, AuthorityPhase, AuthorityState,
-    BootstrapAuthorityTx, BootstrapCapability, BootstrapReason, Caller, EntryPoint, GateOutcome,
-    StartupResolution, WriteClass, WriteRequest,
+    AuthorityAnchor, AuthorityEventKind, AuthorityLedger, AuthorityPhase, AuthorityRefusal,
+    AuthorityState, BootstrapCapability, BootstrapIssue, BootstrapReason, BootstrapTxError, Caller,
+    EntryPoint, GateOutcome, StartupResolution, WriteClass, WriteRequest,
 };
 use energy_decide::dispatch::{AuthorityDecision, WriteAuthority};
 use m6_support::{Fixture, auto_fixture, command};
@@ -23,7 +24,7 @@ fn init_reason(ledger: &AuthorityLedger) -> Option<BootstrapReason> {
 
 #[test]
 fn s190_fresh_install_commits_audited_auto_before_any_write() {
-    let fixture = m6_support::auto_fixture(1_000);
+    let fixture = auto_fixture(1_000);
     let authority = &fixture.authority;
     assert_eq!(authority.state(), AuthorityState::Auto);
     assert_eq!(authority.phase(), AuthorityPhase::Initialized);
@@ -46,10 +47,9 @@ fn s190_fresh_install_commits_audited_auto_before_any_write() {
         authority.audit().first().map(|event| event.entry),
         Some(EntryPoint::StartupResolutionWrite)
     );
-    assert_eq!(
-        fixture.anchor().map(|anchor| anchor.committed_head),
-        Some(1)
-    );
+    let anchor = fixture.anchor().expect("anchor");
+    assert_eq!(anchor.committed_head, 1);
+    assert!(anchor.bootstrap_issue.is_some_and(|issue| issue.consumed));
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn s192_legacy_dry_run_is_preserved_write_free() {
 
 #[test]
 fn s193_malformed_generation_requires_operator_recovery() {
-    let booted = m6_support::auto_fixture(4_000);
+    let booted = auto_fixture(4_000);
     let mut ledger = booted.authority.ledger();
     ledger.corrupt_generation("1x");
     let restarted = booted.restart(ledger, 4_010);
@@ -105,37 +105,34 @@ fn s193_malformed_generation_requires_operator_recovery() {
             Caller::system(EntryPoint::ApiRequest, 4_010, "write"),
             WriteClass::DeviceEconomic,
         )),
-        GateOutcome::Refused(energy_decide::authority::AuthorityRefusal::LatchTokenInvalid)
+        GateOutcome::Refused(AuthorityRefusal::AuthorityRecoveryRequired)
     );
 }
 
 #[test]
-fn s194_token_event_commit_alone_never_opens_the_gate() {
-    let source = m6_support::fresh(5_000);
-    let mut tx =
-        BootstrapAuthorityTx::begin(source.clone(), 5_000, "authority").expect("bootstrap");
-    let token = tx.token();
-    let event = tx.event();
-    tx.write_token(token, 1).expect("token");
-    tx.write_event(event).expect("event");
-    let committed = tx.commit().expect("atomic commit");
-    let ledger = committed.ledger_snapshot();
-
-    let fixture = Fixture::new(ledger.clone(), 5_010);
+fn s194_recovery_survives_repair_and_restart_until_authority_reconcile() {
+    let booted = auto_fixture(5_000);
+    let ledger = booted.authority.ledger();
+    let without_anchor = Fixture::new(ledger.clone(), 5_010);
     assert_eq!(
-        fixture.authority.startup().resolution,
+        without_anchor.authority.startup().resolution,
         StartupResolution::RecoveryRequired
     );
-    assert!(!fixture.authority.startup().gate_open);
+    assert!(!without_anchor.authority.startup().gate_open);
     assert_eq!(
-        fixture.authority.authorize(&command("P", 800.0, 5_010)),
+        without_anchor
+            .authority
+            .authorize(&command("P", 800.0, 5_010)),
         AuthorityDecision::Denied {
             reason: "authority_recovery_required"
         }
     );
 
-    let record_id = fixture.records().first().map_or(0, |record| record.id);
-    let anchor = AuthorityAnchor::new(
+    let record_id = without_anchor
+        .records()
+        .first()
+        .map_or(0, |record| record.id);
+    let repaired = AuthorityAnchor::new(
         1,
         ledger.latch().map_or("", |latch| latch.token().hash()),
         ledger.head_event_id(),
@@ -143,13 +140,34 @@ fn s194_token_event_commit_alone_never_opens_the_gate() {
         ledger.checkpoint_event_id(),
         record_id,
     );
-    fixture.restore_anchor(&anchor);
-    let restarted = fixture.restart(ledger, 5_020);
+    without_anchor.restore_anchor(&repaired);
+    let restarted = without_anchor.restart(ledger, 5_020);
+    assert_eq!(
+        restarted.startup().resolution,
+        StartupResolution::RecoveryRequired
+    );
+    assert!(!restarted.startup().gate_open);
+
+    let evidence = restarted.startup().evidence.expect("locked evidence");
+    let permit = restarted
+        .issue_reconcile_permit("operator", 5_030, "repaired anchor evidence")
+        .expect("authority permit");
+    restarted
+        .reconcile_recovery(
+            &without_anchor.anchors,
+            &without_anchor.resolutions,
+            permit,
+            &evidence,
+            5_040,
+        )
+        .expect("authority reconcile");
     assert_eq!(
         restarted.startup().resolution,
         StartupResolution::Reconciled
     );
     assert!(restarted.startup().gate_open);
+    let after = without_anchor.restart(restarted.ledger(), 5_050);
+    assert_eq!(after.startup().resolution, StartupResolution::Reconciled);
 }
 
 #[test]
@@ -193,9 +211,15 @@ fn s202_schema_one_without_latch_events_permits_legacy_migration() {
         init_reason(&fixture.authority.ledger()),
         Some(BootstrapReason::LegacyAutoMigration)
     );
-    let post_token = fixture.authority.ledger();
-    let tx = BootstrapAuthorityTx::begin(post_token, 8_010, "authority");
-    assert!(tx.is_err());
+    assert!(
+        energy_decide::authority::BootstrapAuthorityTx::begin_external(
+            fixture.authority.ledger(),
+            8_010,
+            "api",
+            &fixture.anchors,
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -226,7 +250,7 @@ fn s204_unreadable_token_with_initialization_event_stays_in_recovery() {
     assert_eq!(
         fixture.authorize(&command("P", -800.0, 10_010)),
         AuthorityDecision::Denied {
-            reason: "latch_token_invalid"
+            reason: "authority_recovery_required"
         }
     );
 }
@@ -244,12 +268,11 @@ fn s205_uninitialized_scope_allows_only_token_event_and_diagnostic_record() {
         WriteClass::DomainPersistence,
         WriteClass::DeviceEconomic,
     ] {
-        let outcome = fixture
-            .authority
-            .authorize_write(&WriteRequest::new(caller.clone(), class));
         assert_eq!(
-            outcome,
-            GateOutcome::Refused(energy_decide::authority::AuthorityRefusal::LatchTokenInvalid)
+            fixture
+                .authority
+                .authorize_write(&WriteRequest::new(caller.clone(), class)),
+            GateOutcome::Refused(AuthorityRefusal::AuthorityRecoveryRequired)
         );
     }
     assert!(
@@ -265,26 +288,48 @@ fn s205_uninitialized_scope_allows_only_token_event_and_diagnostic_record() {
 }
 
 #[test]
-fn s210_bootstrap_transaction_is_sealed_and_non_replayable() {
-    let source = m6_support::fresh(12_000);
-    let mut tx = BootstrapAuthorityTx::begin(source.clone(), 12_000, "operator").expect("begin");
+fn s210_bootstrap_capability_is_not_reconstructible_and_denials_are_typed() {
+    let fixture = auto_fixture(12_000);
+    let ledger = fixture.authority.ledger();
     assert_eq!(
-        tx.deny_extra_capability(BootstrapCapability::DeviceWrite),
-        energy_decide::authority::BootstrapTxError::CapabilityDenied
+        energy_decide::authority::BootstrapAuthorityTx::begin_external(
+            ledger.clone(),
+            12_010,
+            "api",
+            &fixture.anchors,
+        )
+        .expect_err("replay"),
+        BootstrapTxError::ReplayDenied
     );
+
+    let mut previous = fixture.anchor().expect("anchor");
+    let mut issue = BootstrapIssue::new(3, 99, 7, 12_000);
+    issue.consumed = false;
+    previous.bootstrap_issue = Some(issue);
+    fixture.restore_anchor(&previous);
     assert_eq!(
-        tx.deny_extra_capability(BootstrapCapability::JournalAppend)
-            .slug(),
-        "bootstrap_tx_capability_denied"
+        energy_decide::authority::BootstrapAuthorityTx::begin_external(
+            ledger.clone(),
+            12_020,
+            "api",
+            &fixture.anchors,
+        )
+        .expect_err("previous run"),
+        BootstrapTxError::CapabilityDenied
     );
-    let token = tx.token();
-    let event = tx.event();
-    tx.write_token(token, 1).expect("token");
-    tx.write_event(event).expect("event");
-    let committed = tx.commit().expect("commit");
-    assert_eq!(committed.nonce(), committed.nonce());
-    let ledger = committed.ledger_snapshot();
-    assert_eq!(ledger.events().len(), 1);
-    assert_eq!(ledger.checkpoint_event_id(), 1);
-    assert!(BootstrapAuthorityTx::begin(ledger, 12_010, "operator").is_err());
+
+    let caller = Caller::system(EntryPoint::ApiRequest, 12_030, "reconstruct seal");
+    let refusal = fixture.authority.reject_bootstrap_reconstruction(caller);
+    assert_eq!(refusal, AuthorityRefusal::BootstrapTxCapabilityDenied);
+    let audit = fixture.authority.audit();
+    let last = audit.last().expect("gate audit row");
+    assert_eq!(last.detail, "bootstrap_tx_capability_denied");
+    assert_eq!(last.entry, EntryPoint::ApiRequest);
+
+    let denied = energy_decide::authority::BootstrapCapability::DeviceWrite;
+    assert_eq!(
+        denied,
+        BootstrapCapability::DeviceWrite,
+        "forbidden capabilities remain typed values"
+    );
 }

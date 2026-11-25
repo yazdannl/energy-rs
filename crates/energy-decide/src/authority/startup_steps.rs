@@ -1,8 +1,8 @@
 use crate::authority::{
     AnchorStore, AuditEvent, AuditLog, AuthorityAnchor, AuthorityLedger, AuthorityPhase,
-    AuthorityState, BootstrapAuthorityTx, Caller, EntryPoint, GateOutcome, ResolutionStore,
-    StartupResolution, StartupResolutionRecord, StorageError, WriteClass, WriteRequest, gate,
-    journal, startup_input::StartupInput,
+    AuthorityState, BootstrapAuthorityTx, BootstrapIssue, Caller, EntryPoint, GateOutcome,
+    IssuedBootstrapCapability, ResolutionStore, StartupResolution, StartupResolutionRecord,
+    StorageError, WriteClass, WriteRequest, gate, journal, startup_input::StartupInput,
 };
 
 enum BootstrapAttempt {
@@ -14,8 +14,42 @@ enum BootstrapAttempt {
     Failed(AuthorityLedger),
 }
 
-fn try_bootstrap(source: AuthorityLedger, now_ms: i64) -> BootstrapAttempt {
-    let Ok(mut tx) = BootstrapAuthorityTx::begin(source.clone(), now_ms, "authority") else {
+fn try_bootstrap(
+    source: AuthorityLedger,
+    anchors: &dyn crate::authority::AnchorStore,
+    now_ms: i64,
+    run_id: u64,
+) -> BootstrapAttempt {
+    let tx_id = run_id.wrapping_add(1);
+    let nonce = journal::hash_bytes(run_id, source.seed().as_bytes());
+    let mut anchor = match anchors.load() {
+        Ok(Some(existing)) => existing,
+        Ok(None) => {
+            let created = AuthorityAnchor::new(0, "", 0, 0, 0, 0);
+            if anchors.atomic_write(&created).is_err() {
+                return BootstrapAttempt::Failed(source);
+            }
+            created
+        }
+        Err(_) => return BootstrapAttempt::Failed(source),
+    };
+    let issue = if let Some(issue) = anchor.bootstrap_issue.take() {
+        issue
+    } else {
+        let issue = BootstrapIssue::new(tx_id, run_id, nonce, now_ms);
+        anchor.issue_bootstrap(issue.clone());
+        if anchors.atomic_write(&anchor).is_err() {
+            return BootstrapAttempt::Failed(source);
+        }
+        issue
+    };
+    if issue.consumed || issue.run_id != run_id || issue.tx_id != tx_id || issue.nonce != nonce {
+        return BootstrapAttempt::NotAllowed(source);
+    }
+    let capability = IssuedBootstrapCapability::new(run_id, tx_id, nonce);
+    let Ok(mut tx) =
+        BootstrapAuthorityTx::begin(source.clone(), now_ms, "authority", anchors, &capability)
+    else {
         return BootstrapAttempt::NotAllowed(source);
     };
     let token = tx.token();
@@ -26,6 +60,13 @@ fn try_bootstrap(source: AuthorityLedger, now_ms: i64) -> BootstrapAttempt {
     match tx.commit() {
         Ok(committed) => {
             let warning = committed.warning().to_owned();
+            if let Ok(Some(mut issued)) = anchors.load()
+                && let Some(mut marker) = issued.bootstrap_issue.take()
+            {
+                marker.consume();
+                issued.bootstrap_issue = Some(marker);
+                let _ = anchors.atomic_write(&issued);
+            }
             BootstrapAttempt::Booted {
                 ledger: committed.into_ledger(),
                 warning,
@@ -35,8 +76,13 @@ fn try_bootstrap(source: AuthorityLedger, now_ms: i64) -> BootstrapAttempt {
     }
 }
 
-pub(crate) fn bootstrap(source: AuthorityLedger, now_ms: i64) -> (AuthorityLedger, String, bool) {
-    match try_bootstrap(source, now_ms) {
+pub(crate) fn bootstrap(
+    source: AuthorityLedger,
+    anchors: &dyn crate::authority::AnchorStore,
+    now_ms: i64,
+    run_id: u64,
+) -> (AuthorityLedger, String, bool) {
+    match try_bootstrap(source, anchors, now_ms, run_id) {
         BootstrapAttempt::Booted { ledger, warning } => (ledger, warning, true),
         BootstrapAttempt::NotAllowed(ledger) | BootstrapAttempt::Failed(ledger) => {
             (ledger, String::new(), false)
@@ -152,7 +198,8 @@ pub(crate) fn append_record(
         phase,
         outcome: outcome.clone(),
         why: request.caller.why().to_owned(),
-        detail: "startup_resolution",
+        detail: "startup_resolution".to_owned(),
+        evidence: None,
     });
     if outcome != GateOutcome::Authorized {
         return Err(StorageError::Corrupt);
@@ -181,7 +228,7 @@ pub(crate) fn install_ref(
         let token_hash = ledger
             .latch()
             .map_or_else(String::new, |latch| latch.token().hash().to_owned());
-        let created = AuthorityAnchor::new(
+        let mut created = AuthorityAnchor::new(
             ledger
                 .latch()
                 .map_or(0, |latch| latch.token().generation().unwrap_or(0)),
@@ -191,12 +238,32 @@ pub(crate) fn install_ref(
             ledger.checkpoint_event_id(),
             record_id,
         );
+        if let Some(existing) = anchor
+            && let Some(issue) = existing.bootstrap_issue.clone()
+        {
+            created.issue_bootstrap(issue);
+            if let Some(issue) = created.bootstrap_issue.as_mut() {
+                issue.consume();
+            }
+        }
         return anchors.atomic_write(&created);
     }
     let Some(existing) = anchor else {
         return Err(StorageError::PendingRefFailed);
     };
     let mut prepared = existing.clone();
+    if prepared.generation == 0 && prepared.token_hash.is_empty() {
+        prepared.generation = ledger
+            .latch()
+            .and_then(|latch| latch.token().generation())
+            .unwrap_or(0);
+        prepared.token_hash = ledger
+            .latch()
+            .map_or_else(String::new, |latch| latch.token().hash().to_owned());
+        prepared.committed_head = ledger.head_event_id();
+        prepared.journal_hash_chain_head = ledger.chain_head();
+        prepared.checkpoint_event_id = ledger.checkpoint_event_id();
+    }
     if prepared.pending_head == ledger.head_event_id()
         && prepared.pending_head > prepared.committed_head
     {

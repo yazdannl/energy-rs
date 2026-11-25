@@ -9,7 +9,7 @@ use std::time::Duration;
 use energy_decide::dispatch::{
     AllowAllAuthority, DispatchOutcome, DispatchState, Dispatcher, Echo, ProceedSafety, SlotRequest,
 };
-use m4_support::{Behavior, FakeIo, ImmediateClock, report};
+use m4_support::{Behavior, FakeIo, ImmediateClock, reconcile_permit, report};
 
 fn economic(pack: &str, target_w: f64) -> SlotRequest {
     SlotRequest::economic(pack, target_w, 0, "contract_test")
@@ -55,7 +55,7 @@ fn s222_transport_violation_latches_one_pack_until_reconcile() {
 
     let _ = io.wait_for_tx_released(1, Duration::from_secs(2));
     thread::sleep(Duration::from_millis(20));
-    dut.reconcile(&mut state, 200);
+    dut.reconcile(&mut state, 200, &reconcile_permit());
     assert!(!state.pack("P1").transport_contract_violated);
     io.set_behavior("P1", Behavior::Accept { echo: true });
     let mut proof = report("P1", 250, 0.0, 0, 0, 1);

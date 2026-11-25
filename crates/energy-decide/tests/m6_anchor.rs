@@ -35,20 +35,29 @@ fn s208_legacy_evidence_snapshot_rollback_mismatch_and_truncation() {
 
     let auto = auto_fixture(2_000);
     let snapshot = auto.authority.ledger();
-    let anchor_snapshot = auto.anchor().expect("anchor");
     auto.authority
         .begin_clearance(&ClearanceCommand::new("operator", 2_010, "c-1", true))
         .expect("logged clearance");
 
     let coherent = auto.restart(snapshot.clone(), 2_020);
     assert_eq!(coherent.startup().resolution, StartupResolution::Reconciled);
-    assert_eq!(coherent.startup().health.banner, CONTINUITY_BANNER);
+    assert!(
+        coherent
+            .startup()
+            .health
+            .banner
+            .starts_with(CONTINUITY_BANNER)
+    );
     assert!(
         auto.records()
             .iter()
             .any(|record| record.case == StartupResolution::Reconciled)
     );
 
+    assert_database_attacks(&auto, snapshot);
+}
+
+fn assert_database_attacks(auto: &Fixture, snapshot: AuthorityLedger) {
     let mut advanced_anchor = auto.anchor().expect("anchor");
     advanced_anchor.committed_head = 2;
     auto.restore_anchor(&advanced_anchor);
@@ -58,7 +67,14 @@ fn s208_legacy_evidence_snapshot_rollback_mismatch_and_truncation() {
         StartupResolution::RecoveryRequired
     );
     assert_eq!(db_only.startup().reason, Some("anchor_mismatch"));
-    assert_eq!(db_only.startup().health.banner, CONTINUITY_BANNER);
+    assert!(
+        db_only
+            .startup()
+            .health
+            .banner
+            .starts_with(CONTINUITY_BANNER)
+    );
+    assert!(db_only.startup().health.banner.contains("anchor_mismatch"));
 
     let mut truncated = auto.authority.ledger();
     truncated.truncate_tail(1);
@@ -67,9 +83,11 @@ fn s208_legacy_evidence_snapshot_rollback_mismatch_and_truncation() {
         torn.startup().resolution,
         StartupResolution::RecoveryRequired
     );
-    assert_eq!(torn.startup().reason, Some("journal_incomplete"));
-
-    let _ = anchor_snapshot;
+    assert_eq!(
+        torn.startup().reason,
+        Some("recovery_required_unreconciled"),
+        "the earlier database-only rollback locked recovery for this install"
+    );
 }
 
 #[test]
@@ -90,6 +108,22 @@ fn s209_checkpoint_ownership_and_completeness() {
     );
 }
 
+fn reconcile_after_repair(fixture: &Fixture, authority: &energy_decide::authority::Authority) {
+    let evidence = authority.startup().evidence.expect("locked evidence");
+    let permit = authority
+        .issue_reconcile_permit("operator", 4_025, "repaired ledger")
+        .expect("authority permit");
+    authority
+        .reconcile_recovery(
+            &fixture.anchors,
+            &fixture.resolutions,
+            permit,
+            &evidence,
+            4_030,
+        )
+        .expect("reconcile");
+}
+
 #[test]
 fn s211_only_two_resolutions_and_a_banner_on_every_startup() {
     let fixture = auto_fixture(4_000);
@@ -106,8 +140,13 @@ fn s211_only_two_resolutions_and_a_banner_on_every_startup() {
     );
 
     let snapshot = fixture.authority.ledger();
-    let anchor = fixture.anchor().expect("anchor");
     let restored = fixture.restart(snapshot, 4_020);
+    assert_eq!(
+        restored.startup().resolution,
+        StartupResolution::RecoveryRequired,
+        "repairing the ledger alone cannot clear recovery"
+    );
+    reconcile_after_repair(&fixture, &restored);
     assert_eq!(restored.startup().resolution, StartupResolution::Reconciled);
     assert_eq!(restored.startup().health.banner, CONTINUITY_BANNER);
 
@@ -126,9 +165,21 @@ fn s211_only_two_resolutions_and_a_banner_on_every_startup() {
         no_anchor.startup().resolution,
         StartupResolution::RecoveryRequired
     );
-    assert_eq!(no_anchor.startup().health.banner, CONTINUITY_BANNER);
+    assert!(
+        no_anchor
+            .startup()
+            .health
+            .banner
+            .starts_with(CONTINUITY_BANNER)
+    );
+    assert!(
+        no_anchor
+            .startup()
+            .health
+            .banner
+            .contains("anchor_mismatch")
+    );
     assert_ne!(no_anchor.startup().resolution.as_str(), "continuity_proven");
-    let _ = anchor;
 }
 
 #[test]
@@ -226,7 +277,10 @@ fn s216_corrupt_anchor_fails_closed_without_bootstrap() {
         restarted.startup().reason,
         Some("resolution_record_corrupt")
     );
-    assert_eq!(device_is_denied(&restarted, 9_010), "latch_token_invalid");
+    assert_eq!(
+        device_is_denied(&restarted, 9_010),
+        "authority_recovery_required"
+    );
 }
 
 #[test]
@@ -254,7 +308,11 @@ fn s217_startup_record_is_writable_with_invalid_authority() {
         orphan.startup().resolution,
         StartupResolution::RecoveryRequired
     );
-    assert_eq!(orphan.startup().reason, Some("anchor_mismatch"));
+    assert_eq!(
+        orphan.startup().reason,
+        Some("recovery_required_unreconciled"),
+        "the durable lock survives even evidence destruction"
+    );
 }
 
 #[test]
@@ -304,7 +362,13 @@ fn s220_persistence_failures_are_typed_and_write_free() {
             device_is_denied(&authority, 12_000),
             "authority_recovery_required"
         );
-        assert_eq!(authority.startup().health.banner, CONTINUITY_BANNER);
+        assert!(
+            authority
+                .startup()
+                .health
+                .banner
+                .starts_with(CONTINUITY_BANNER)
+        );
     }
 }
 

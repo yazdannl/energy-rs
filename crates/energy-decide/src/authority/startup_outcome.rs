@@ -1,6 +1,8 @@
 //! Result of the one universal startup resolution.
 
-use crate::authority::{AuthorityPhase, AuthorityState, HealthReport, StartupResolution};
+use crate::authority::{
+    AuthorityPhase, AuthorityState, HealthReport, RecoveryEvidence, StartupResolution,
+};
 
 /// Exactly one startup resolution plus the health payload and gate eligibility.
 #[derive(Debug, Clone)]
@@ -13,6 +15,8 @@ pub struct StartupOutcome {
     pub phase: AuthorityPhase,
     /// Typed reason for recovery, when recovery was selected.
     pub reason: Option<&'static str>,
+    /// Structured failing evidence; never an authority capability.
+    pub evidence: Option<RecoveryEvidence>,
     /// Id of the one record this startup appended.
     pub record_id: Option<u64>,
     /// True only when authority is initialized and reconciliation succeeded.

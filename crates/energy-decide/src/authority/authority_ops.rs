@@ -188,7 +188,7 @@ impl Authority {
         let before = self.gate_calls();
         let outcome = self.decide(&WriteRequest::new(
             caller.clone(),
-            WriteClass::ControlPlaneAuthority,
+            WriteClass::ReconcileAuthorization { valid: true },
         ));
         if !outcome.authorized() {
             return Err(refusal(&outcome));
@@ -196,6 +196,23 @@ impl Authority {
         Ok(ReconcilePermit::new(
             before.saturating_add(1),
             caller.at_ms(),
+            caller.actor(),
+            caller.why(),
+        ))
+    }
+
+    /// Wiring boundary for a trusted authority reconcile; an API caller cannot forge this.
+    pub fn issue_reconcile_permit(
+        &self,
+        actor: &str,
+        at_ms: i64,
+        why: &str,
+    ) -> Result<ReconcilePermit, AuthorityRefusal> {
+        self.authorize_reconcile(&Caller::internal_named(
+            EntryPoint::InternalRecovery,
+            actor,
+            at_ms,
+            why,
         ))
     }
 
