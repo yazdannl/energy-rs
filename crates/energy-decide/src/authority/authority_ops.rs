@@ -30,6 +30,38 @@ impl Authority {
         self.decide(&WriteRequest::new(caller, class))
     }
 
+    /// Boot-time neutralisation entry point, using the real startup caller identity.
+    pub fn authorize_boot_neutralisation(&self, at_ms: i64, fence_id: &str) -> GateOutcome {
+        self.decide(&WriteRequest::new(
+            Caller::system(EntryPoint::Startup, at_ms, "boot neutralisation"),
+            WriteClass::DeviceNeutralisation {
+                fence_id: fence_id.to_owned(),
+            },
+        ))
+    }
+
+    /// Shutdown/watchdog neutralisation entry point.
+    pub fn authorize_shutdown_neutralisation(&self, at_ms: i64, fence_id: &str) -> GateOutcome {
+        self.decide(&WriteRequest::new(
+            Caller::system(
+                EntryPoint::WatchdogRestart,
+                at_ms,
+                "shutdown neutralisation",
+            ),
+            WriteClass::DeviceNeutralisation {
+                fence_id: fence_id.to_owned(),
+            },
+        ))
+    }
+
+    /// Settings/mode persistence entry point; an operator cannot establish authority here.
+    pub fn authorize_settings_write(&self, actor: &str, at_ms: i64, why: &str) -> GateOutcome {
+        self.decide(&WriteRequest::new(
+            Caller::operator(EntryPoint::DashboardMutation, actor, at_ms, why),
+            WriteClass::DomainPersistence,
+        ))
+    }
+
     /// Operational `dry_run` requests are rejected with a typed 4xx reason.
     pub fn decline_operational_dry_run(&self, caller: Caller) -> AuthorityRefusal {
         refusal(&self.decide(&WriteRequest::new(caller, WriteClass::OperationalDryRun)))

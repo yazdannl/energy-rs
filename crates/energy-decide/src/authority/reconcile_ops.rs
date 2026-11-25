@@ -67,9 +67,10 @@ impl Authority {
         if anchor.recovery.as_ref() != Some(evidence) {
             return Err(AuthorityRefusal::AnchorMismatch);
         }
-        evidence_steps::append_reconcile_record(resolutions, at_ms)
+        let reconcile_ref = evidence_steps::append_reconcile_record(resolutions, at_ms)
             .map_err(|_| AuthorityRefusal::ResolutionRecordCorrupt)?;
         anchor.clear_recovery();
+        anchor.last_startup_resolution_ref = Some(reconcile_ref);
         record_reconcile(&mut core, anchor, permit, evidence, at_ms);
         anchors
             .atomic_write(anchor)

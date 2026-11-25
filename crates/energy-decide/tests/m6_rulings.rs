@@ -8,16 +8,15 @@ mod m4_support;
 mod m6_support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use energy_decide::authority::{
-    Authority, AuthorityRefusal, AuthorityState, BootstrapIssue, BootstrapTxError, Caller,
-    ClearanceCommand, EntryPoint, GateOutcome, RecoveryEvidence, StartupResolution, WriteClass,
-    WriteRequest,
+    AnchorStore, Authority, AuthorityRefusal, AuthorityState, BootstrapIssue, BootstrapTxError,
+    Caller, ClearanceCommand, EntryPoint, FileAnchorStore, FileResolutionStore, GateOutcome,
+    ReconcilePermit, RecoveryEvidence, StartupResolution, StorageError, WriteClass, WriteRequest,
 };
-use energy_decide::dispatch::{
-    AllowAllAuthority, AuthorityDecision, DispatchState, Dispatcher, ProceedSafety, WriteAuthority,
-};
-use m6_support::{auto_fixture, command, fenced_hold};
+use energy_decide::dispatch::{AllowAllAuthority, DispatchState, Dispatcher, ProceedSafety};
+use m6_support::{TestDir, auto_fixture};
 
 fn refused_reason(outcome: GateOutcome) -> String {
     match outcome {
@@ -215,104 +214,6 @@ fn s324_reconcile_permit_is_required_at_the_dispatcher_boundary() {
 }
 
 #[test]
-fn s325_each_named_entry_point_is_refused_while_latched_and_proceeds_in_auto() {
-    let cases: Vec<EntryCase> = entry_point_cases();
-    let latched = m6_support::latched_fixture(26_000);
-    let auto = auto_fixture(26_000);
-    for (name, exercise) in cases {
-        let denied = exercise(&latched.authority);
-        assert!(!denied, "{name} must be refused while latched");
-        let allowed = exercise(&auto.authority);
-        assert!(allowed, "{name} must proceed in auto");
-    }
-}
-
-fn decision_allowed(decision: AuthorityDecision) -> bool {
-    matches!(decision, AuthorityDecision::Authorized)
-}
-
-type EntryCase = (&'static str, Box<dyn Fn(&Authority) -> bool>);
-
-fn entry_point_cases() -> Vec<EntryCase> {
-    let mut cases: Vec<EntryCase> = vec![
-        (
-            "engine dispatch",
-            Box::new(|authority| {
-                decision_allowed(authority.authorize(&command("P", -800.0, 26_000)))
-            }),
-        ),
-        (
-            "safety traffic",
-            Box::new(|authority| {
-                let mut held = fenced_hold("P", "fence-26", 26_000);
-                held.safety_traffic = true;
-                decision_allowed(authority.authorize(&held))
-            }),
-        ),
-        (
-            "boot neutralisation",
-            Box::new(|authority| {
-                authority
-                    .authorize_write(&WriteRequest::new(
-                        Caller::system(EntryPoint::Startup, 26_000, "boot neutralisation"),
-                        WriteClass::DeviceNeutralisation {
-                            fence_id: "fence-boot".to_owned(),
-                        },
-                    ))
-                    .authorized()
-            }),
-        ),
-    ];
-    cases.extend(neutralisation_and_passthrough_cases());
-    cases
-}
-
-fn neutralisation_and_passthrough_cases() -> Vec<EntryCase> {
-    let cases: Vec<EntryCase> = vec![
-        (
-            "shutdown neutralisation",
-            Box::new(|authority| {
-                authority
-                    .authorize_write(&WriteRequest::new(
-                        Caller::system(
-                            EntryPoint::WatchdogRestart,
-                            26_000,
-                            "shutdown neutralisation",
-                        ),
-                        WriteClass::DeviceNeutralisation {
-                            fence_id: "fence-shutdown".to_owned(),
-                        },
-                    ))
-                    .authorized()
-            }),
-        ),
-        (
-            "settings mode control plane",
-            Box::new(|authority| {
-                authority
-                    .authorize_persistence(
-                        Caller::system(EntryPoint::DashboardMutation, 26_000, "settings"),
-                        WriteClass::DomainPersistence,
-                    )
-                    .authorized()
-            }),
-        ),
-        (
-            "generic websocket passthrough",
-            Box::new(|authority| {
-                authority
-                    .authorize_ws_passthrough(
-                        Caller::system(EntryPoint::GenericWsPassthrough, 26_000, "raw ws call"),
-                        WriteClass::DeviceEconomic,
-                    )
-                    .authorized()
-            }),
-        ),
-    ];
-    cases
-}
-
-#[test]
 fn s326_anchor_detects_older_foreign_and_database_only_replacements() {
     let fixture = auto_fixture(27_000);
     let older = fixture.authority.ledger();
@@ -365,4 +266,104 @@ fn s327_evidence_is_part_of_the_recovery_api_not_only_a_log() {
     assert_eq!(evidence.ledger_checkpoint, 0);
     assert!(health.banner.contains("journal_incomplete"));
     assert!(health.code_string().contains("authority_recovery_required"));
+}
+
+struct FailOnceAnchor {
+    inner: FileAnchorStore,
+    writes: AtomicUsize,
+}
+
+impl AnchorStore for FailOnceAnchor {
+    fn load(&self) -> Result<Option<energy_decide::authority::AuthorityAnchor>, StorageError> {
+        self.inner.load()
+    }
+
+    fn atomic_write(
+        &self,
+        anchor: &energy_decide::authority::AuthorityAnchor,
+    ) -> Result<(), StorageError> {
+        if self.writes.fetch_add(1, Ordering::SeqCst) == 3 {
+            return Err(StorageError::PromotionFailed);
+        }
+        self.inner.atomic_write(anchor)
+    }
+}
+
+#[test]
+fn s328_anchor_ref_failure_locks_recovery_until_reconcile() {
+    let dir = TestDir::new();
+    let anchors = FailOnceAnchor {
+        inner: FileAnchorStore::in_dir(&dir.path),
+        writes: AtomicUsize::new(0),
+    };
+    let resolutions = FileResolutionStore::in_dir(&dir.path);
+    let ledger = m6_support::fresh(30_000);
+
+    let first = Authority::start(ledger.clone(), &anchors, &resolutions, 30_000);
+    assert_eq!(
+        first.startup().resolution,
+        StartupResolution::RecoveryRequired
+    );
+    assert_eq!(first.startup().reason, Some("anchor_ref_promotion_failed"));
+    assert!(
+        first
+            .startup()
+            .health
+            .banner
+            .contains("anchor_ref_promotion_failed")
+    );
+    assert!(first.audit().iter().any(|event| {
+        event.entry == EntryPoint::Startup && event.detail.contains("anchor_ref_promotion_failed")
+    }));
+
+    let second = Authority::start(first.ledger(), &anchors, &resolutions, 30_010);
+    assert_eq!(
+        second.startup().resolution,
+        StartupResolution::RecoveryRequired
+    );
+    assert_eq!(
+        refused_reason(second.authorize_write(&WriteRequest::new(
+            Caller::system(EntryPoint::ApiRequest, 30_010, "after failed anchor ref"),
+            WriteClass::DeviceEconomic,
+        ))),
+        "authority_recovery_required"
+    );
+    let evidence = second.startup().evidence.expect("locked evidence");
+    let permit = second
+        .issue_reconcile_permit("operator", 30_020, "repaired anchor ref")
+        .expect("permit");
+    second
+        .reconcile_recovery(&anchors, &resolutions, permit, &evidence, 30_030)
+        .expect("reconcile");
+    assert_eq!(second.startup().resolution, StartupResolution::Reconciled);
+    let third = Authority::start(second.ledger(), &anchors, &resolutions, 30_040);
+    assert_eq!(third.startup().resolution, StartupResolution::Reconciled);
+}
+
+type TestDispatcher = Dispatcher<ProceedSafety, AllowAllAuthority, m4_support::ImmediateClock>;
+
+/// Compile-time proof: the only `reconcile` item has a fourth, permit argument.
+const RECONCILE_REQUIRES_PERMIT: fn(
+    &TestDispatcher,
+    &mut DispatchState,
+    i64,
+    &ReconcilePermit,
+) -> usize = TestDispatcher::reconcile;
+
+#[test]
+fn s332_permitless_dispatch_reconcile_is_unrepresentable() {
+    let io = m4_support::FakeIo::default();
+    let dispatcher: TestDispatcher = Dispatcher::new(
+        io,
+        ProceedSafety,
+        AllowAllAuthority,
+        m4_support::ImmediateClock::default(),
+        1_000,
+    );
+    let mut state = DispatchState::default();
+    let permit = m4_support::reconcile_permit();
+    assert_eq!(
+        RECONCILE_REQUIRES_PERMIT(&dispatcher, &mut state, 33_000, &permit),
+        0
+    );
 }

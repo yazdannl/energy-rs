@@ -194,21 +194,19 @@ fn finish_reconciled(
         && let Some(id) = stage.record_id
         && let Err(error) = steps::install_ref(input.anchors, anchor, &ledger, id, false)
     {
+        let reason = error.slug();
         install_failure(input, audit, &stage, error);
-        return (
-            outcome(
-                StartupResolution::RecoveryRequired,
-                Some(error.slug()),
-                stage.record_id,
-                OutcomeSpec {
-                    phase: AuthorityPhase::Invalid,
-                    state: AuthorityState::DryRunLatched,
-                    warning: stage.warning,
-                    evidence: None,
-                },
-            ),
-            ledger,
+        let evidence = evidence_steps::evidence(
+            reason,
+            &ledger,
+            anchor,
+            input.resolutions,
+            stage.record_id,
+            input.now_ms,
         );
+        let mut failed_stage = stage;
+        failed_stage.reason = Some(reason);
+        return finish_recovery(input, audit, anchor, failed_stage, ledger, evidence);
     }
     let phase = if anchor_error.is_some() {
         AuthorityPhase::Invalid

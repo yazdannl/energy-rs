@@ -59,6 +59,8 @@ pub mod recovery_evidence;
 pub mod refusal;
 pub mod resolution;
 pub mod resolution_store;
+#[cfg(test)]
+mod seal_tests;
 pub mod startup;
 pub mod startup_evidence;
 pub mod startup_input;
