@@ -61,7 +61,8 @@ pub(crate) fn observe_budget(state: &mut LadderState, input: &SafetyInput, now_m
         return budget.remaining_ms;
     }
     let elapsed = now_ms.saturating_sub(budget.last_eval_at_ms);
-    let age = now_ms.saturating_sub(sample);
+    // Future-dated samples inside the accepted skew are maximally fresh, not negatively aged.
+    let age = now_ms.saturating_sub(sample).max(0);
     // Unobserved time is the sample's age at this decision, bounded by the accepted window.
     let unobserved = age.min(COMMAND_SAMPLE_MAX_MS);
     let mut remaining = budget

@@ -3,12 +3,12 @@
 Ruling: `SCENARIOS.md` rows beat `SPEC.md` prose; the owner's M5 brief and its 2026-11-24 solar
 ruling outrank both where no row exists; anything still undecided is asked as a single point, not
 silently invented. New rows start at S260. Every row below needs reviewer sign-off before merge.
-These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 5 adds S300/S301, marks finding 62 DISCLOSED, and aligns J1/J2 with authorization-only bounds.
+These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 6 adds S302/S303, clamps accepted future skew, strengthens assertions, and specifies the operator-alert path.
 
 The SPEC M5 acceptance paragraph names S33–S42, S93–S99, S132–S137, S150, S159, S160, S165 and S169.
 S132/S133 belong to M4 flow receipts and S169 to M7 durable sessions; this module claims
 S33–S40, S42, S93–S99, S134–S137, S150, S159, S160, S165, S171–S178, S183, S187 and the new
-S260–S301 below. M4/M6/M7-only rows are not claimed as M5 tests.
+S260–S303 below. M4/M6/M7-only rows are not claimed as M5 tests.
 
 ## Implemented override order (one list, first firing command wins)
 
@@ -84,10 +84,13 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S296 | M5 | invalid service evidence fails closed | grid NaN, ±inf, negative, service limit zero or implausible; zero grid reading as the valid boundary | emergency rule evaluates | projection is denied with `service_headroom_unavailable`; `MAX_PLAUSIBLE_POWER_W = 100000 W`; zero import remains a valid reading | regression | no | IN SCOPE | Review item 60: NaN comparisons bypassed the fuse. |
 | S297 | M5 | sparse samples drain the bucket | every tick a nearly-stale sample; alternating fresh/stale with each fresh sample almost an interval late | ladder evaluates each tick | each tick debits sample age, credits `max(0, elapsed - age)`, and sustained sparse schedules end in `observation_budget_exhausted` | regression | no | IN SCOPE | Review item 61: interval accounting preserved the bucket. |
 | S298 | M5 | terminal proof cannot be escaped by a target change | terminal emergency proof, then a different target is selected | ladder decides again | changed target is recorded as `terminal_target_change_refused`, 0 W is commanded, seq/target stay terminal, and only explicit recovery or reconcile clears it | regression | no | IN SCOPE | Review item 63: a replacement proof restarted escalation. |
-| S299 | M5/M4 | disclosed physical limitation and operator-alert path | observation budget empties while a nonzero command is standing | bounded hold escalation and operator alert wiring | on this hardware the pack retains the last setpoint and exposes no device command expiry; M5 cannot bound physical charging once a command has left. Existing mitigation: verified-hold attempts with bounded escalation to an OPERATOR ALERT; the alert path is the wiring item | disclosure | no | DISCLOSED (alert path REQUIRES WIRING) | Review items 62/66: no independent expiry exists; a hold that may not land is not an independent safeguard. |
+| S299 | M5/M4 | disclosed physical limitation | observation budget empties while a nonzero command is standing | bounded hold escalation only | on this hardware the pack retains the last setpoint and exposes no device command expiry; M5 cannot bound physical charging once a command has left. Existing mitigation: verified-hold attempts with bounded escalation; the operator-alert delivery contract is S303 | disclosure | no | DISCLOSED | Review items 62/66: no independent expiry exists; a hold that may not land is not an independent safeguard. |
 
 | S300 | M5 | one missed tick recovers under fresh telemetry | full bucket, one tick with no new sample, then fresh samples every 20 s | ladder evaluates each tick | missed tick leaves only one cadence of credit and denies; genuinely fresh samples refill to capacity and restore authorization within one further tick | regression | no | IN SCOPE | Review item 64: the old debit model could never recover. |
 | S301 | M5 | credit is observed coverage, not freshness verdict | sample ages 1, 19, 21 and 39 s at a 20 s decision cadence | ladder observes and decides | `credit = max(0, elapsed - age)`; only the 1 s-old sample sustains authorization, 19/21/39 s samples drain and withdraw; boundary is `age < elapsed` | regression | no | IN SCOPE | Review item 65: a consistently 19 s-old sample previously preserved the bucket. |
+
+| S302 | M5 | accepted future skew is maximally fresh | sample timestamp at `FUTURE_SKEW_MS - 1` and at `FUTURE_SKEW_MS` ahead of decision time | ladder observes and decides | age is clamped to zero before debit/credit; both samples leave the bucket at full `40 s` capacity and authorization is sustained | regression | no | IN SCOPE | Review item 68: negative age became `u32::MAX` and emptied the bucket. |
+| S303 | M5/M4/HA | escalation record versus delivered operator alert | a hold proof reaches terminal escalation; HA notify succeeds, fails transiently, then exhausts retries | engine escalation worker, HA client and ledger | RECORDED escalation is written immediately from `HoldProof`; DELIVERED alert requires HA `notify` success; failures retry at 0/30/120 s and are recorded as `safety.alert_delivery_failed`, final failure as `safety.alert_undelivered` | contract | no | REQUIRES WIRING | Review item 69: the alert needs an exact trigger, destination, owner and failure record. |
 
 ## Interpretations that need reviewer attention
 
@@ -110,9 +113,23 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
   physical charging once a command has left. The zenSDK command API exposes no setpoint TTL or
   watchdog; the server's `ttlS` override is an API-level override lease, not a device command expiry.
   The mitigation that exists here is verified-hold attempts with bounded escalation to an
-  OPERATOR ALERT; wiring that alert path is S299 (`REQUIRES WIRING`). A hold whose landing is not
+  OPERATOR ALERT; wiring that alert path is S303 (`REQUIRES WIRING`). A hold whose landing is not
   guaranteed is not claimed as an independent safeguard. No derived-looking number is presented as
   a physical guarantee.
+* Operator-alert path (reviewer round 6, S303): the EXACT RECORDED trigger is a `HoldProof` whose
+  `attempt_state == Terminal` and `escalation.exhausted()` after the third failed bounded attempt
+  (`0/2/6 s`) or after `SAFETY_ATTEMPT_DEADLINE_MS = 74 s` without verification. At that instant
+  `energy-decide` records `safety_write_unverified` plus `ownership_retention`
+  (`emergency_charge_unresolved` on the cell-emergency path) and exposes the terminal proof; this is
+  RECORDED escalation and needs no transport. DELIVERED alert is separate: `energy-server`'s engine
+  escalation worker reads that terminal proof and calls the HA `notify` service through the existing
+  `energy-ha` WebSocket client's `call_service`; the integration owner is `energy-ha`, with the
+  configured HA notify target, and no new service is introduced. The checker's findings channel may
+  surface the ledger event but is not the primary alert transport. Delivery failure retries at
+  0/30/120 s; every failure appends a ledger event `safety.alert_delivery_failed` containing pack,
+  `safety_seq`, `attempt_id`, escalation path, failure reason and retry count, and exhaustion appends
+  `safety.alert_undelivered` at ERROR level. The failure is therefore visible even when no user
+  notification arrives; only HA success may set `safety.alert_delivered`.
 * J1 revised (reviewer ruling, 2026-11-24): `physical_service_limit_w` defaults to 7700 W and is
   operator-configurable. It is an unconditional hard bound on EVERY nonzero path. Emergency charge
   is permitted only when projected import including the emergency charge is at or below it, using

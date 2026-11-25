@@ -2,8 +2,8 @@
 
 use energy_decide::dispatch::{SafetyAction, SlotRequest};
 use energy_decide::safety::{
-    COMMAND_SAMPLE_MAX_MS, FUTURE_SKEW_MS, HoldProof, Rule, SAFETY_ATTEMPT_DEADLINE_MS,
-    SafetyInput, SafetyLadder, SafetyReceipt, UNOBSERVED_BUDGET_MS,
+    AUTHORIZATION_MIN_MS, COMMAND_SAMPLE_MAX_MS, FUTURE_SKEW_MS, HoldProof, Rule,
+    SAFETY_ATTEMPT_DEADLINE_MS, SafetyInput, SafetyLadder, SafetyReceipt, UNOBSERVED_BUDGET_MS,
 };
 
 fn economic(pack: &str, requested_w: f64, at_ms: i64) -> SlotRequest {
@@ -223,6 +223,8 @@ fn s296_invalid_service_evidence_fails_closed() {
             "{name}: {:?}",
             decision.binding_limits
         );
+        assert_eq!(decision.action, Some(SafetyAction::NeutralHold), "{name}");
+        assert_eq!(decision.command_w, 0.0, "{name}");
     }
 
     let ladder = SafetyLadder::new();
@@ -258,6 +260,12 @@ fn s297_sparse_sample_schedules_cannot_reauthorise_a_charge() {
                 decision.reason, "observation_budget_exhausted",
                 "at {at_ms}"
             );
+            assert_eq!(
+                decision.action,
+                Some(SafetyAction::NeutralHold),
+                "at {at_ms}"
+            );
+            assert_eq!(decision.command_w, 0.0, "at {at_ms}");
         }
     }
 
@@ -278,6 +286,12 @@ fn s297_sparse_sample_schedules_cannot_reauthorise_a_charge() {
             decision.reason, "observation_budget_exhausted",
             "late fresh sample at {at_ms}"
         );
+        assert_eq!(
+            decision.action,
+            Some(SafetyAction::NeutralHold),
+            "late fresh sample at {at_ms}"
+        );
+        assert_eq!(decision.command_w, 0.0, "late fresh sample at {at_ms}");
     }
 }
 
@@ -326,11 +340,16 @@ fn s300_one_missed_tick_recovers_under_continuous_fresh_telemetry() {
     ladder.observe(input.clone());
     let initial = ladder.decide(&economic("P", 1000.0, 0), 0);
     assert_eq!(initial.rule, Rule::Ordinary);
+    assert_eq!(
+        ladder.observation_budget_remaining_ms("P"),
+        UNOBSERVED_BUDGET_MS as u32
+    );
 
     ladder.observe(input.clone());
     let missed = ladder.decide(&economic("P", 1000.0, 20_000), 20_000);
     assert_eq!(missed.reason, "observation_budget_exhausted");
     assert_eq!(missed.action, Some(SafetyAction::NeutralHold));
+    assert_eq!(missed.command_w, 0.0);
     ladder.recover_hold("P", 20_001);
 
     for at_ms in [40_000, 60_000, 80_000] {
@@ -339,13 +358,21 @@ fn s300_one_missed_tick_recovers_under_continuous_fresh_telemetry() {
         ladder.observe(input.clone());
         let restored = ladder.decide(&economic("P", 1000.0, at_ms), at_ms);
         assert_eq!(restored.rule, Rule::Ordinary, "at {at_ms}");
+        let remaining = ladder.observation_budget_remaining_ms("P");
+        assert!(remaining >= AUTHORIZATION_MIN_MS as u32, "at {at_ms}");
+        if at_ms >= 60_000 {
+            assert_eq!(
+                remaining, UNOBSERVED_BUDGET_MS as u32,
+                "capacity not restored at {at_ms}"
+            );
+        }
         ladder.recover_hold("P", at_ms + 1);
     }
 }
 
 #[test]
 fn s301_credit_boundary_is_the_observed_interval_not_the_freshness_verdict() {
-    for age_ms in [1_000, 19_000, 21_000, 39_000] {
+    for age_ms in [1_000, 19_000, 20_000, 21_000, 39_000] {
         let ladder = SafetyLadder::new();
         let mut input = SafetyInput::new("P", 0);
         ladder.observe(input.clone());
@@ -356,11 +383,22 @@ fn s301_credit_boundary_is_the_observed_interval_not_the_freshness_verdict() {
         let decision = ladder.decide(&economic("P", 1000.0, 20_000), 20_000);
         if age_ms == 1_000 {
             assert_eq!(decision.rule, Rule::Ordinary, "age {age_ms}");
+            assert_eq!(
+                ladder.observation_budget_remaining_ms("P"),
+                UNOBSERVED_BUDGET_MS as u32,
+                "age {age_ms}"
+            );
         } else {
             assert_eq!(
                 decision.reason, "observation_budget_exhausted",
                 "age {age_ms}"
             );
+            assert_eq!(
+                decision.action,
+                Some(SafetyAction::NeutralHold),
+                "age {age_ms}"
+            );
+            assert_eq!(decision.command_w, 0.0, "age {age_ms}");
         }
     }
 
@@ -374,6 +412,27 @@ fn s301_credit_boundary_is_the_observed_interval_not_the_freshness_verdict() {
             ladder.decide(&economic("P", 1000.0, at_ms), at_ms).rule,
             Rule::Ordinary,
             "sustained fresh sample at {at_ms}"
+        );
+    }
+}
+
+#[test]
+fn s302_accepted_future_skew_does_not_drain_the_bucket() {
+    for skew_ms in [FUTURE_SKEW_MS - 1, FUTURE_SKEW_MS] {
+        let ladder = SafetyLadder::new();
+        let mut input = SafetyInput::new("P", 0);
+        ladder.observe(input.clone());
+        ladder.decide(&economic("P", 1000.0, 0), 0);
+
+        input.last_sample_at_ms = 20_000 + skew_ms;
+        input.grid_sample_at_ms = Some(20_000 + skew_ms);
+        ladder.observe(input.clone());
+        let decision = ladder.decide(&economic("P", 1000.0, 20_000), 20_000);
+        assert_eq!(decision.rule, Rule::Ordinary, "skew {skew_ms}");
+        assert_eq!(
+            ladder.observation_budget_remaining_ms("P"),
+            UNOBSERVED_BUDGET_MS as u32,
+            "skew {skew_ms}"
         );
     }
 }

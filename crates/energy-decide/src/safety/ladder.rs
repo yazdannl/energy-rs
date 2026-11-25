@@ -109,6 +109,14 @@ impl SafetyLadder {
         self.lock().holds.get(pack_id).cloned()
     }
 
+    /// Observation-budget credit still held for one pack, in milliseconds.
+    pub fn observation_budget_remaining_ms(&self, pack_id: &str) -> u32 {
+        self.lock()
+            .budgets
+            .get(pack_id)
+            .map_or(0, |budget| budget.remaining_ms)
+    }
+
     /// Evaluate one request. This is synchronous: no hold is ever awaited in a tick.
     pub fn decide(&self, request: &SlotRequest, now_ms: i64) -> SafetyDecision {
         let mut state = self.lock();
