@@ -34,8 +34,7 @@ pub(crate) fn breach_now(input: &SafetyInput) -> bool {
 
 /// 2. Projected import if the proposed economic plan were executed: command safety only.
 pub(crate) fn proposal_safe(input: &SafetyInput) -> bool {
-    !projected_import(input, input.plan_w)
-        .is_some_and(|grid| grid > input.import_ceiling_w + input.import_deadband_w)
+    !projected_import(input, input.plan_w).is_some_and(|grid| grid > input.import_ceiling_w)
 }
 
 /// 3. Protective command for an unsafe proposal, computed without latch state.
@@ -80,7 +79,7 @@ fn update_latch(input: &SafetyInput, state: &mut LadderState, now_ms: i64) {
         .get(&input.pack_id)
         .cloned()
         .unwrap_or(ImportLatch {
-            armed: input.import_armed,
+            armed: false,
             at_ms: now_ms,
         });
     let measured_breach = breach_now(input);
@@ -89,7 +88,7 @@ fn update_latch(input: &SafetyInput, state: &mut LadderState, now_ms: i64) {
     } else {
         current.at_ms
     };
-    let mut armed = current.armed || input.import_armed || measured_breach;
+    let mut armed = current.armed || measured_breach;
     if armed && settled_remedied_from(input, episode_start, now_ms) {
         armed = false;
     }

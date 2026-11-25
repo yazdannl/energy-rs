@@ -64,6 +64,10 @@ impl SafetyLadder {
         if breach_now(&input) {
             return Err("import_breach_active");
         }
+        let remedied = breach_remedied(&input, &state, at_ms);
+        if !remedied {
+            return Err("settled_remediation_required");
+        }
         if !state.imports.get(pack_id).is_some_and(|latch| latch.armed) {
             return Err("import_guard_not_armed");
         }
@@ -86,7 +90,7 @@ impl SafetyLadder {
             evidence_window_end_ms: at_ms,
             breach_now: breach_now(&input),
             proposed_plan_breach: !proposal_safe(&input),
-            breach_remedied: breach_remedied(&input, &state, at_ms),
+            breach_remedied: remedied,
         };
         if let Some(latch) = state.imports.get_mut(pack_id) {
             latch.armed = false;

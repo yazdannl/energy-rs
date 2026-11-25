@@ -3,12 +3,12 @@
 Ruling: `SCENARIOS.md` rows beat `SPEC.md` prose; the owner's M5 brief and its 2026-11-24 solar
 ruling outrank both where no row exists; anything still undecided is asked as a single point, not
 silently invented. New rows start at S260. Every row below needs reviewer sign-off before merge.
-These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 7 adds S304-S307, fixes import-latch convergence, makes hold recovery proof-only and diagnosable, and specifies guarded manual release.
+These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 10 adds S312-S315, makes measured breach the only runtime arming event, gates manual release on settled evidence and tightens proposal safety to the ceiling.
 
 The SPEC M5 acceptance paragraph names S33–S42, S93–S99, S132–S137, S150, S159, S160, S165 and S169.
 S132/S133 belong to M4 flow receipts and S169 to M7 durable sessions; this module claims
 S33–S40, S42, S93–S99, S134–S137, S150, S159, S160, S165, S171–S178, S183, S187 and the new
-S260–S311 below. M4/M6/M7-only rows are not claimed as M5 tests.
+S260–S315 below. M4/M6/M7-only rows are not claimed as M5 tests.
 
 ## Implemented override order (one list, first firing command wins)
 
@@ -98,10 +98,15 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S307 | M5 | unavailable import remedy is explicit | armed latch with `max_discharge_w` below the convergent target and no settled evidence | ladder evaluates | reason is `import_remedy_unavailable`, binding limit names `max_discharge_w`, `settled_grid_evidence_missing` is reported, and the guard stays armed until manual release or valid settled evidence | regression | no | IN SCOPE | Review item 76: an unreachable remedy must not look like normal protection. |
 
 | S308 | M5 | remedied evidence releases the latch without removing protection | high economic request still projects a breach; measured import and settled evidence are below the release threshold | ladder evaluates without a new measured breach | latch releases from measured evidence only, while `!proposal_safe` keeps commanding the same protective discharge on the release tick and every later tick | regression | no | IN SCOPE | Review item 79: the old release branch zeroed `ask_w` and restored the breach. |
-| S309 | M5/M4 | manual release audit carries the engine belief | guarded manual release after a non-breach snapshot | release record reaches the row and ledger | `ImportReleaseRecord` retains snapshot instant, grid sample time, proposed plan W, projected and current import W, ceiling, deadband, release threshold, settled grid W/time, and all three breach predicates | contract | no | IN SCOPE (M4 row and ledger wiring REQUIRES WIRING) | Review item 80: actor and reason alone do not explain what the engine believed. |
+| S309 | M5/M4 | manual release audit carries the engine belief | guarded manual release after a non-breach snapshot | release record reaches the row and ledger | `ImportReleaseRecord` retains snapshot instant, grid sample time, proposed plan W, projected and measured grid import W, ceiling, deadband, release threshold, settled grid W/time, evidence-window bounds and all three breach predicates | contract | no | IN SCOPE (M4 row and ledger wiring REQUIRES WIRING) | Review item 80: actor and reason alone do not explain what the engine believed. |
 
 | S310 | M5 | aged evidence does not re-arm the latch | released latch, stale settled evidence, unchanged unsafe proposal | ladder evaluates with no new measured breach | latch stays released, evidence window start is unchanged, and protective discharge keeps flowing from `proposal_safe` | regression | no | IN SCOPE | Review item 79: release was not monotone. |
 | S311 | M5 | a new measured breach starts a new episode | released latch then measured import above the ceiling | ladder evaluates the new snapshot | latch re-arms and `import_episode_start_ms` advances to the new breach instant; old settled evidence cannot release it | regression | no | IN SCOPE | Review item 79: only measured truth may arm the latch. |
+
+| S312 | M5 | a recurring import flag cannot arm or rearm the latch | persistent `import_armed=true`, automatic release, then expired settled evidence with no new measured breach | ladder evaluates each snapshot | latch arms only on measured breach, releases on settled evidence, and stays released after evidence expires because the input flag is ignored | regression | no | IN SCOPE | Review item 81: `import_armed` rearmed a new episode every tick. |
+| S313 | M5 | manual release requires the same settled evidence as automatic release | armed latch, measured import below the ceiling but no fresh post-episode settled evidence; then valid evidence | `release_import` evaluates both snapshots | first release is refused with `settled_remediation_required`; valid settled evidence allows it and is recorded | regression | no | IN SCOPE | Review item 82: a human could clear protection with no measurement. |
+| S314 | M5 | proposal safety stops at the ceiling | projected import `7505 W`, ceiling `7500 W`, deadband `10 W` | ladder evaluates the economic request | projection inside the extra deadband band is NOT safe and commands protective discharge from `proposal_safe`, independently of latch state | regression | no | IN SCOPE | Review item 83: the deadband made an above-ceiling plan executable. |
+| S315 | M5/M6 | restart restore needs explicit provenance | process restarts with a previously armed import episode | restore wiring (not implemented by recurring input) | a one-shot RESTORE carries episode id, original `at_ms` and evidence; it never re-arms from ordinary telemetry | contract | no | REQUIRES WIRING | Review item 81: no recurring flag may stand in for episode provenance. |
 
 ## Interpretations that need reviewer attention
 
@@ -128,14 +133,16 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
   guaranteed is not claimed as an independent safeguard. No derived-looking number is presented as
   a physical guarantee.
 * Import decoupling (reviewer round 9): the module computes four independent things every tick.
-  `breach_now` is MEASURED grid import above the ceiling only, and it is the only latch-arming
-  event. `proposal_safe` is the projected import of the proposed economic plan (including its
+  `breach_now` is MEASURED grid import above the ceiling only, and it is the only runtime
+  latch-arming event; the recurring `input.import_armed` flag neither arms nor re-arms the latch.
+  Restoring an episode after restart, if ever needed, requires an explicit one-shot RESTORE with its
+  own episode id, original `at_ms` and evidence provenance (S315, REQUIRES WIRING). `proposal_safe` is the projected import of the proposed economic plan (including its
   battery contribution) and only decides whether that plan may run. `protective_command_w =
   min(0, ceiling - deadband - 50 W - fleet_baseline_w - coordinated_w)` is computed from the current
   snapshot, never from latch state, and is the command whenever `proposal_safe` is false. The latch
   itself is diagnostic state: armed only by `breach_now`, released only by fresh settled MEASURED
   import at or below `release_threshold_w = ceiling - deadband`, and never armed or released by a
-  proposal projection. Only a new measured breach starts a new evidence window, so aged evidence
+  proposal projection or a recurring input flag. Only a new measured breach starts a new evidence window, so aged evidence
   cannot re-arm the latch and an unchanged unsafe proposal cannot either (S310/S311). Command
   selection is exactly `if !proposal_safe { protective_command } else { plan }`; because protection
   comes from `proposal_safe`, releasing the latch cannot remove it (S308). `recover_hold` is
