@@ -37,7 +37,7 @@ fn s304_remedy_converges_below_the_release_threshold() {
     input.settled_at_ms = Some(10_000);
     ladder.observe(input.clone());
     let stable = ladder.decide(&economic("P", 0.0, 20_000), 20_000);
-    assert_eq!(stable.rule, Rule::ImportCeiling);
+    assert_eq!(stable.rule, Rule::Ordinary);
     assert!(ladder.import_protection_active("P"));
     ladder.recover_hold("P", 20_001);
 
@@ -127,27 +127,44 @@ fn s306_manual_import_release_is_guarded_and_audited() {
 }
 
 #[test]
-fn s308_settled_remedy_releases_the_latch_even_when_the_next_plan_still_breaches() {
+fn s308_settled_remedy_releases_the_latch_but_keeps_protecting_the_proposal() {
     let (ladder, mut input) = armed_ladder();
     ladder.decide(&economic("P", 0.0, 0), 0);
     ladder.recover_hold("P", 1);
 
-    // Protective discharge is active: measured import is inside the release band, but the next
-    // economic request would still project above the ceiling.
+    input.import_armed = false;
     input.grid_w = Some(7_440.0);
-    input.battery_w = Some(0.0);
-    input.physical_service_limit_w = 9_000.0;
+    input.battery_w = Some(-800.0);
+    input.physical_service_limit_w = 10_000.0;
     input.grid_sample_at_ms = Some(20_000);
     input.last_sample_at_ms = 19_000;
     input.settled_grid_w = Some(7_440.0);
     input.settled_at_ms = Some(10_000);
-    ladder.observe(input);
+    ladder.observe(input.clone());
 
-    let decision = ladder.decide(&economic("P", 800.0, 20_000), 20_000);
+    let released = ladder.decide(&economic("P", 800.0, 20_000), 20_000);
     assert!(!ladder.import_protection_active("P"));
-    assert_eq!(decision.rule, Rule::ImportCeiling);
-    assert_eq!(decision.action, Some(SafetyAction::NeutralHold));
-    assert!(!decision.reasons.contains(&"settled_grid_evidence_missing"));
+    assert_eq!(released.rule, Rule::ImportCeiling);
+    assert_eq!(
+        released.action,
+        Some(SafetyAction::ProtectiveDischarge { target_w: -800.0 })
+    );
+
+    input.grid_sample_at_ms = Some(40_000);
+    input.last_sample_at_ms = 39_000;
+    input.settled_at_ms = Some(30_000);
+    ladder.observe(input.clone());
+    let after_release = ladder.decide(&economic("P", 800.0, 40_000), 40_000);
+    assert!(!ladder.import_protection_active("P"));
+    assert_eq!(
+        after_release.action,
+        Some(SafetyAction::ProtectiveDischarge { target_w: -800.0 })
+    );
+    assert!(
+        !after_release
+            .reasons
+            .contains(&"settled_grid_evidence_missing")
+    );
 }
 
 #[test]
@@ -155,19 +172,82 @@ fn s309_manual_release_record_captures_engine_belief() {
     let (ladder, mut input) = armed_ladder();
     ladder.decide(&economic("P", 0.0, 0), 0);
     input.grid_w = Some(7_400.0);
+    input.import_armed = false;
     ladder.observe(input);
     let record = ladder
         .release_import("P", "operator-7", "load isolated and verified", 2)
         .unwrap_or_default();
 
     assert_eq!(record.projected_import_w, Some(7_400.0));
-    assert_eq!(record.current_import_w, Some(7_400.0));
+    assert_eq!(record.measured_grid_w, Some(7_400.0));
     assert_eq!(record.proposed_plan_w, 0.0);
     assert_eq!(record.release_threshold_w, 7_490.0);
     assert_eq!(record.import_ceiling_w, 7_500.0);
     assert_eq!(record.import_deadband_w, 10.0);
-    assert_eq!(record.settled_grid_w, None);
+    assert_eq!(record.evidence_window_start_ms, 0);
+    assert_eq!(record.evidence_window_end_ms, 2);
+    assert!(record.settled_grid_w.is_none());
+    assert!(!record.breach_now);
     assert!(!record.proposed_plan_breach);
-    assert!(!record.current_import_breach);
     assert!(!record.breach_remedied);
+}
+
+#[test]
+fn s310_aged_evidence_does_not_rearm_the_latch_without_a_new_breach() {
+    let (ladder, mut input) = armed_ladder();
+    ladder.decide(&economic("P", 0.0, 0), 0);
+    ladder.recover_hold("P", 1);
+
+    input.import_armed = false;
+    input.grid_w = Some(7_440.0);
+    input.battery_w = Some(-800.0);
+    input.physical_service_limit_w = 10_000.0;
+    input.grid_sample_at_ms = Some(70_000);
+    input.last_sample_at_ms = 69_000;
+    input.settled_grid_w = Some(7_440.0);
+    input.settled_at_ms = Some(10_000);
+    input.grid_sample_at_ms = Some(20_000);
+    input.last_sample_at_ms = 19_000;
+    ladder.observe(input.clone());
+    let _ = ladder.decide(&economic("P", 800.0, 20_000), 20_000);
+    ladder.recover_hold("P", 20_001);
+    assert!(!ladder.import_protection_active("P"));
+
+    input.grid_sample_at_ms = Some(70_000);
+    input.last_sample_at_ms = 69_000;
+    input.settled_at_ms = Some(30_000);
+    ladder.observe(input);
+
+    let decision = ladder.decide(&economic("P", 800.0, 70_000), 70_000);
+    assert!(!ladder.import_protection_active("P"));
+    assert_eq!(ladder.import_episode_start_ms("P"), 0);
+    assert_eq!(
+        decision.action,
+        Some(SafetyAction::ProtectiveDischarge { target_w: -800.0 })
+    );
+}
+
+#[test]
+fn s311_new_measured_breach_starts_a_new_episode() {
+    let (ladder, mut input) = armed_ladder();
+    ladder.decide(&economic("P", 0.0, 0), 0);
+    ladder.recover_hold("P", 1);
+
+    input.import_armed = false;
+    input.grid_w = Some(7_900.0);
+    input.battery_w = Some(0.0);
+    input.physical_service_limit_w = 10_000.0;
+    input.grid_sample_at_ms = Some(80_000);
+    input.last_sample_at_ms = 79_000;
+    input.settled_grid_w = Some(7_440.0);
+    input.settled_at_ms = Some(30_000);
+    ladder.observe(input);
+
+    let decision = ladder.decide(&economic("P", 800.0, 80_000), 80_000);
+    assert!(ladder.import_protection_active("P"));
+    assert_eq!(ladder.import_episode_start_ms("P"), 80_000);
+    assert_eq!(
+        decision.action,
+        Some(SafetyAction::ProtectiveDischarge { target_w: -460.0 })
+    );
 }

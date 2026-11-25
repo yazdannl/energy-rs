@@ -13,13 +13,16 @@ pub struct ImportReleaseRecord {
     pub grid_sample_at_ms: Option<i64>,
     pub proposed_plan_w: f64,
     pub projected_import_w: Option<f64>,
-    pub current_import_w: Option<f64>,
+    pub measured_grid_w: Option<f64>,
     pub import_ceiling_w: f64,
     pub import_deadband_w: f64,
     pub release_threshold_w: f64,
     pub settled_grid_w: Option<f64>,
     pub settled_at_ms: Option<i64>,
+    /// Inclusive start of the measured-breach evidence window.
+    pub evidence_window_start_ms: i64,
+    pub evidence_window_end_ms: i64,
+    pub breach_now: bool,
     pub proposed_plan_breach: bool,
-    pub current_import_breach: bool,
     pub breach_remedied: bool,
 }

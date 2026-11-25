@@ -14,9 +14,7 @@ use crate::safety::{
 #[derive(Debug, Clone)]
 pub(crate) struct ImportLatch {
     pub armed: bool,
-    pub ask_w: f64,
     pub at_ms: i64,
-    pub unavailable_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]

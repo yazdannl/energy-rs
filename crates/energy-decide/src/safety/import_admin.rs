@@ -5,8 +5,8 @@ use crate::safety::import_release::ImportReleaseRecord;
 use crate::safety::ladder::SafetyLadder;
 use crate::safety::rules::projected_import;
 use crate::safety::rules_import::{
-    breach_remedied, current_import_breach, import_guard_active, live_import_breach,
-    proposed_plan_breach, release_threshold_w,
+    breach_now, breach_remedied, import_episode_start_ms, import_guard_active, proposal_safe,
+    release_threshold_w,
 };
 use crate::safety::state::note;
 
@@ -33,6 +33,11 @@ impl SafetyLadder {
         import_guard_active(&self.lock(), pack_id)
     }
 
+    /// Start of the current measured-breach evidence window.
+    pub fn import_episode_start_ms(&self, pack_id: &str) -> i64 {
+        import_episode_start_ms(&self.lock(), pack_id)
+    }
+
     /// Audited manual releases, in order, for the M4 row and the ledger wiring.
     pub fn import_release_history(&self) -> Vec<ImportReleaseRecord> {
         self.lock().import_releases.clone()
@@ -56,7 +61,7 @@ impl SafetyLadder {
         if actor.trim().is_empty() || reason.trim().is_empty() {
             return Err("manual_release_audit_required");
         }
-        if live_import_breach(&input) {
+        if breach_now(&input) {
             return Err("import_breach_active");
         }
         if !state.imports.get(pack_id).is_some_and(|latch| latch.armed) {
@@ -71,20 +76,20 @@ impl SafetyLadder {
             grid_sample_at_ms: input.grid_sample_at_ms,
             proposed_plan_w: input.plan_w,
             projected_import_w: projected_import(&input, input.plan_w),
-            current_import_w: projected_import(&input, 0.0),
+            measured_grid_w: input.grid_w,
             import_ceiling_w: input.import_ceiling_w,
             import_deadband_w: input.import_deadband_w,
             release_threshold_w: release_threshold_w(&input),
             settled_grid_w: input.settled_grid_w,
             settled_at_ms: input.settled_at_ms,
-            proposed_plan_breach: proposed_plan_breach(&input),
-            current_import_breach: current_import_breach(&input),
+            evidence_window_start_ms: import_episode_start_ms(&state, pack_id),
+            evidence_window_end_ms: at_ms,
+            breach_now: breach_now(&input),
+            proposed_plan_breach: !proposal_safe(&input),
             breach_remedied: breach_remedied(&input, &state, at_ms),
         };
         if let Some(latch) = state.imports.get_mut(pack_id) {
             latch.armed = false;
-            latch.ask_w = 0.0;
-            latch.unavailable_reason = None;
         }
         state.import_releases.push(record.clone());
         note(&mut state, pack_id, "import_guard_manually_released");

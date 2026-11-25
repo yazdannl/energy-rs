@@ -154,7 +154,7 @@ fn s271_import_remedy_respects_discharge_limit_and_floor() {
     input.max_discharge_w = 0.0;
     let ladder = SafetyLadder::new();
     ladder.observe(input.clone());
-    let blocked = ladder.decide(&economic("P", -800.0, 0), 0);
+    let blocked = ladder.decide(&economic("P", 0.0, 0), 0);
     assert_eq!(blocked.reason, "import_remedy_unavailable");
     assert_eq!(blocked.action, Some(SafetyAction::NeutralHold));
     assert!(blocked.binding_limits.contains(&"max_discharge_w"));
@@ -162,7 +162,7 @@ fn s271_import_remedy_respects_discharge_limit_and_floor() {
     input.max_discharge_w = 1000.0;
     input.soc_kwh = input.targets.hard_floor_kwh;
     ladder.observe(input);
-    let floored = ladder.decide(&economic("P", -800.0, 20_000), 20_000);
+    let floored = ladder.decide(&economic("P", 0.0, 20_000), 20_000);
     assert_eq!(floored.rule, Rule::SocFloor);
     assert_eq!(floored.reasons[0], "soc_floor");
     assert_eq!(floored.reasons[1], "import_remedy_unavailable");
@@ -301,6 +301,7 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     let ladder = SafetyLadder::new();
     ladder.observe(input.clone());
     ladder.decide(&economic("P", 0.0, 0), 0);
+    ladder.recover_hold("P", 1);
 
     input.grid_w = Some(7900.0);
     input.last_sample_at_ms = 19_999;
@@ -311,6 +312,7 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     let contradictory = ladder.decide(&economic("P", 0.0, 20_000), 20_000);
     assert_eq!(contradictory.rule, Rule::ImportCeiling);
     assert!(contradictory.reasons.contains(&"grid_import_ceiling"));
+    ladder.recover_hold("P", 20_001);
 
     input.grid_w = Some(7400.0);
     input.last_sample_at_ms = 59_999;
@@ -318,26 +320,25 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     input.settled_at_ms = Some(21_000);
     ladder.observe(input.clone());
     let retained = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
-    assert_eq!(retained.rule, Rule::ImportCeiling);
-    assert_eq!(retained.rule, Rule::ImportCeiling);
+    assert_eq!(retained.rule, Rule::Ordinary);
+    assert!(ladder.import_protection_active("P"));
 
     input.settled_at_ms = Some(70_000);
     input.last_sample_at_ms = 59_999;
     input.grid_sample_at_ms = Some(60_000);
     ladder.observe(input.clone());
     let future = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
-    assert_eq!(future.rule, Rule::ImportCeiling);
+    assert_eq!(future.rule, Rule::Ordinary);
+    assert!(ladder.import_protection_active("P"));
 
     input.settled_at_ms = Some(50_000);
     input.last_sample_at_ms = 59_999;
     input.grid_sample_at_ms = Some(60_000);
     ladder.observe(input);
     let released = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
-    assert_eq!(released.reason, "hold_unverified");
-    ladder.recover_hold("P", 60_000);
-    let released = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
     assert_eq!(released.action, None);
     assert!(!released.reasons.contains(&"grid_import_ceiling"));
+    assert!(!ladder.import_protection_active("P"));
 }
 
 #[test]
