@@ -30,11 +30,14 @@ impl BootstrapAuthorityTx {
         anchors: &dyn AnchorStore,
         capability: &IssuedBootstrapCapability,
     ) -> Result<Self, BootstrapTxError> {
-        let issue = anchors
+        let mut anchor = anchors
             .load()
             .ok()
             .flatten()
-            .and_then(|anchor| anchor.bootstrap_issue)
+            .ok_or(BootstrapTxError::CapabilityDenied)?;
+        let mut issue = anchor
+            .bootstrap_issue
+            .clone()
             .ok_or(BootstrapTxError::CapabilityDenied)?;
         if issue.consumed {
             return Err(BootstrapTxError::ReplayDenied);
@@ -45,6 +48,12 @@ impl BootstrapAuthorityTx {
         {
             return Err(BootstrapTxError::CapabilityDenied);
         }
+        // The issuance boundary is single-use: persist consumption before any transaction exists.
+        issue.consume();
+        anchor.bootstrap_issue = Some(issue.clone());
+        anchors
+            .atomic_write(&anchor)
+            .map_err(|_| BootstrapTxError::CapabilityDenied)?;
         let (reason, previous_mode) = match crate::authority::provenance::decide(&ledger) {
             Provenance::FreshInstall => (BootstrapReason::FreshInstall, None),
             Provenance::Legacy(reason) => (reason, ledger.persisted_mode().map(str::to_owned)),

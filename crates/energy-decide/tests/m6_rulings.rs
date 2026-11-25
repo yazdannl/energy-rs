@@ -8,7 +8,7 @@ mod m4_support;
 mod m6_support;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use energy_decide::authority::{
     AnchorStore, Authority, AuthorityRefusal, AuthorityState, BootstrapIssue, BootstrapTxError,
@@ -270,7 +270,7 @@ fn s327_evidence_is_part_of_the_recovery_api_not_only_a_log() {
 
 struct FailOnceAnchor {
     inner: FileAnchorStore,
-    writes: AtomicUsize,
+    failed: AtomicBool,
 }
 
 impl AnchorStore for FailOnceAnchor {
@@ -282,7 +282,12 @@ impl AnchorStore for FailOnceAnchor {
         &self,
         anchor: &energy_decide::authority::AuthorityAnchor,
     ) -> Result<(), StorageError> {
-        if self.writes.fetch_add(1, Ordering::SeqCst) == 3 {
+        // Fail only the first anchor-ref installation write, identifiable by a populated
+        // latch identity; later recovery/reconcile writes must succeed.
+        if anchor.generation != 0
+            && !anchor.token_hash.is_empty()
+            && !self.failed.swap(true, Ordering::SeqCst)
+        {
             return Err(StorageError::PromotionFailed);
         }
         self.inner.atomic_write(anchor)
@@ -294,7 +299,7 @@ fn s328_anchor_ref_failure_locks_recovery_until_reconcile() {
     let dir = TestDir::new();
     let anchors = FailOnceAnchor {
         inner: FileAnchorStore::in_dir(&dir.path),
-        writes: AtomicUsize::new(0),
+        failed: AtomicBool::new(false),
     };
     let resolutions = FileResolutionStore::in_dir(&dir.path);
     let ledger = m6_support::fresh(30_000);

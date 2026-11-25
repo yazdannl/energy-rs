@@ -80,17 +80,25 @@ fn s329_second_issuance_from_identical_pre_bootstrap_snapshot_refused() {
     let anchors = FileAnchorStore::in_dir(&dir.0);
     let (ledger, capability) = issued(&anchors, 1, 2, 7);
     let before_anchor = anchors.load().expect("anchor load").expect("anchor");
+    assert!(
+        !before_anchor
+            .bootstrap_issue
+            .as_ref()
+            .expect("issue")
+            .consumed
+    );
     let before_ledger = ledger_shape(&ledger);
 
     let first =
         BootstrapAuthorityTx::begin(ledger.clone(), 1_000, "authority", &anchors, &capability);
     assert!(first.is_ok(), "first issuance must be legitimate");
-    let mut consumed = before_anchor.clone();
-    if let Some(issue) = consumed.bootstrap_issue.as_mut() {
-        issue.consume();
-    }
-    anchors.atomic_write(&consumed).expect("consume marker");
+    let consumed = anchors.load().expect("anchor load").expect("anchor");
+    assert!(
+        consumed.bootstrap_issue.as_ref().expect("issue").consumed,
+        "begin must durably consume the marker before returning"
+    );
 
+    // Same snapshot and capability: the second real begin must now be refused.
     let replay =
         BootstrapAuthorityTx::begin(ledger.clone(), 1_000, "authority", &anchors, &capability);
     assert_eq!(
