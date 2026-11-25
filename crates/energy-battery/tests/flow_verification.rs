@@ -12,13 +12,12 @@ mod support;
 
 use serde_json::json;
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use energy_battery::{
     Command, ControlFault, ControlLimits, DeviceController, FAULT_BACKOFF, FakeBehaviour,
     FakeDevice, FakeState, HttpTransport,
 };
+use std::sync::Arc;
+use std::time::Duration;
 use support::{SN, ScriptedDevice, report_at};
 
 async fn device(behaviour: FakeBehaviour) -> (FakeDevice, DeviceController<HttpTransport>) {
@@ -445,5 +444,56 @@ async fn skewed_reports_keep_the_original_deadline_and_ownership() {
     assert!(
         controller.active_fault().is_some(),
         "unusable evidence escalates after the bound"
+    );
+}
+
+/// A device clock can lag the write clock while the pack is genuinely charging. Real positive
+/// flow in the commanded direction must never be re-labelled as an uncertain write and held.
+#[tokio::test(start_paused = true)]
+async fn positive_flow_with_skewed_clocks_never_escalates_to_a_hold() {
+    let base = 1_700_000_000;
+    let flowing = |id: u32, ts: i64| {
+        report_at(
+            SN,
+            id,
+            ts,
+            json!({
+                "acMode": 1, "inputLimit": 1000, "outputLimit": 0,
+                "acStatus": 2, "dcStatus": 1, "gridInputPower": 1000, "faultLevel": 0
+            }),
+        )
+    };
+    let device = Arc::new(ScriptedDevice::new(
+        SN,
+        vec![report_at(SN, 1, base, json!({}))],
+    ));
+    let controller = DeviceController::new(Arc::clone(&device), ControlLimits::unlimited());
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 1000 })
+        .await
+        .unwrap();
+    let accepted_at = controller.pending().expect("command accepted").accepted_at;
+
+    // Every sample proves 1000 W charging, but its device clock is only five seconds past the
+    // write, far short of the 45 s causality bound. That clock skew must not arm a hold.
+    for id in 2..=8 {
+        device.push_report(flowing(id, accepted_at + 5));
+        let seen = controller.poll().await.unwrap();
+        assert!(seen.fault.is_none(), "skewed flow report: {seen:?}");
+        assert!(controller.active_fault().is_none(), "no hold escalation");
+    }
+    tokio::time::advance(Duration::from_secs(46)).await;
+    device.push_report(flowing(9, accepted_at + 6));
+    let seen = controller.poll().await.unwrap();
+    assert!(seen.fault.is_none(), "flow after the window: {seen:?}");
+    assert!(
+        controller.active_fault().is_none(),
+        "valid delivery survives an expired, skewed clock"
+    );
+    assert_eq!(
+        device.write_count(),
+        1,
+        "no re-command after a false no-flow"
     );
 }

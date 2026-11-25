@@ -192,11 +192,19 @@ fn note_journal_failure(error: &EngineError) {
 /// *measured* neutral sample may clear a claim. When flow is unknown the accepted intent stays
 /// latched, so a non-zero command can never be erased by a verified echo with a zero placeholder.
 fn note_latch(latch: &mut LiveLatch, report: &PackReport, now: i64) -> bool {
-    if !report.written {
-        return false;
-    }
+    // A measured neutral sample is the only proof that an accepted command was neutralised. An
+    // echo-only zero or a failed hold leaves the original nonzero intent owned by the latch.
     if report.verified && report.flow_measured && report.applied_w.abs() <= LATCH_TOLERANCE_W {
         return latch.clear(&report.pack_id);
+    }
+    if let Some(intent) = report
+        .accepted_intent_w
+        .filter(|watts| watts.abs() > LATCH_TOLERANCE_W)
+    {
+        return latch.record(&report.pack_id, intent, now);
+    }
+    if !report.written {
+        return false;
     }
     let watts = if report.flow_measured {
         report.applied_w

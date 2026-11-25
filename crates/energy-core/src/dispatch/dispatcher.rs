@@ -3,6 +3,7 @@
 mod backoff;
 mod charge;
 mod plan;
+mod recovery;
 mod row;
 mod write;
 
@@ -51,6 +52,8 @@ const PACK_SEND_BUDGET: Duration = energy_battery::control::PACK_IO_BUDGET;
 #[derive(Clone, Copy)]
 struct SendContext<'a> {
     now: i64,
+    /// Nonzero command accepted by this attempt, preserved through failed recovery.
+    accepted_intent_w: Option<f64>,
     safety_traffic: bool,
     recovery_started: &'a AtomicBool,
 }
@@ -237,6 +240,8 @@ impl Dispatcher {
                 sink,
                 SendContext {
                     now: frame.now,
+                    accepted_intent_w: (plan.command_w.abs() > crate::dispatch::HOLD_DEADBAND_W)
+                        .then_some(plan.command_w),
                     safety_traffic,
                     recovery_started,
                 },

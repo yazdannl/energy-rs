@@ -39,6 +39,8 @@ pub struct PackReport {
     pub intended_reason: Reason,
     /// Whether a command reached the device.
     pub written: bool,
+    /// Nonzero command accepted before a failed or unverified recovery, W.
+    pub accepted_intent_w: Option<f64>,
     /// Whether the next reports echoed the command *and* proved real power streaming.
     pub verified: bool,
     /// Whether this row is the one-shot fail-safe hold after a fault.

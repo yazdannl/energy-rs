@@ -45,6 +45,7 @@ pub(super) fn finish(dispatcher: &Dispatcher, plan: Planned, mut sent: Sent) -> 
         },
         intended_reason: plan.intended_reason,
         written: sent.written,
+        accepted_intent_w: sent.accepted_intent_w,
         verified: sent.verified,
         fail_safe: sent.fail_safe,
         superseded: sent.superseded,

@@ -176,7 +176,11 @@ impl Dispatcher {
         let cause = error.to_string();
         let restarted = matches!(error, SinkError::Fault { fault, .. } if matches!(**fault, ControlFault::Restarted { .. }));
         let verdict_clocks = flow_verdict_clocks(error);
-        if let Some(sent) = premature_no_flow(verdict_clocks, now) {
+        // The write was accepted before recovery began. Its intent survives a failed or
+        // unproved neutralisation so the durable latch still owns the nonzero command.
+        let accepted_intent = context.accepted_intent_w;
+        if let Some(mut sent) = premature_no_flow(verdict_clocks, now) {
+            sent.accepted_intent_w = accepted_intent;
             return sent;
         }
         let no_flow = verdict_clocks.0.is_some();
@@ -190,45 +194,15 @@ impl Dispatcher {
         if !self.failsafe_on_error || restarted {
             return Sent {
                 applied_w_reason,
+                accepted_intent_w: accepted_intent,
                 error: Some(cause),
                 ..Sent::none()
             }
             .with_judged(verdict_clocks);
         }
-        match sink.hold_with_progress(pack_id, progress, now).await {
-            Err(SinkError::ReadUnverified { reason, .. }) => Sent {
-                written: true,
-                verified: false,
-                fail_safe: true,
-                applied_w_reason: Some(AppliedPowerReason::ReadFailed),
-                error: Some(format!("{cause}; fail-safe hold not echoed: {reason}")),
-                ..Sent::none()
-            }
-            .with_judged(verdict_clocks),
-            Ok(receipt) => {
-                advance(progress, now);
-                Sent {
-                    written: true,
-                    verified: receipt.verified,
-                    flow_measured: receipt.flow_measured,
-                    measured_at: receipt.measured_at,
-                    applied_w: receipt.applied_w,
-                    applied_w_reason: receipt_reason(&receipt, applied_w_reason),
-                    fail_safe: true,
-                    confirmation_pending: receipt.confirmation_pending,
-                    superseded: receipt.superseded.then(|| "safety hold".to_owned()),
-                    error: Some(format!("{cause}; fail-safe hold")),
-                    ..Sent::none()
-                }
-                .with_judged(verdict_clocks)
-            }
-            Err(hold_error) => Sent {
-                applied_w_reason: Some(AppliedPowerReason::ReadFailed),
-                error: Some(format!("{cause}; fail-safe hold failed: {hold_error}")),
-                ..Sent::none()
-            }
-            .with_judged(verdict_clocks),
-        }
+        super::recovery::hold_recovery(progress, pack_id, sink, context, &cause)
+            .await
+            .with_judged(verdict_clocks)
     }
 }
 
@@ -285,7 +259,7 @@ fn flow_verdict_clocks(error: &SinkError) -> (Option<i64>, Option<i64>) {
 }
 
 /// Why a receipt carries no measured watts; an unmeasured hold keeps an earlier read failure.
-fn receipt_reason(
+pub(super) fn receipt_reason(
     receipt: &WriteReceipt,
     fallback: Option<AppliedPowerReason>,
 ) -> Option<AppliedPowerReason> {

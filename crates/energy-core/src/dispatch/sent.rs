@@ -22,6 +22,8 @@ pub(crate) struct Sent {
     pub(crate) fail_safe: bool,
     /// A write was accepted but flow will be checked on a later tick.
     pub(crate) confirmation_pending: bool,
+    /// Nonzero command accepted before a failed or unverified recovery, W.
+    pub(crate) accepted_intent_w: Option<f64>,
     /// Why a safety hold took over this attempt; ownership stays with that hold.
     pub(crate) superseded: Option<String>,
     /// A newer setpoint was not sent because an earlier command is still pending.
@@ -51,6 +53,7 @@ impl Sent {
             applied_w_reason: None,
             fail_safe: false,
             confirmation_pending: false,
+            accepted_intent_w: None,
             superseded: None,
             blocked_by_pending: false,
             timeout: None,
