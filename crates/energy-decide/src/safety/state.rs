@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::dispatch::SafetyAction;
 use crate::dispatch::constants::HOLD_DEADBAND_W;
+use crate::safety::import_release::ImportReleaseRecord;
 use crate::safety::verification::HoldAttemptState;
 use crate::safety::{
     COMMAND_SAMPLE_MAX_MS, HoldProof, Rule, SafetyDecision, SafetyInput, UNOBSERVED_BUDGET_MS,
@@ -15,6 +16,7 @@ pub(crate) struct ImportLatch {
     pub armed: bool,
     pub ask_w: f64,
     pub at_ms: i64,
+    pub unavailable_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,7 @@ pub(crate) struct LadderState {
     pub(crate) decisions: Vec<SafetyDecision>,
     pub(crate) holds: HashMap<String, HoldProof>,
     pub(crate) imports: HashMap<String, ImportLatch>,
+    pub(crate) import_releases: Vec<ImportReleaseRecord>,
     pub(crate) budgets: HashMap<String, ObservationBudget>,
     pub(crate) seq: u64,
 }

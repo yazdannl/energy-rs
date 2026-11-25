@@ -3,12 +3,12 @@
 Ruling: `SCENARIOS.md` rows beat `SPEC.md` prose; the owner's M5 brief and its 2026-11-24 solar
 ruling outrank both where no row exists; anything still undecided is asked as a single point, not
 silently invented. New rows start at S260. Every row below needs reviewer sign-off before merge.
-These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 6 adds S302/S303, clamps accepted future skew, strengthens assertions, and specifies the operator-alert path.
+These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 7 adds S304-S307, fixes import-latch convergence, makes hold recovery proof-only and diagnosable, and specifies guarded manual release.
 
 The SPEC M5 acceptance paragraph names S33–S42, S93–S99, S132–S137, S150, S159, S160, S165 and S169.
 S132/S133 belong to M4 flow receipts and S169 to M7 durable sessions; this module claims
 S33–S40, S42, S93–S99, S134–S137, S150, S159, S160, S165, S171–S178, S183, S187 and the new
-S260–S303 below. M4/M6/M7-only rows are not claimed as M5 tests.
+S260–S307 below. M4/M6/M7-only rows are not claimed as M5 tests.
 
 ## Implemented override order (one list, first firing command wins)
 
@@ -92,6 +92,11 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S302 | M5 | accepted future skew is maximally fresh | sample timestamp at `FUTURE_SKEW_MS - 1` and at `FUTURE_SKEW_MS` ahead of decision time | ladder observes and decides | age is clamped to zero before debit/credit; both samples leave the bucket at full `40 s` capacity and authorization is sustained | regression | no | IN SCOPE | Review item 68: negative age became `u32::MAX` and emptied the bucket. |
 | S303 | M5/M4/HA | escalation record versus delivered operator alert | a hold proof reaches terminal escalation; HA notify succeeds, fails transiently, then exhausts retries | engine escalation worker, HA client and ledger | RECORDED escalation is written immediately from `HoldProof`; DELIVERED alert requires HA `notify` success; failures retry at 0/30/120 s and are recorded as `safety.alert_delivery_failed`, final failure as `safety.alert_undelivered` | contract | no | REQUIRES WIRING | Review item 69: the alert needs an exact trigger, destination, owner and failure record. |
 
+| S304 | M5 | import remedy converges below the release threshold | breach with valid meter; remedy target compared with `ceiling - deadband - margin`; stable import at the ceiling, then settled import inside the release band | ladder evaluates each snapshot | `IMPORT_CONVERGENCE_MARGIN_W = 50 W`; the protective discharge targets `7500 - 10 - 50 W`, the ceiling-stable case stays latched, and settled evidence at or below `7490 W` releases it | regression | no | IN SCOPE | Review item 76: targeting the ceiling could never satisfy the release predicate. |
+| S305 | M5 | hold recovery is proof-only | terminal hold proof plus an armed import latch; recovery called, then latch manually released | ladder recovery and diagnostics | `RecoveryStatus` reports `hold_proof_cleared = true` and `import_protection_active = true`; the row records `import_protection_still_active`; only manual release or valid settled evidence clears import protection | regression | no | IN SCOPE | Review item 77: recovery silently left protection armed. |
+| S306 | M5/M4 | manual import release is guarded and audited | armed latch during a live breach; empty reason; after a non-breach snapshot with an explicit actor/reason | ladder manual-release API and row/ledger wiring | live breach and missing audit fields are refused; success returns `ImportReleaseRecord` with pack, actor, reason and instant, records `import_guard_manually_released`, and is retained in `import_release_history()` for the M4 row and ledger | contract | no | IN SCOPE (M4 row and ledger wiring REQUIRES WIRING) | Review item 78: fail-closed release needs an audited escape that cannot bypass live protection. |
+| S307 | M5 | unavailable import remedy is explicit | armed latch with `max_discharge_w` below the convergent target and no settled evidence | ladder evaluates | reason is `import_remedy_unavailable`, binding limit names `max_discharge_w`, `settled_grid_evidence_missing` is reported, and the guard stays armed until manual release or valid settled evidence | regression | no | IN SCOPE | Review item 76: an unreachable remedy must not look like normal protection. |
+
 ## Interpretations that need reviewer attention
 
 * The owner was asked about solar headroom before implementation and ruled "advisory headroom only":
@@ -116,6 +121,16 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
   OPERATOR ALERT; wiring that alert path is S303 (`REQUIRES WIRING`). A hold whose landing is not
   guaranteed is not claimed as an independent safeguard. No derived-looking number is presented as
   a physical guarantee.
+* Import-latch convergence (reviewer round 7): the remedy never targets the ceiling. It targets
+  `release_target_w = import_ceiling_w - import_deadband_w - IMPORT_CONVERGENCE_MARGIN_W`, with
+  `IMPORT_CONVERGENCE_MARGIN_W = 50 W`, so a successful protective discharge lands below the
+  `settled_grid_w <= ceiling - deadband` release predicate. A remedy blocked by pack limits or
+  missing headroom is recorded as `import_remedy_unavailable` with the binding limit; missing settled
+  evidence is reported as `settled_grid_evidence_missing` while protection stays armed. There is no
+  silent timeout. `recover_hold` is proof-only and returns `RecoveryStatus`; it does not clear the
+  import latch. The only other escape is `release_import(pack, actor, reason, at_ms)`: it refuses
+  a blank actor/reason and any currently evaluated breach, and returns an `ImportReleaseRecord`
+  (pack, actor, reason, instant) retained for the M4 row and ledger wiring (S306).
 * Operator-alert path (reviewer round 6, S303): the EXACT RECORDED trigger is a `HoldProof` whose
   `attempt_state == Terminal` and `escalation.exhausted()` after the third failed bounded attempt
   (`0/2/6 s`) or after `SAFETY_ATTEMPT_DEADLINE_MS = 74 s` without verification. At that instant

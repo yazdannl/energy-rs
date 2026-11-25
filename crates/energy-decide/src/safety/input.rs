@@ -191,6 +191,9 @@ pub const MAX_PLAUSIBLE_POWER_W: f64 = 100_000.0;
 pub const UNOBSERVED_BUDGET_MS: i64 = COMMAND_SAMPLE_MAX_MS;
 /// Credit required before a pack is authorised for a nonzero command: one cadence plus skew.
 pub const AUTHORIZATION_MIN_MS: i64 = DECISION_CADENCE_MS + FUTURE_SKEW_MS;
+/// Extra import reduction below the release threshold after a protective remedy.
+/// A successful remedy must land at `ceiling - deadband - margin`, not merely at the ceiling.
+pub const IMPORT_CONVERGENCE_MARGIN_W: f64 = 50.0;
 
 /// Freshness predicate with an explicit future-skew policy.
 pub fn fresh_enough(at: Option<i64>, now_ms: i64, max_age_ms: i64) -> bool {

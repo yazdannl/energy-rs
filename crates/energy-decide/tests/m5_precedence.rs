@@ -30,7 +30,7 @@ fn s260_safety_action_is_not_blocked_by_the_failure_it_protects_against() {
     assert_eq!(first.rule, Rule::ImportCeiling);
     assert_eq!(
         first.action,
-        Some(SafetyAction::ProtectiveDischarge { target_w: -900.0 })
+        Some(SafetyAction::ProtectiveDischarge { target_w: -960.0 })
     );
     assert!(first.reasons.contains(&"grid_import_ceiling"));
     assert!(first.reasons.contains(&"controller_uncertain"));
@@ -83,7 +83,8 @@ fn s265_one_ordered_rule_list_declares_the_winner_and_every_reason() {
         (2, "emergency_charge_impossible"),
         (3, "soc_floor"),
         (4, "physical_service_limit"),
-        (5, "grid_import_ceiling"),
+        (5, "import_remedy_unavailable"),
+        (5, "settled_grid_evidence_missing"),
         (6, "full_charge_protection"),
         (8, "stale_sample_unreachable"),
         (10, "orphan_hold"),
@@ -230,9 +231,9 @@ fn s274_protective_discharge_carries_signed_w_through_the_m4_port() {
     assert_eq!(reason, "grid_import_ceiling");
     assert_eq!(
         action,
-        SafetyAction::ProtectiveDischarge { target_w: -1100.0 }
+        SafetyAction::ProtectiveDischarge { target_w: -1160.0 }
     );
-    assert_eq!(action.target_w(), -1100.0);
+    assert_eq!(action.target_w(), -1160.0);
 }
 
 #[test]
@@ -286,7 +287,7 @@ fn s280_projected_import_includes_requested_and_coordinated_commands() {
     );
     assert_eq!(
         decision.action,
-        Some(SafetyAction::ProtectiveDischarge { target_w: -2300.0 })
+        Some(SafetyAction::ProtectiveDischarge { target_w: -2360.0 })
     );
     assert!(decision.reasons.contains(&"grid_import_ceiling"));
 }

@@ -37,7 +37,7 @@ pub const AGGREGATE_EMERGENCY_W: f64 = crate::FLEET_POWER_W;
 /// Pure decision core for the safety ladder. It never writes and never waits.
 #[derive(Debug, Default)]
 pub struct SafetyLadder {
-    state: Mutex<LadderState>,
+    pub(crate) state: Mutex<LadderState>,
 }
 
 impl SafetyLadder {
@@ -78,14 +78,6 @@ impl SafetyLadder {
         if let Some(proof) = state.holds.get_mut(pack_id) {
             proof.fail(at_ms, reason);
             note(&mut state, pack_id, reason);
-        }
-    }
-
-    /// Clear terminal retention after the pack is explicitly recovered.
-    pub fn recover_hold(&self, pack_id: &str, _at_ms: i64) {
-        let mut state = self.lock();
-        if state.holds.remove(pack_id).is_some() {
-            note(&mut state, pack_id, "hold_recovered");
         }
     }
 
@@ -171,7 +163,7 @@ impl SafetyLadder {
         decision
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, LadderState> {
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, LadderState> {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

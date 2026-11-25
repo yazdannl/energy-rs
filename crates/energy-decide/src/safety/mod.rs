@@ -5,16 +5,19 @@
 
 pub mod decision;
 pub mod escalation;
+pub mod import_release;
 pub mod input;
 pub mod ladder;
 pub mod outcome;
 pub mod receipt;
+pub mod recovery;
 pub mod report;
 pub mod rule;
 pub mod solar;
 pub mod verification;
 
 pub(crate) mod flow_evidence;
+pub(crate) mod import_admin;
 pub(crate) mod rules;
 pub(crate) mod rules_import;
 pub(crate) mod rules_limits;
@@ -23,9 +26,11 @@ pub(crate) mod state;
 
 pub use decision::SafetyDecision;
 pub use escalation::{Escalation, SAFETY_ATTEMPT_DEADLINE_MS, SAFETY_RETRY_OFFSETS_MS};
+pub use import_release::ImportReleaseRecord;
 pub use input::{
     AUTHORIZATION_MIN_MS, COMMAND_SAMPLE_MAX_MS, DECISION_CADENCE_MS, FUTURE_SKEW_MS,
-    MAX_PLAUSIBLE_POWER_W, STALE_SAMPLE_MS, SafetyInput, UNOBSERVED_BUDGET_MS, fresh_enough,
+    IMPORT_CONVERGENCE_MARGIN_W, MAX_PLAUSIBLE_POWER_W, STALE_SAMPLE_MS, SafetyInput,
+    UNOBSERVED_BUDGET_MS, fresh_enough,
 };
 pub use ladder::{
     AGGREGATE_EMERGENCY_W, CELL_NOMINAL_V, CELL_RESUME_V, CELL_TRIGGER_V, EMERGENCY_CHARGE_W,
@@ -33,6 +38,7 @@ pub use ladder::{
 };
 pub use outcome::DecisionOutcome;
 pub use receipt::SafetyReceipt;
+pub use recovery::RecoveryStatus;
 pub use report::{SafetyReport, from_row};
 pub use rule::{RULE_ORDER, Rule};
 pub use solar::{SolarHeadroom, TELEMETRY_FRESH_MS};
