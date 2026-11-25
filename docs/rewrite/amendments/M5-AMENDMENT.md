@@ -3,12 +3,12 @@
 Ruling: `SCENARIOS.md` rows beat `SPEC.md` prose; the owner's M5 brief and its 2026-11-24 solar
 ruling outrank both where no row exists; anything still undecided is asked as a single point, not
 silently invented. New rows start at S260. Every row below needs reviewer sign-off before merge.
-These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 10 adds S312-S315, makes measured breach the only runtime arming event, gates manual release on settled evidence and tightens proposal safety to the ceiling.
+These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 11 adds S316/S317, rejects non-finite settled evidence on automatic and manual release and sweeps numeric comparisons.
 
 The SPEC M5 acceptance paragraph names S33–S42, S93–S99, S132–S137, S150, S159, S160, S165 and S169.
 S132/S133 belong to M4 flow receipts and S169 to M7 durable sessions; this module claims
 S33–S40, S42, S93–S99, S134–S137, S150, S159, S160, S165, S171–S178, S183, S187 and the new
-S260–S315 below. M4/M6/M7-only rows are not claimed as M5 tests.
+S260–S317 below. M4/M6/M7-only rows are not claimed as M5 tests.
 
 ## Implemented override order (one list, first firing command wins)
 
@@ -108,6 +108,9 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S314 | M5 | proposal safety stops at the ceiling | projected import `7505 W`, ceiling `7500 W`, deadband `10 W` | ladder evaluates the economic request | projection inside the extra deadband band is NOT safe and commands protective discharge from `proposal_safe`, independently of latch state | regression | no | IN SCOPE | Review item 83: the deadband made an above-ceiling plan executable. |
 | S315 | M5/M6 | restart restore needs explicit provenance | process restarts with a previously armed import episode | restore wiring (not implemented by recurring input) | a one-shot RESTORE carries episode id, original `at_ms` and evidence; it never re-arms from ordinary telemetry | contract | no | REQUIRES WIRING | Review item 81: no recurring flag may stand in for episode provenance. |
 
+| S316 | M5 | non-finite settled evidence cannot auto-release | fresh post-episode settled grid of `-inf`, `+inf` or `NaN` with measured import inside the band | ladder evaluates the snapshot | every value is rejected before the release threshold comparison; latch stays armed and no release is recorded | regression | no | IN SCOPE | Finding 84: a non-finite sample could clear protection. |
+| S317 | M5 | non-finite settled evidence cannot manually release | same three settled values offered to `release_import` with actor and reason | manual release evaluates the snapshot | every value returns `settled_remediation_required`; latch stays armed and no release record is appended | regression | no | IN SCOPE | Finding 84: both release routes must use the same finite evidence test. |
+
 ## Interpretations that need reviewer attention
 
 * The owner was asked about solar headroom before implementation and ruled "advisory headroom only":
@@ -136,7 +139,11 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
   `breach_now` is MEASURED grid import above the ceiling only, and it is the only runtime
   latch-arming event; the recurring `input.import_armed` flag neither arms nor re-arms the latch.
   Restoring an episode after restart, if ever needed, requires an explicit one-shot RESTORE with its
-  own episode id, original `at_ms` and evidence provenance (S315, REQUIRES WIRING). `proposal_safe` is the projected import of the proposed economic plan (including its
+  own episode id, original `at_ms` and evidence provenance (S315, REQUIRES WIRING).
+  Every measurement comparison rejects non-finite values first: settled release evidence is finite
+  on both automatic and manual routes; service evidence, cell voltage/capacity, SoC, export flow,
+  physical limits, solar telemetry and neutral flow already reject or fail closed on non-finite
+  inputs (S316/S317). `proposal_safe` is the projected import of the proposed economic plan (including its
   battery contribution) and only decides whether that plan may run. `protective_command_w =
   min(0, ceiling - deadband - 50 W - fleet_baseline_w - coordinated_w)` is computed from the current
   snapshot, never from latch state, and is the command whenever `proposal_safe` is false. The latch

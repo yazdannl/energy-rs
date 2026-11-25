@@ -19,6 +19,7 @@ pub mod verification;
 pub(crate) mod flow_evidence;
 pub(crate) mod import_admin;
 pub(crate) mod rules;
+pub(crate) mod rules_export;
 pub(crate) mod rules_import;
 pub(crate) mod rules_limits;
 pub(crate) mod rules_service;

@@ -333,3 +333,52 @@ fn s314_proposal_inside_deadband_is_not_safe() {
         Some(SafetyAction::ProtectiveDischarge { target_w: -65.0 })
     );
 }
+
+#[test]
+fn s316_nonfinite_settled_evidence_cannot_release_automatically() {
+    for settled_w in [f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+        let (ladder, mut input) = armed_ladder();
+        ladder.decide(&economic("P", 0.0, 0), 0);
+        ladder.recover_hold("P", 1);
+
+        input.import_armed = false;
+        input.grid_w = Some(7_400.0);
+        input.grid_sample_at_ms = Some(20_000);
+        input.last_sample_at_ms = 19_000;
+        input.settled_grid_w = Some(settled_w);
+        input.settled_at_ms = Some(10_000);
+        ladder.observe(input);
+        let _ = ladder.decide(&economic("P", 0.0, 20_000), 20_000);
+        assert!(
+            ladder.import_protection_active("P"),
+            "settled {settled_w:?} must not release"
+        );
+    }
+}
+
+#[test]
+fn s317_nonfinite_settled_evidence_cannot_release_manually() {
+    for settled_w in [f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+        let (ladder, mut input) = armed_ladder();
+        ladder.decide(&economic("P", 0.0, 0), 0);
+        ladder.recover_hold("P", 1);
+
+        input.import_armed = false;
+        input.grid_w = Some(7_400.0);
+        input.grid_sample_at_ms = Some(2);
+        input.last_sample_at_ms = 1;
+        input.settled_grid_w = Some(settled_w);
+        input.settled_at_ms = Some(1);
+        ladder.observe(input);
+        let result = ladder.release_import("P", "operator", "settled evidence", 2);
+        assert_eq!(
+            result,
+            Err("settled_remediation_required"),
+            "settled {settled_w:?}"
+        );
+        assert!(
+            ladder.import_protection_active("P"),
+            "settled {settled_w:?} must not release"
+        );
+    }
+}

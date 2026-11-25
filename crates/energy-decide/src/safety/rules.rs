@@ -56,6 +56,12 @@ pub(crate) fn fleet_baseline_w(input: &SafetyInput) -> Option<f64> {
     input
         .grid_w
         .zip(input.battery_w)
+        .filter(|(grid, battery)| {
+            grid.is_finite()
+                && (0.0..=MAX_PLAUSIBLE_POWER_W).contains(grid)
+                && battery.is_finite()
+                && battery.abs() <= MAX_PLAUSIBLE_POWER_W
+        })
         .map(|(grid, battery)| grid - battery)
 }
 
@@ -97,7 +103,10 @@ pub(crate) fn service_projection(input: &SafetyInput, self_w: f64) -> Option<f64
 }
 
 pub(crate) fn cell_hold(input: &SafetyInput) -> Option<Candidate> {
-    if input.cell_latch || (input.cell_min_v < CELL_TRIGGER_V && !input.cell_force_charge) {
+    if !input.cell_min_v.is_finite()
+        || input.cell_latch
+        || (input.cell_min_v < CELL_TRIGGER_V && !input.cell_force_charge)
+    {
         return Some(hold(Rule::CellLatch));
     }
     None
@@ -119,6 +128,12 @@ pub(crate) fn cell_emergency(input: &SafetyInput) -> Option<Candidate> {
         return None;
     }
     let mut limits = Vec::new();
+    if !input.cell_min_v.is_finite()
+        || !input.pack_capacity_kwh.is_finite()
+        || !input.max_charge_w.is_finite()
+    {
+        limits.push("cell_evidence_nonfinite");
+    }
     if !fresh_enough(
         input.cell_observed_at_ms,
         input.at_ms,
@@ -165,7 +180,8 @@ pub(crate) fn soc_floor(input: &SafetyInput) -> Option<Candidate> {
     if !input.at_floor() {
         return None;
     }
-    let needs_discharge = input.plan_w < 0.0
+    let needs_discharge = !input.plan_w.is_finite()
+        || input.plan_w < 0.0
         || fleet_baseline_w(input)
             .is_some_and(|demand| demand > input.import_ceiling_w + input.import_deadband_w);
     if needs_discharge {
@@ -176,19 +192,10 @@ pub(crate) fn soc_floor(input: &SafetyInput) -> Option<Candidate> {
 }
 
 pub(crate) fn full_charge(input: &SafetyInput) -> Option<Candidate> {
-    if input.at_ceiling() && input.plan_w > 0.0 {
+    if input.at_ceiling() && (!input.plan_w.is_finite() || input.plan_w > 0.0) {
         let mut result = hold(Rule::FullCharge);
         result.binding_limits.push("soc_ceiling");
         return Some(result);
-    }
-    None
-}
-
-pub(crate) fn export_guard(input: &SafetyInput) -> Option<Candidate> {
-    let grid = input.grid_w?;
-    let projected = grid - input.battery_w.unwrap_or(0.0) + input.plan_w;
-    if input.plan_w < 0.0 && projected < -input.export_ceiling_w {
-        return Some(hold(Rule::ExportGuard));
     }
     None
 }
@@ -201,6 +208,9 @@ pub(crate) fn stale_pack(input: &SafetyInput) -> Option<Candidate> {
 }
 
 pub(crate) fn observation_budget(input: &SafetyInput, request: &SlotRequest) -> Option<Candidate> {
+    if !request.requested_w.is_finite() {
+        return Some(hold(Rule::ObservationBudget));
+    }
     if input.command_budget_remaining_ms < AUTHORIZATION_MIN_MS as u32
         && request.requested_w.abs() > HOLD_DEADBAND_W
     {

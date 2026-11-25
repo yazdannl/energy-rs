@@ -6,10 +6,11 @@ use crate::dispatch::constants::HOLD_DEADBAND_W;
 use crate::dispatch::{SafetyAction, SafetyGate, SafetyIntervention, SlotRequest};
 use crate::safety::escalation::SAFETY_ATTEMPT_DEADLINE_MS;
 use crate::safety::rules::{
-    Candidate, backoff, cancel_ramp, cell_emergency, cell_hold, export_guard, full_charge,
-    no_command, observation_budget, orphan_hold, restart_grace, soc_floor, stale_pack, uncertain,
+    Candidate, backoff, cancel_ramp, cell_emergency, cell_hold, full_charge, no_command,
+    observation_budget, orphan_hold, restart_grace, soc_floor, stale_pack, uncertain,
     unverified_hold,
 };
+use crate::safety::rules_export::export_guard;
 use crate::safety::rules_import::import_ceiling;
 use crate::safety::rules_service::physical_service;
 use crate::safety::state::{LadderState, advance_due, note, observe_budget, proof_for};

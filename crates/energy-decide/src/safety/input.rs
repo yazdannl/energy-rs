@@ -149,12 +149,15 @@ impl SafetyInput {
 
     /// Stored energy below the hard floor.
     pub fn at_floor(&self) -> bool {
-        self.soc_kwh <= self.targets.hard_floor_kwh
+        !self.soc_kwh.is_finite() || self.soc_kwh <= self.targets.hard_floor_kwh
     }
 
     /// Stored energy at or above the usable ceiling, including a 100 % pack.
     pub fn at_ceiling(&self) -> bool {
-        self.soc_kwh >= self.targets.ceiling_kwh || self.soc_pct >= 100.0
+        !self.soc_kwh.is_finite()
+            || !self.soc_pct.is_finite()
+            || self.soc_kwh >= self.targets.ceiling_kwh
+            || self.soc_pct >= 100.0
     }
 
     /// Cell guard evidence is older than the shipped 180 s stale bound.

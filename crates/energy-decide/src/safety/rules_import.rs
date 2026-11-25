@@ -34,7 +34,8 @@ pub(crate) fn breach_now(input: &SafetyInput) -> bool {
 
 /// 2. Projected import if the proposed economic plan were executed: command safety only.
 pub(crate) fn proposal_safe(input: &SafetyInput) -> bool {
-    !projected_import(input, input.plan_w).is_some_and(|grid| grid > input.import_ceiling_w)
+    projected_import(input, input.plan_w)
+        .is_some_and(|grid| grid.is_finite() && grid <= input.import_ceiling_w)
 }
 
 /// 3. Protective command for an unsafe proposal, computed without latch state.
@@ -49,7 +50,8 @@ fn settled_remedied_from(input: &SafetyInput, episode_start: i64, now_ms: i64) -
         .settled_grid_w
         .zip(input.settled_at_ms)
         .is_some_and(|(grid, at)| {
-            at > episode_start
+            grid.is_finite()
+                && at > episode_start
                 && fresh_enough(Some(at), now_ms, TELEMETRY_FRESH_MS)
                 && grid <= release_threshold_w(input)
         })
@@ -156,7 +158,9 @@ fn breach_remedied_against(input: &SafetyInput, now_ms: i64) -> bool {
         .settled_grid_w
         .zip(input.settled_at_ms)
         .is_some_and(|(grid, at)| {
-            fresh_enough(Some(at), now_ms, TELEMETRY_FRESH_MS) && grid <= release_threshold_w(input)
+            grid.is_finite()
+                && fresh_enough(Some(at), now_ms, TELEMETRY_FRESH_MS)
+                && grid <= release_threshold_w(input)
         })
 }
 
