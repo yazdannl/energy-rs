@@ -6,7 +6,7 @@ use energy_decide::dispatch::{
     Dispatcher, Echo, PackCommand, PackIo, ProceedSafety, SafetyAction, SafetyExecution,
     SafetyGate, SafetyIntervention, SlotRequest, WriteAuthority,
 };
-use m4_support::{Behavior, FakeIo, ImmediateClock as TestClock, report};
+use m4_support::{Behavior, FakeIo, ImmediateClock as TestClock, reconcile_permit, report};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -151,7 +151,7 @@ fn s225_uncertainty_blocks_retries_until_verified_hold() {
     assert!(retry[0].reasons.contains(&"controller_uncertain"));
     assert_eq!(io.write_count(), 1);
     thread::sleep(Duration::from_millis(20));
-    dut.reconcile(&mut state, 1_500);
+    dut.reconcile(&mut state, 1_500, &reconcile_permit());
 
     let mut hold_report = report("P3", 2_000, 0.0, 0, 0, 1);
     hold_report.echo = Some(Echo {
@@ -388,7 +388,7 @@ fn s247_uncertain_exits_by_read_back() {
     let timed_out = dut.dispatch_slot(&mut state, std::slice::from_ref(&request), 0);
     assert_eq!(timed_out[0].outcome, DispatchOutcome::Uncertain);
     thread::sleep(Duration::from_millis(300));
-    dut.reconcile(&mut state, 1_000);
+    dut.reconcile(&mut state, 1_000, &reconcile_permit());
     assert!(state.pack("P").uncertain);
     assert_eq!(state.pack("P").uncertainty_cleared_by, None);
 
