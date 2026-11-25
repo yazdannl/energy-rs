@@ -37,14 +37,12 @@ fn s260_safety_action_is_not_blocked_by_the_failure_it_protects_against() {
     assert!(first.reasons.contains(&"ordinary_backoff"));
 
     input.grid_w = None;
+    input.grid_sample_at_ms = None;
     ladder.observe(input);
     let second = ladder.decide(&economic("P", -800.0, 20_000), 20_000);
-    assert_eq!(second.rule, Rule::ImportCeiling);
-    assert_eq!(
-        second.action,
-        Some(SafetyAction::ProtectiveDischarge { target_w: -900.0 })
-    );
-    assert!(second.reasons.contains(&"grid_telemetry_missing"));
+    assert_eq!(second.rule, Rule::PhysicalServiceLimit);
+    assert_eq!(second.reason, "service_headroom_unavailable");
+    assert_eq!(second.action, Some(SafetyAction::NeutralHold));
     assert!(second.reasons.contains(&"ordinary_backoff"));
 }
 
@@ -84,15 +82,15 @@ fn s265_one_ordered_rule_list_declares_the_winner_and_every_reason() {
         (1, "cell_voltage_guard"),
         (2, "emergency_charge_impossible"),
         (3, "soc_floor"),
-        (4, "import_remedy_blocked"),
-        (5, "full_charge_protection"),
-        (7, "stale_sample_unreachable"),
-        (8, "stale_command_sample"),
-        (9, "orphan_hold"),
-        (10, "cancel_ramp"),
-        (11, "restart_grace"),
-        (13, "controller_uncertain"),
-        (14, "ordinary_backoff"),
+        (4, "physical_service_limit"),
+        (5, "grid_import_ceiling"),
+        (6, "full_charge_protection"),
+        (8, "stale_sample_unreachable"),
+        (10, "orphan_hold"),
+        (11, "cancel_ramp"),
+        (12, "restart_grace"),
+        (14, "controller_uncertain"),
+        (15, "ordinary_backoff"),
     ];
     for (index, (position, reason)) in expected.iter().enumerate() {
         assert_eq!(decision.reasons[index], *reason);
@@ -177,22 +175,30 @@ fn s272_emergency_charge_checks_pack_limit_without_meter() {
     input.cell_force_charge = true;
     input.max_charge_w = 0.0;
     input.grid_w = None;
+    input.grid_sample_at_ms = None;
     let ladder = SafetyLadder::new();
     ladder.observe(input.clone());
     let impossible = ladder.decide(&economic("P", -800.0, 0), 0);
     assert_eq!(impossible.rule, Rule::CellEmergency);
     assert_eq!(impossible.reason, "emergency_charge_impossible");
     assert!(impossible.binding_limits.contains(&"max_charge_w"));
-    assert_eq!(impossible.action, Some(SafetyAction::NeutralHold));
+    assert!(
+        impossible
+            .binding_limits
+            .contains(&"service_headroom_unavailable")
+    );
 
     input.max_charge_w = 800.0;
+    input.grid_w = Some(0.0);
+    input.grid_sample_at_ms = Some(20_000);
+    input.last_sample_at_ms = 20_000;
     ladder.observe(input);
     let allowed = ladder.decide(&economic("P", -800.0, 20_000), 20_000);
     assert_eq!(
         allowed.action,
         Some(SafetyAction::EmergencyCharge { target_w: 800.0 })
     );
-    assert!(allowed.reasons.contains(&"grid_telemetry_missing"));
+    assert!(allowed.reasons.contains(&"cell_voltage_emergency_charge"));
 }
 
 #[test]
@@ -202,6 +208,7 @@ fn s274_protective_discharge_carries_signed_w_through_the_m4_port() {
     input.battery_w = Some(-800.0);
     input.import_armed = true;
     input.max_discharge_w = 1200.0;
+    input.physical_service_limit_w = 9_000.0;
     let ladder = SafetyLadder::new();
     ladder.observe(input);
     let intervention = ladder.preempt(&economic("P", -800.0, 0), 0);
@@ -231,14 +238,16 @@ fn s275_solar_advice_has_no_precedence_slot_and_never_changes_the_command() {
     assert_eq!(clear.action, None);
 
     input.pv_w = None;
+    input.last_sample_at_ms = 20_000;
+    input.grid_sample_at_ms = Some(20_000);
     ladder.observe(input);
     let missing = ladder.decide(&economic("P", 1000.0, 20_000), 20_000);
     assert_eq!(missing.solar.reason, "solar_telemetry_missing");
     assert_eq!(missing.action, None);
     assert_eq!(missing.command_w, 0.0);
     assert_eq!(missing.rule, Rule::Ordinary);
-    assert_eq!(RULE_ORDER.len(), 16);
-    assert_eq!(RULE_ORDER[15], Rule::Ordinary);
+    assert_eq!(RULE_ORDER.len(), 17);
+    assert_eq!(RULE_ORDER[16], Rule::Ordinary);
     let split = missing
         .reasons
         .iter()
@@ -254,6 +263,7 @@ fn s280_projected_import_includes_requested_and_coordinated_commands() {
     input.battery_w = Some(0.0);
     input.import_armed = true;
     input.max_discharge_w = 2500.0;
+    input.physical_service_limit_w = 12_000.0;
     input.coordinated_pack_w = vec![800.0, 800.0, 800.0];
     let ladder = SafetyLadder::new();
     ladder.observe(input);
@@ -282,6 +292,8 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     ladder.decide(&economic("P", 0.0, 0), 0);
 
     input.grid_w = Some(7900.0);
+    input.last_sample_at_ms = 20_000;
+    input.grid_sample_at_ms = Some(20_000);
     input.settled_grid_w = Some(7400.0);
     input.settled_at_ms = Some(-1_000);
     ladder.observe(input.clone());
@@ -290,13 +302,24 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     assert!(contradictory.reasons.contains(&"grid_import_ceiling"));
 
     input.grid_w = Some(7400.0);
+    input.last_sample_at_ms = 60_000;
+    input.grid_sample_at_ms = Some(60_000);
     input.settled_at_ms = Some(21_000);
     ladder.observe(input.clone());
     let retained = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
     assert_eq!(retained.rule, Rule::ImportCeiling);
     assert_eq!(retained.rule, Rule::ImportCeiling);
 
+    input.settled_at_ms = Some(70_000);
+    input.last_sample_at_ms = 60_000;
+    input.grid_sample_at_ms = Some(60_000);
+    ladder.observe(input.clone());
+    let future = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
+    assert_eq!(future.rule, Rule::ImportCeiling);
+
     input.settled_at_ms = Some(50_000);
+    input.last_sample_at_ms = 60_000;
+    input.grid_sample_at_ms = Some(60_000);
     ladder.observe(input);
     let released = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
     assert_eq!(released.reason, "hold_unverified");
@@ -315,13 +338,18 @@ fn s282_unresolved_hold_blocks_economic_traffic_until_neutrality_is_proven() {
     ladder.decide(&economic("P", -800.0, 0), 0);
 
     input.cell_latch = false;
-    ladder.observe(input);
+    input.last_sample_at_ms = 20_000;
+    input.grid_sample_at_ms = Some(20_000);
+    ladder.observe(input.clone());
     let blocked = ladder.decide(&economic("P", 800.0, 20_000), 20_000);
     assert_eq!(blocked.reason, "hold_unverified");
     assert_eq!(blocked.action, Some(SafetyAction::NeutralHold));
     assert_eq!(blocked.rule, Rule::UnverifiedHold);
 
     ladder.recover_hold("P", 40_000);
+    input.last_sample_at_ms = 40_000;
+    input.grid_sample_at_ms = Some(40_000);
+    ladder.observe(input);
     let cleared = ladder.decide(&economic("P", 800.0, 40_000), 40_000);
     assert_eq!(cleared.action, None);
     assert_eq!(cleared.rule, Rule::Ordinary);
@@ -349,50 +377,47 @@ fn s286_ordinary_backoff_is_a_deferral_with_a_retry_instant() {
 }
 
 #[test]
-fn s287_stale_samples_block_every_nonzero_action_with_a_verified_hold() {
+fn s287_meter_cell_and_pack_evidence_age_independently() {
     let ladder = SafetyLadder::new();
-    let mut input = SafetyInput::new("P", 0);
-    input.cell_force_charge = true;
-    input.cell_min_v = 2.99;
-    input.cell_observed_at_ms = Some(-COMMAND_SAMPLE_MAX_MS - 1);
-    ladder.observe(input.clone());
-    let emergency = ladder.decide(&economic("P", -800.0, 0), 0);
-    assert_eq!(emergency.rule, Rule::CellEmergency);
-    assert_eq!(emergency.reason, "emergency_charge_impossible");
-    assert_eq!(emergency.action, Some(SafetyAction::NeutralHold));
-    assert!(emergency.binding_limits.contains(&"cell_sample_stale"));
+    let mut base = SafetyInput::new("P", 0);
+    base.cell_force_charge = true;
+    base.cell_min_v = 2.99;
+
+    let mut pack_stale = base.clone();
+    pack_stale.last_sample_at_ms = -COMMAND_SAMPLE_MAX_MS - 1;
+    ladder.observe(pack_stale);
+    let charge = ladder.decide(&economic("P", -800.0, 0), 0);
+    assert_eq!(charge.rule, Rule::CellEmergency);
+    assert!(charge.binding_limits.contains(&"pack_sample_stale"));
     ladder.recover_hold("P", 1);
 
-    let mut imported = SafetyInput::new("P", 0);
-    imported.grid_w = Some(7900.0);
-    imported.battery_w = Some(0.0);
-    imported.import_armed = true;
-    imported.max_discharge_w = 1200.0;
-    imported.last_sample_at_ms = -COMMAND_SAMPLE_MAX_MS - 1;
-    ladder.observe(imported);
-    let remedy = ladder.decide(&economic("P", 800.0, 2), 2);
-    assert_eq!(remedy.rule, Rule::ImportCeiling);
-    assert_eq!(remedy.action, Some(SafetyAction::NeutralHold));
-    assert!(remedy.binding_limits.contains(&"sample_stale"));
+    let mut cell_stale = base.clone();
+    cell_stale.cell_observed_at_ms = Some(-COMMAND_SAMPLE_MAX_MS - 1);
+    ladder.observe(cell_stale);
+    let charge = ladder.decide(&economic("P", -800.0, 2), 2);
+    assert_eq!(charge.rule, Rule::CellEmergency);
+    assert!(charge.binding_limits.contains(&"cell_sample_stale"));
     ladder.recover_hold("P", 3);
 
-    let mut ordinary = SafetyInput::new("P", 0);
-    ordinary.last_sample_at_ms = -COMMAND_SAMPLE_MAX_MS - 1;
-    let ordinary_ladder = SafetyLadder::new();
-    ordinary_ladder.observe(ordinary);
-    let charge = ordinary_ladder.decide(&economic("P", 800.0, 4), 4);
-    assert_eq!(charge.reason, "stale_command_sample");
-    assert_eq!(charge.action, Some(SafetyAction::NeutralHold));
+    let mut meter_stale = base;
+    meter_stale.grid_sample_at_ms = Some(-COMMAND_SAMPLE_MAX_MS - 1);
+    ladder.observe(meter_stale);
+    let charge = ladder.decide(&economic("P", -800.0, 4), 4);
+    assert_eq!(charge.rule, Rule::CellEmergency);
+    assert!(
+        charge
+            .binding_limits
+            .contains(&"service_headroom_unavailable")
+    );
 }
 
 #[test]
-fn s288_emergency_charge_is_minimum_bounded_and_duration_limited() {
+fn s288_emergency_charge_is_minimum_bounded_and_service_limited() {
+    let ladder = SafetyLadder::new();
     let mut input = SafetyInput::new("P", 0);
     input.cell_force_charge = true;
     input.cell_min_v = 3.16;
     input.max_charge_w = 1200.0;
-    input.grid_w = None;
-    let ladder = SafetyLadder::new();
     ladder.observe(input.clone());
     let small_deficit = ladder.decide(&economic("P", 5_000.0, 0), 0);
     assert!(matches!(
@@ -404,11 +429,6 @@ fn s288_emergency_charge_is_minimum_bounded_and_duration_limited() {
         _ => 0.0,
     };
     assert!(target_w > 0.0 && target_w < 800.0, "got {target_w} W");
-    assert!(
-        small_deficit
-            .reasons
-            .contains(&"cell_voltage_emergency_charge")
-    );
     ladder.recover_hold("P", 1);
 
     input.cell_min_v = 2.99;
@@ -424,17 +444,20 @@ fn s288_emergency_charge_is_minimum_bounded_and_duration_limited() {
             .map_or(0, |proof| proof.attempt_duration_ms),
         EMERGENCY_DURATION_MS
     );
+    ladder.recover_hold("P", 3);
 
     input.grid_w = Some(7900.0);
     input.battery_w = Some(0.0);
+    input.grid_sample_at_ms = Some(3);
     ladder.observe(input.clone());
-    let fuse = ladder.decide(&economic("P", 5_000.0, 3), 3);
+    let fuse = ladder.decide(&economic("P", 5_000.0, 4), 4);
     assert_eq!(fuse.reason, "emergency_charge_impossible");
     assert!(fuse.binding_limits.contains(&"physical_service_limit"));
+    ladder.recover_hold("P", 5);
 
     input.physical_service_limit_w = 9_000.0;
     ladder.observe(input);
-    let margin = ladder.decide(&economic("P", 5_000.0, 4), 4);
+    let margin = ladder.decide(&economic("P", 5_000.0, 6), 6);
     assert_eq!(
         margin.action,
         Some(SafetyAction::EmergencyCharge { target_w: 800.0 })

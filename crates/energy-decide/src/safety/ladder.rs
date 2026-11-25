@@ -6,11 +6,12 @@ use crate::dispatch::{SafetyAction, SafetyGate, SafetyIntervention, SlotRequest}
 use crate::safety::escalation::SAFETY_ATTEMPT_DEADLINE_MS;
 use crate::safety::rules::{
     Candidate, backoff, cancel_ramp, cell_emergency, cell_hold, export_guard, full_charge,
-    no_command, orphan_hold, restart_grace, soc_floor, stale_command, stale_pack, uncertain,
+    no_command, observation_budget, orphan_hold, restart_grace, soc_floor, stale_pack, uncertain,
     unverified_hold,
 };
 use crate::safety::rules_import::import_ceiling;
-use crate::safety::state::{LadderState, advance_due, note, proof_for};
+use crate::safety::rules_service::physical_service;
+use crate::safety::state::{LadderState, advance_due, note, observe_budget, proof_for};
 use crate::safety::{
     DecisionOutcome, Escalation, HoldProof, Rule, SafetyDecision, SafetyInput, SafetyReceipt,
     SolarHeadroom,
@@ -116,6 +117,7 @@ impl SafetyLadder {
             .unwrap_or_else(|| SafetyInput::new(&request.pack_id, now_ms));
         input.at_ms = now_ms;
         input.plan_w = request.requested_w;
+        input.command_budget_remaining_ms = observe_budget(&mut state, &input, now_ms);
         state.inputs.insert(input.pack_id.clone(), input.clone());
         advance_due(&mut state, now_ms);
         let solar = SolarHeadroom::evaluate(&input);
@@ -181,11 +183,12 @@ fn evaluate(
     push_if(cell_hold(input), &mut found);
     push_if(cell_emergency(input), &mut found);
     push_if(soc_floor(input), &mut found);
+    push_if(physical_service(input), &mut found);
     push_if(import_ceiling(input, state, now_ms), &mut found);
     push_if(full_charge(input), &mut found);
     push_if(export_guard(input), &mut found);
     push_if(stale_pack(input), &mut found);
-    push_if(stale_command(input, request), &mut found);
+    push_if(observation_budget(input, request), &mut found);
     push_if(orphan_hold(input), &mut found);
     push_if(cancel_ramp(input), &mut found);
     push_if(restart_grace(input, now_ms), &mut found);

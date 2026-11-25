@@ -2,11 +2,12 @@
 
 use crate::dispatch::SafetyAction;
 use crate::safety::rules::{
-    Candidate, blocked, candidate, coordinated_w, demand_w, hold, physical_limits, projected_import,
+    Candidate, blocked, candidate, coordinated_w, fleet_baseline_w, hold, physical_limits,
+    projected_import,
 };
 use crate::safety::solar::TELEMETRY_FRESH_MS;
 use crate::safety::state::{ImportLatch, LadderState};
-use crate::safety::{Rule, SafetyInput};
+use crate::safety::{Rule, SafetyInput, fresh_enough};
 
 fn update_latch(input: &SafetyInput, state: &mut LadderState, now_ms: i64) -> bool {
     let latch = state
@@ -22,8 +23,8 @@ fn update_latch(input: &SafetyInput, state: &mut LadderState, now_ms: i64) -> bo
     let breach =
         projected.is_some_and(|grid| grid > input.import_ceiling_w + input.import_deadband_w);
     if breach {
-        let headroom = demand_w(input).map_or(0.0, |demand| {
-            input.import_ceiling_w - demand - coordinated_w(input)
+        let headroom = fleet_baseline_w(input).map_or(0.0, |baseline| {
+            input.import_ceiling_w - baseline - coordinated_w(input)
         });
         latch.armed = true;
         latch.ask_w = headroom.min(0.0);
@@ -44,7 +45,7 @@ fn fresh_settled(input: &SafetyInput, state: &LadderState, now_ms: i64) -> bool 
         .zip(input.settled_at_ms)
         .is_some_and(|(grid, at)| {
             at > latch.at_ms
-                && now_ms - at <= TELEMETRY_FRESH_MS
+                && fresh_enough(Some(at), now_ms, TELEMETRY_FRESH_MS)
                 && grid <= input.import_ceiling_w - input.import_deadband_w
         })
 }
@@ -61,8 +62,8 @@ fn remedy(input: &SafetyInput, state: &LadderState) -> Option<Candidate> {
         hold(Rule::ImportCeiling)
     };
     let mut limits = physical_limits(input, false, ask_w);
-    if ask_w < 0.0 && input.command_sample_stale() {
-        limits.push("sample_stale");
+    if ask_w < 0.0 && input.command_budget_remaining_ms == 0 {
+        limits.push("observation_budget_exhausted");
     }
     if !limits.is_empty() {
         let floor_only = limits.len() == 1 && limits[0] == "soc_floor";

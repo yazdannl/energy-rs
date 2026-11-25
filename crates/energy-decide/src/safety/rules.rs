@@ -4,8 +4,8 @@ use crate::dispatch::constants::HOLD_DEADBAND_W;
 use crate::dispatch::{SafetyAction, SlotRequest};
 use crate::safety::state::LadderState;
 use crate::safety::{
-    AGGREGATE_EMERGENCY_W, CELL_NOMINAL_V, CELL_RESUME_V, CELL_TRIGGER_V, EMERGENCY_DURATION_MS,
-    HoldProof, RESTART_GRACE_MS, Rule, SafetyInput,
+    AGGREGATE_EMERGENCY_W, CELL_NOMINAL_V, CELL_RESUME_V, CELL_TRIGGER_V, COMMAND_SAMPLE_MAX_MS,
+    EMERGENCY_DURATION_MS, HoldProof, RESTART_GRACE_MS, Rule, SafetyInput, fresh_enough,
 };
 
 /// One fired rule, its reason and the command or deferral it selects.
@@ -76,7 +76,9 @@ pub(crate) fn physical_limits(
     limits
 }
 
-pub(crate) fn demand_w(input: &SafetyInput) -> Option<f64> {
+/// Load minus PV after removing the whole measured fleet battery contribution.
+/// `battery_w` is fleet-total; adding the complete selected targets then includes each command once.
+pub(crate) fn fleet_baseline_w(input: &SafetyInput) -> Option<f64> {
     input
         .grid_w
         .zip(input.battery_w)
@@ -93,7 +95,15 @@ pub(crate) fn coordinated_w(input: &SafetyInput) -> f64 {
 }
 
 pub(crate) fn projected_import(input: &SafetyInput, self_w: f64) -> Option<f64> {
-    demand_w(input).map(|demand| demand + coordinated_w(input) + self_w)
+    fleet_baseline_w(input).map(|baseline| baseline + coordinated_w(input) + self_w)
+}
+
+/// Service-headroom projection exists only with a fresh, non-future meter sample.
+pub(crate) fn service_projection(input: &SafetyInput, self_w: f64) -> Option<f64> {
+    if !fresh_enough(input.grid_sample_at_ms, input.at_ms, COMMAND_SAMPLE_MAX_MS) {
+        return None;
+    }
+    projected_import(input, self_w)
 }
 
 pub(crate) fn cell_hold(input: &SafetyInput) -> Option<Candidate> {
@@ -118,17 +128,30 @@ pub(crate) fn cell_emergency(input: &SafetyInput) -> Option<Candidate> {
     if !input.cell_force_charge || input.cell_min_v >= CELL_RESUME_V {
         return None;
     }
-    if input.cell_command_sample_stale() {
-        return Some(blocked(
-            Rule::CellEmergency,
-            "emergency_charge_impossible",
-            vec!["cell_sample_stale"],
-        ));
+    let mut limits = Vec::new();
+    if !fresh_enough(
+        input.cell_observed_at_ms,
+        input.at_ms,
+        COMMAND_SAMPLE_MAX_MS,
+    ) {
+        limits.push("cell_sample_stale");
+    }
+    if !fresh_enough(
+        Some(input.last_sample_at_ms),
+        input.at_ms,
+        COMMAND_SAMPLE_MAX_MS,
+    ) {
+        limits.push("pack_sample_stale");
+    }
+    if input.command_budget_remaining_ms == 0 {
+        limits.push("observation_budget_exhausted");
     }
     let target_w = emergency_target_w(input);
-    let mut limits = physical_limits(input, true, target_w);
-    let projected = projected_import(input, target_w);
-    if projected.is_some_and(|grid| grid > input.physical_service_limit_w) {
+    limits.extend(physical_limits(input, true, target_w));
+    let projected = service_projection(input, target_w);
+    if projected.is_none() {
+        limits.push("service_headroom_unavailable");
+    } else if projected.is_some_and(|grid| grid > input.physical_service_limit_w) {
         limits.push("physical_service_limit");
     }
     if limits.is_empty() {
@@ -153,7 +176,7 @@ pub(crate) fn soc_floor(input: &SafetyInput) -> Option<Candidate> {
         return None;
     }
     let needs_discharge = input.plan_w < 0.0
-        || demand_w(input)
+        || fleet_baseline_w(input)
             .is_some_and(|demand| demand > input.import_ceiling_w + input.import_deadband_w);
     if needs_discharge {
         Some(hold(Rule::SocFloor))
@@ -187,9 +210,9 @@ pub(crate) fn stale_pack(input: &SafetyInput) -> Option<Candidate> {
     None
 }
 
-pub(crate) fn stale_command(input: &SafetyInput, request: &SlotRequest) -> Option<Candidate> {
-    if input.command_sample_stale() && request.requested_w.abs() > HOLD_DEADBAND_W {
-        return Some(hold(Rule::StaleCommand));
+pub(crate) fn observation_budget(input: &SafetyInput, request: &SlotRequest) -> Option<Candidate> {
+    if input.command_budget_remaining_ms == 0 && request.requested_w.abs() > HOLD_DEADBAND_W {
+        return Some(hold(Rule::ObservationBudget));
     }
     None
 }

@@ -2,11 +2,10 @@
 
 /// Ordered safety rules; the first firing command or deferral wins, every firing reason is reported.
 ///
-/// Positions 1-4 follow SPEC M5. Position 3 (SoC floor) and position 5 (ceiling) are
-/// universal physical limits promoted into the visible order because SCENARIOS S37/S150
-/// require their reasons in precedence order. Positions 8-11 are first-class transitions,
-/// 12-14 are outstanding-hazard/ordinary-tier blockers. `Ordinary` is the explicit
-/// no-action outcome, never an empty tick.
+/// The physical service limit is unconditional and outranks the economic import ceiling;
+/// emergency charging may only breach the 200 W margin, never the service fuse. The cumulative
+/// observation-budget rule replaces any per-sample age check for nonzero commands. `Ordinary`
+/// is the explicit no-action outcome, never an empty tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rule {
     /// Latched cell discharge: verified 0 W.
@@ -15,6 +14,8 @@ pub enum Rule {
     CellEmergency,
     /// Hard SoC/minSoc floor: no discharge.
     SocFloor,
+    /// Unconditional physical service fuse; unknown headroom fails closed.
+    PhysicalServiceLimit,
     /// Projected import breach: protective discharge or charge reduction.
     ImportCeiling,
     /// SoC ceiling / full-charge protection: no charge, no fault escalation.
@@ -23,8 +24,8 @@ pub enum Rule {
     ExportGuard,
     /// Samples older than the 300 s reachability TTL: unreachable until neutral.
     StaleSample,
-    /// Samples older than two tick periods: no nonzero command is granted.
-    StaleCommand,
+    /// Cumulative unobserved-time budget exhausted: no nonzero command.
+    ObservationBudget,
     /// Ownership lost: orphan hold.
     OrphanHold,
     /// Standing nonzero command with a changed target.
@@ -44,15 +45,16 @@ pub enum Rule {
 }
 
 /// Every rule in execution order; evaluation and reporting both iterate this array.
-pub const RULE_ORDER: [Rule; 16] = [
+pub const RULE_ORDER: [Rule; 17] = [
     Rule::CellLatch,
     Rule::CellEmergency,
     Rule::SocFloor,
+    Rule::PhysicalServiceLimit,
     Rule::ImportCeiling,
     Rule::FullCharge,
     Rule::ExportGuard,
     Rule::StaleSample,
-    Rule::StaleCommand,
+    Rule::ObservationBudget,
     Rule::OrphanHold,
     Rule::CancelRamp,
     Rule::RestartGrace,
@@ -78,11 +80,12 @@ impl Rule {
             Self::CellLatch => "cell_voltage_guard",
             Self::CellEmergency => "cell_voltage_emergency_charge",
             Self::SocFloor => "soc_floor",
+            Self::PhysicalServiceLimit => "physical_service_limit",
             Self::ImportCeiling => "grid_import_ceiling",
             Self::FullCharge => "full_charge_protection",
             Self::ExportGuard => "self_consumption_guard",
             Self::StaleSample => "stale_sample_unreachable",
-            Self::StaleCommand => "stale_command_sample",
+            Self::ObservationBudget => "observation_budget_exhausted",
             Self::OrphanHold => "orphan_hold",
             Self::CancelRamp => "cancel_ramp",
             Self::RestartGrace => "restart_grace",
@@ -97,21 +100,15 @@ impl Rule {
     /// What the rule commands, for the documented precedence table.
     pub fn command(self) -> &'static str {
         match self {
-            Self::CellLatch
-            | Self::SocFloor
-            | Self::FullCharge
-            | Self::ExportGuard
-            | Self::StaleSample
-            | Self::StaleCommand
-            | Self::OrphanHold
-            | Self::CancelRamp
-            | Self::RestartGrace
-            | Self::UnverifiedHold => "0 W verified neutral hold",
+            Self::PhysicalServiceLimit => {
+                "protective reduction if headroom is known, else 0 W hold"
+            }
             Self::CellEmergency => "bounded minimum charge, else 0 W verified hold",
             Self::ImportCeiling => "protective discharge/charge reduction, else 0 W hold",
             Self::UncertainWrite => "0 W hold until neutrality is proven",
             Self::FaultBackoff => "no command; defer ordinary write to retry_at",
             Self::NoCommand | Self::Ordinary => "no safety command",
+            _ => "0 W verified neutral hold",
         }
     }
 
@@ -121,7 +118,7 @@ impl Rule {
             Self::CellEmergency => {
                 "echo plus cell voltage at resume threshold within 180 s; else verified hold"
             }
-            Self::ImportCeiling | Self::ExportGuard => {
+            Self::PhysicalServiceLimit | Self::ImportCeiling | Self::ExportGuard => {
                 "measured settled flow within the hard bound"
             }
             Self::FaultBackoff | Self::NoCommand | Self::Ordinary => "no safety command to verify",

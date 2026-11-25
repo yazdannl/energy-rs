@@ -295,14 +295,27 @@ fn s284_a_retry_never_inherits_the_previous_attempts_evidence() {
     proof.observe_receipt(&old_echo, 40);
     proof.observe_receipt(&old_neutral, 50);
 
-    proof.advance_due(2_000);
-    observe(&mut proof, echoed(idle_report("P", 60, 0.0, 5), 0.0), 60);
-    observe(&mut proof, idle_report("P", 70, 0.0, 6), 70);
+    let retry_at = proof.escalation.retry_at_ms.unwrap_or(0);
+    proof.advance_due(retry_at);
+    observe(
+        &mut proof,
+        echoed(idle_report("P", retry_at + 20, 0.0, 5), 0.0),
+        retry_at + 20,
+    );
+    observe(
+        &mut proof,
+        idle_report("P", retry_at + 30, 0.0, 6),
+        retry_at + 30,
+    );
     assert!(
         !proof.verified,
         "one new neutral must not reuse attempt 1 evidence"
     );
-    observe(&mut proof, idle_report("P", 90, 0.0, 7), 90);
+    observe(
+        &mut proof,
+        idle_report("P", retry_at + 50, 0.0, 7),
+        retry_at + 50,
+    );
     assert!(proof.verified);
 }
 

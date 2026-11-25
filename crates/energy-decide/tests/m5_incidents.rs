@@ -176,6 +176,8 @@ fn s263_missing_or_stale_solar_telemetry_grants_nothing_without_blocking_grid_ch
 
     input.load_w = Some(500.0);
     input.pv_w = None;
+    input.last_sample_at_ms = 20_000;
+    input.grid_sample_at_ms = Some(20_000);
     ladder.observe(input.clone());
     let (no_pv_rows, no_pv_io) = run(
         SharedGate(Arc::clone(&ladder)),
@@ -191,6 +193,8 @@ fn s263_missing_or_stale_solar_telemetry_grants_nothing_without_blocking_grid_ch
 
     input.pv_w = Some(3000.0);
     input.solar_sample_at_ms = Some(-11_000);
+    input.last_sample_at_ms = 40_000;
+    input.grid_sample_at_ms = Some(40_000);
     ladder.observe(input);
     let (stale_rows, stale_io) = run(
         SharedGate(Arc::clone(&ladder)),

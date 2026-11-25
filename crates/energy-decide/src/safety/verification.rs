@@ -3,6 +3,8 @@
 use crate::dispatch::FlowReport;
 use crate::dispatch::constants::HOLD_DEADBAND_W;
 use crate::safety::escalation::Escalation;
+use crate::safety::flow_evidence::measured_neutral;
+use crate::safety::input::FUTURE_SKEW_MS;
 use crate::safety::receipt::SafetyReceipt;
 
 /// How long a neutral report stays fresh for hold verification.
@@ -54,6 +56,8 @@ pub struct HoldProof {
     pub steps: Vec<&'static str>,
     /// Bounded escalation for this hold.
     pub escalation: Escalation,
+    /// Escalation history retained from a superseded nonzero proof.
+    pub prior_escalation: Vec<&'static str>,
 }
 
 impl HoldProof {
@@ -75,6 +79,7 @@ impl HoldProof {
             attempt_state: HoldAttemptState::Active,
             steps: vec!["hold_issued"],
             escalation: Escalation::new("ownership_retention"),
+            prior_escalation: Vec::new(),
         }
     }
 
@@ -111,12 +116,21 @@ impl HoldProof {
 
     /// Fold a correlated receipt without waiting. A stale attempt cannot verify anything.
     pub fn observe_receipt(&mut self, receipt: &SafetyReceipt, now_ms: i64) {
+        self.advance_due(now_ms);
         if receipt.safety_seq != self.safety_seq || receipt.attempt_id != self.attempt_id {
             self.steps.push("late_uncorrelated");
             return;
         }
         if self.superseded_by.is_some() {
             self.steps.push("superseded_attempt");
+            return;
+        }
+        if self.attempt_state != HoldAttemptState::Active || now_ms < self.attempt_issued_at_ms {
+            self.steps.push("attempt_not_active");
+            return;
+        }
+        if receipt.report.at_ms > now_ms.saturating_add(FUTURE_SKEW_MS) {
+            self.steps.push("future_dated_report");
             return;
         }
         self.apply_report(&receipt.report, receipt.emergency_resolved, now_ms);
@@ -278,13 +292,4 @@ impl HoldProof {
         self.last_report_at_ms = None;
         self.last_neutral_at_ms = None;
     }
-}
-
-fn measured_neutral(report: &FlowReport) -> bool {
-    report.measured_w.is_finite()
-        && report.measured_w.abs() <= HOLD_DEADBAND_W
-        && crate::dispatch::status_direction(report.ac_status, report.dc_status)
-            == crate::dispatch::FlowStatus::Idle
-        && report.device_clock_ok
-        && report.device_clock_coherent
 }

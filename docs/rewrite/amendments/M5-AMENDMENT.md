@@ -3,33 +3,34 @@
 Ruling: `SCENARIOS.md` rows beat `SPEC.md` prose; the owner's M5 brief and its 2026-11-24 solar
 ruling outrank both where no row exists; anything still undecided is asked as a single point, not
 silently invented. New rows start at S260. Every row below needs reviewer sign-off before merge.
-These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 2 adds S280-S289.
+These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 3 adds S290-S295 and revises J1/J2.
 
 The SPEC M5 acceptance paragraph names S33–S42, S93–S99, S132–S137, S150, S159, S160, S165 and S169.
 S132/S133 belong to M4 flow receipts and S169 to M7 durable sessions; this module claims
 S33–S40, S42, S93–S99, S134–S137, S150, S159, S160, S165, S171–S178, S183, S187 and the new
-S260–S289 below. M4/M6/M7-only rows are not claimed as M5 tests.
+S260–S295 below. M4/M6/M7-only rows are not claimed as M5 tests.
 
 ## Implemented override order (one list, first firing command wins)
 
 | Position | Rule | Reason code | Command | Verification | Escalation on verification failure |
 |---|---|---|---|---|---|
 | 1 | cell discharge latch | `cell_voltage_guard` | 0 W neutral hold | echo + two fresh, distinct, ordered measured `(0,0)` reports | retry 0/2/6 s, then `safety_write_unverified` + `ownership_retention` |
-| 2 | cell emergency charge | `cell_voltage_emergency_charge`; impossible: `emergency_charge_impossible` | minimum bounded charge from the cell deficit, capped by pack and aggregate limits; never past the physical service limit; else 0 W hold | echo + cell voltage reaching the resume threshold; escalation at 180 s if unresolved | `emergency_charge_unresolved` + ownership retention; hold path as position 1 |
+| 2 | cell emergency charge | `cell_voltage_emergency_charge`; impossible: `emergency_charge_impossible` | minimum bounded charge from the cell deficit, capped by pack and aggregate limits; denied without fresh service-headroom evidence; else 0 W hold | echo + cell voltage reaching resume threshold; escalation at 180 s if unresolved | `emergency_charge_unresolved` + ownership retention; hold path as position 1 |
 | 3 | low-SoC / minSoc floor | `soc_floor` | no discharge; 0 W hold when a discharge was asked | measured idle flow | same bounded retry + ownership retention |
-| 4 | import ceiling | `grid_import_ceiling`; impossible: `import_remedy_blocked`; meter gone while armed: `grid_telemetry_missing` | protective discharge/charge reduction from **projected** import (demand + requested + coordinated pack commands); else 0 W hold | fresh post-breach settled grid ≤ ceiling − deadband | same bounded retry + ownership retention |
-| 5 | full charge / SoC ceiling | `full_charge_protection` | 0 W hold; never charge a 100 % pack | measured idle flow | same bounded retry + ownership retention |
-| 6 | export/self-consumption guard | `self_consumption_guard` | 0 W hold when a discharge would export past the hard ceiling | measured flow within the ceiling | same bounded retry + ownership retention |
-| 7 | stale pack samples (> 300 s) | `stale_sample_unreachable` | 0 W verified hold; economic reachability only | as position 1 | as position 1 |
-| 8 | samples older than two tick periods | `stale_command_sample` | no nonzero command; 0 W verified hold fallback | as position 1 | as position 1 |
-| 9 | orphan hold | `orphan_hold` | 0 W verified hold | as position 1 | as position 1 |
-| 10 | cancel ramp | `cancel_ramp` | 0 W verified hold before a changed target | as position 1 | as position 1 |
-| 11 | restart grace | `restart_grace` | no ordinary write; 0 W hold if a command is standing | as position 1 | `restart_neutral_unverified` then ownership retention |
-| 12 | unresolved safety hold | `hold_unverified` | 0 W hold until the same attempt is verified or a higher rule supersedes it | as position 1 | retry 0/2/6 s then terminal retention until explicit recovery |
-| 13 | uncertain write | `controller_uncertain` | 0 W hold for ordinary traffic; safety traffic is never blocked | as position 1 | as position 1 |
-| 14 | ordinary fault backoff | `ordinary_backoff` | no command; explicit `Deferred` outcome carrying `retry_at_ms` | no safety command to verify | none; M4 owns the ordinary retry |
-| 15 | no command standing | `no_command_needed` | no command; `idle_verified` needs two neutral reports | two fresh `(0,0)` reports | none |
-| 16 | ordinary request | `no_safety_hazard` | economic request proceeds | normal M4 receipt | none |
+| 4 | physical service fuse | `physical_service_limit`; unavailable: `service_headroom_unavailable` | protective reduction if fresh headroom is known, else 0 W hold | fresh meter projection ≤ service limit | same bounded retry + ownership retention |
+| 5 | import ceiling | `grid_import_ceiling`; impossible: `import_remedy_blocked`; meter gone while armed: `grid_telemetry_missing` | protective discharge/charge reduction from projected import (fleet-total measured battery subtracted, complete selected targets added); else 0 W hold | fresh post-breach settled grid ≤ ceiling − deadband | same bounded retry + ownership retention |
+| 6 | full charge / SoC ceiling | `full_charge_protection` | 0 W hold; never charge a 100 % pack | measured idle flow | same bounded retry + ownership retention |
+| 7 | export/self-consumption guard | `self_consumption_guard` | 0 W hold when a discharge would export past the hard ceiling | measured flow within the ceiling | same bounded retry + ownership retention |
+| 8 | stale pack samples (> 300 s) | `stale_sample_unreachable` | 0 W verified hold; economic reachability only | as position 1 | as position 1 |
+| 9 | cumulative observation budget empty | `observation_budget_exhausted` | no nonzero command; 0 W verified hold | as position 1 | as position 1 |
+| 10 | orphan hold | `orphan_hold` | 0 W verified hold | as position 1 | as position 1 |
+| 11 | cancel ramp | `cancel_ramp` | 0 W verified hold before a changed target | as position 1 | as position 1 |
+| 12 | restart grace | `restart_grace` | no ordinary write; 0 W hold if a command is standing | as position 1 | `restart_neutral_unverified` then ownership retention |
+| 13 | unresolved safety hold | `hold_unverified` | 0 W hold until the same attempt is verified or a higher rule supersedes it | as position 1 | retry 0/2/6 s then terminal retention until explicit recovery |
+| 14 | uncertain write | `controller_uncertain` | 0 W hold for ordinary traffic; safety traffic is never blocked | as position 1 | as position 1 |
+| 15 | ordinary fault backoff | `ordinary_backoff` | no command; explicit `Deferred` outcome carrying `retry_at_ms` | no safety command to verify | none; M4 owns the ordinary retry |
+| 16 | no command standing | `no_command_needed` | no command; `idle_verified` needs two neutral reports | two fresh `(0,0)` reports | none |
+| 17 | ordinary request | `no_safety_hazard` | economic request proceeds | normal M4 receipt | none |
 
 Solar PV reserve has **no position** in this list. The owner's ruling is verbatim: it never commands,
 never constrains feasibility and never reduces or zeroes a planned charge. It reports PV-sourced
@@ -73,17 +74,37 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S288 | M5 | emergency charge is minimum, bounded and time-limited | cell deficit, 1200 W pack cap, four-pack fleet, meter over/under fuse | ladder decides and proof is opened | target is the voltage-deficit estimate capped by pack and 3200 W aggregate share; economic margin may be breached with reason, physical fuse never; proof duration 180 s | contract | no | IN SCOPE | Reviewer ruling J1; replaces `max(800 W, requested)`. |
 | S289 | M5/M4 | incident regressions assert the execution boundary | each of S260/S261/S262/S263/S264 plus its mutation | dispatcher runs and row/device power are joined to the decision | fixed path asserts device W and report steps; mutation case proves the old defect would be caught at that boundary | regression | yes | IN SCOPE (S276/S277/S279 remain wiring-only) | Review item 43: decision-only assertions could not detect downstream clamps or missing deferral. |
 
+| S290 | M5 | physical service fuse is unconditional | fresh meter projection above service limit; then missing, stale or future-dated meter sample; then operator limit raised | ladder evaluates a charge | protective reduction under the fuse; any unavailable headroom denies the charge with `service_headroom_unavailable`; operator-configured limit is honoured | regression | yes | IN SCOPE (J1 revised) | Review item 47: emergency must fail closed when the fuse argument is absent. |
+| S291 | M5 | intermittent fresh samples do not reauthorise | 1000 W charge, stale 30 s, one fresh sample, stale 30 s | ladder evaluates each tick | cumulative observation budget reaches zero and never reauthorises from one fresh sample; 0 W verified hold follows | regression | yes | IN SCOPE (J2 revised) | Ruling J2: per-sample age checks oscillate; budget is credited only by genuinely fresh periods. |
+| S292 | M5 | projection uses one fleet measurement basis | grid 6100 W, fleet battery −1600 W, one pack charging and two standing discharges replaced by two +800 W targets | ladder evaluates the transition | battery is fleet-total, the aggregate is subtracted once and complete new targets are added; protective reduction is −800 W and unchanged by stale standing values | regression | yes | IN SCOPE | Review item 48: mixed packs were double-counted. |
+| S293 | M5 | nonzero-to-neutral switch makes a new proof | emergency +800 W proof fails once, then a 0 W hold is selected | ladder decides again | new neutral proof has target 0 W, new seq and correlated attempt; superseded escalation history is retained separately | regression | no | IN SCOPE | Review item 49: a neutral command inherited the old nonzero verification target. |
+| S294 | M5 | receipts require an active issued attempt | expired, terminal and future-dated receipts offered to matching proofs | proof ingests each receipt | all are rejected with `attempt_not_active` / `future_dated_report`; only explicit recovery leaves terminal state | regression | no | IN SCOPE | Review item 50: matching IDs were enough for inactive attempts. |
+| S295 | M5 | future timestamps are rejected before evidence | settled sample dated beyond skew; flow report dated beyond skew | latch and proof ingest them | no release and no verification; skew bound is `FUTURE_SKEW_MS = 5_000` | regression | no | IN SCOPE | Review item 52: future-dated evidence was treated as fresh. |
+
 ## Interpretations that need reviewer attention
 
 * The owner was asked about solar headroom before implementation and ruled "advisory headroom only":
   no precedence slot, no command, no feasibility effect, zero-on-missing-telemetry means grant nothing.
   This is implemented literally in `safety::solar` and recorded as S262/S263/S275.
-* The owner also ruled that a permanently stale reservation is unsafe and asked for a documented
-  bound. Two numbers now apply. `STALE_SAMPLE_MS = 300_000` (5 min) is only the economic
-  reachability/unreachable escalation bound (S270). A nonzero command needs a sample no older than
-  `COMMAND_SAMPLE_MAX_MS = 40_000`: two 20 s tick/sampler periods, so one missed sample does not
-  revoke permission but two consecutive missed periods do. Past 40 s M5 stops granting the nonzero
-  command, issues a verified-hold fallback and escalates (S287). Reviewer ruling J2, 2026-11-24.
+* J2 revised (reviewer ruling, 2026-11-24): `STALE_SAMPLE_MS = 300_000` (5 min) remains only the
+  economic reachability/unreachable escalation bound (S270). Nonzero permission uses a CUMULATIVE
+  leaky-bucket budget, not a per-sample age check. Derivation: decision cadence 20 s; maximum
+  accepted sample age `COMMAND_SAMPLE_MAX_MS = 40_000`; worst tick phase puts the sample just after
+  a decision, so its first evaluation is one full cadence (20 s) later and only 20 s of that age
+  remains usable. Therefore `UNOBSERVED_BUDGET_MS = 40 s − 20 s = 20 s`. Ticks with a genuinely new,
+  in-window sample credit only the elapsed fresh period; ticks without one debit elapsed time. When
+  the bucket empties the nonzero command is withdrawn and a verified hold starts. Worst-case
+  unobserved charging duration is therefore `20 s permission allowance + 74 s bounded hold attempt
+  = 94 s`, from the stated cadence, accepted age, tick phase and hold attempt — not a standalone
+  number. Intermittent fresh samples cannot reset the bucket (S291).
+* J1 revised (reviewer ruling, 2026-11-24): `physical_service_limit_w` defaults to 7700 W and is
+  operator-configurable. It is an unconditional hard bound on EVERY nonzero path. Emergency charge
+  is permitted only when projected import including the emergency charge is at or below it, using
+  fresh meter evidence (`grid_sample_at_ms` within `COMMAND_SAMPLE_MAX_MS`, no future skew beyond
+  5 s). Missing, stale or future-dated service evidence DENIES the emergency with
+  `service_headroom_unavailable` and escalates. The 3200 W aggregate share and 180 s attempt
+  duration bound only the emergency charge's own magnitude and runtime; they are not fuse safety.
+  The fuse argument is the service rating plus measured load, and only that (S290).
 * SPEC's ordered list names six steps but omits the floor, ceiling, backoff, uncertainty and solar
   cases. SCENARIOS S37/S150/S225 decide floor and safety-lane exemption; the remaining positions
   follow M4's own `ordinary_deferral` order (transport, uncertainty, backoff, pause) and are listed

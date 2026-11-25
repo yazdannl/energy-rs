@@ -22,13 +22,16 @@ pub struct SafetyInput {
     pub cell_observed_at_ms: Option<i64>,
     /// Measured grid power, import positive; `None` is missing telemetry.
     pub grid_w: Option<f64>,
-    /// Measured battery power, charge positive; `None` is missing telemetry.
+    /// Time of the grid/meter sample; `None` means service-headroom evidence is unavailable.
+    pub grid_sample_at_ms: Option<i64>,
+    /// FLEET-TOTAL measured battery power, charge positive; `None` is missing telemetry.
+    /// Projections subtract this whole aggregate before adding selected fleet targets.
     pub battery_w: Option<f64>,
     /// Settled grid estimate used to release the import latch; a transient dip is not enough.
     pub settled_grid_w: Option<f64>,
     /// Observation time of the settled estimate, epoch milliseconds.
     pub settled_at_ms: Option<i64>,
-    /// Commands already selected for the other packs in this coordinated slot, W.
+    /// Complete new targets already selected for the other packs in this slot, W.
     pub coordinated_pack_w: Vec<f64>,
     /// Measured non-battery house load, W; `None` is missing telemetry.
     pub load_w: Option<f64>,
@@ -82,8 +85,10 @@ pub struct SafetyInput {
     pub cancel_ramp: bool,
     /// Device restart time, epoch milliseconds; 120 s grace follows it.
     pub restart_at_ms: Option<i64>,
-    /// Command currently standing on the device, W.
+    /// Command currently standing on this pack, W; subtracted before the new target is added.
     pub standing_command_w: f64,
+    /// Remaining cumulative unobserved-time budget, ms; set by the ladder from its leaky bucket.
+    pub command_budget_remaining_ms: u32,
     /// Time of the newest pack sample, epoch milliseconds.
     pub last_sample_at_ms: i64,
     /// Effective/floor/ceiling target inputs from M3, never redefined here.
@@ -103,6 +108,7 @@ impl SafetyInput {
             cell_force_charge: false,
             cell_observed_at_ms: Some(at_ms),
             grid_w: Some(0.0),
+            grid_sample_at_ms: Some(at_ms),
             battery_w: Some(0.0),
             settled_grid_w: None,
             settled_at_ms: None,
@@ -134,6 +140,7 @@ impl SafetyInput {
             cancel_ramp: false,
             restart_at_ms: None,
             standing_command_w: 0.0,
+            command_budget_remaining_ms: UNOBSERVED_BUDGET_MS as u32,
             last_sample_at_ms: at_ms,
             targets: fleet_targets(),
             plan_w: 0.0,
@@ -161,11 +168,6 @@ impl SafetyInput {
         self.at_ms - self.last_sample_at_ms > STALE_SAMPLE_MS
     }
 
-    /// Pack samples are too old to permission a nonzero command (2x sampler period).
-    pub fn command_sample_stale(&self) -> bool {
-        self.at_ms - self.last_sample_at_ms > COMMAND_SAMPLE_MAX_MS
-    }
-
     /// Cell sample is too old to permission an emergency charge.
     pub fn cell_command_sample_stale(&self) -> bool {
         self.cell_observed_at_ms
@@ -178,3 +180,17 @@ impl SafetyInput {
 pub const STALE_SAMPLE_MS: i64 = 300_000;
 /// Two 20 s tick/sampler periods: no nonzero command may be granted on older evidence.
 pub const COMMAND_SAMPLE_MAX_MS: i64 = 40_000;
+/// Decision/sampler cadence from the live tick, used for the observation-budget derivation.
+pub const DECISION_CADENCE_MS: i64 = 20_000;
+/// Maximum future timestamp skew accepted before evidence is rejected.
+pub const FUTURE_SKEW_MS: i64 = 5_000;
+/// Cumulative unobserved-time permission: `COMMAND_SAMPLE_MAX_MS - DECISION_CADENCE_MS`.
+/// A sample landing just after a tick is first evaluated one cadence later, leaving 20 s.
+pub const UNOBSERVED_BUDGET_MS: i64 = COMMAND_SAMPLE_MAX_MS - DECISION_CADENCE_MS;
+
+/// Freshness predicate with an explicit future-skew policy.
+pub fn fresh_enough(at: Option<i64>, now_ms: i64, max_age_ms: i64) -> bool {
+    at.is_some_and(|at| {
+        at <= now_ms.saturating_add(FUTURE_SKEW_MS) && now_ms.saturating_sub(at) <= max_age_ms
+    })
+}
