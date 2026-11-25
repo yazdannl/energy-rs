@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::dispatch::constants::HOLD_DEADBAND_W;
 use crate::dispatch::{SafetyAction, SafetyGate, SafetyIntervention, SlotRequest};
 use crate::safety::escalation::SAFETY_ATTEMPT_DEADLINE_MS;
 use crate::safety::rules::{
@@ -12,6 +13,7 @@ use crate::safety::rules::{
 use crate::safety::rules_import::import_ceiling;
 use crate::safety::rules_service::physical_service;
 use crate::safety::state::{LadderState, advance_due, note, observe_budget, proof_for};
+use crate::safety::verification::HoldAttemptState;
 use crate::safety::{
     DecisionOutcome, Escalation, HoldProof, Rule, SafetyDecision, SafetyInput, SafetyReceipt,
     SolarHeadroom,
@@ -124,6 +126,11 @@ impl SafetyLadder {
         let candidates = evaluate(&input, request, &mut state, now_ms);
         let mut decision = build(&input, &candidates, solar, now_ms);
         if let Some(action) = decision.action {
+            let terminal_refused = state.holds.get(&input.pack_id).is_some_and(|proof| {
+                proof.attempt_state == HoldAttemptState::Terminal
+                    && proof.superseded_by.is_none()
+                    && (proof.target_w - action.target_w()).abs() > HOLD_DEADBAND_W
+            });
             let duration = if decision.rule == Rule::CellEmergency {
                 EMERGENCY_DURATION_MS
             } else {
@@ -141,6 +148,15 @@ impl SafetyLadder {
             if proof.escalation.exhausted() && !proof.verified {
                 decision.outcome = DecisionOutcome::Failed;
                 decision.steps.push("ownership_retention");
+            }
+            if terminal_refused {
+                decision.action = Some(SafetyAction::NeutralHold);
+                decision.command_w = 0.0;
+                decision.reason = "terminal_target_change_refused";
+                decision.reasons.push("terminal_target_change_refused");
+                decision.binding_limits.push("terminal_hold_retained");
+                decision.outcome = DecisionOutcome::Failed;
+                decision.steps.push("terminal_target_change_refused");
             }
         }
         state.decisions.push(decision.clone());

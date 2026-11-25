@@ -2,12 +2,12 @@
 
 use crate::dispatch::SafetyAction;
 use crate::safety::rules::{
-    Candidate, blocked, candidate, coordinated_w, fleet_baseline_w, hold, physical_limits,
-    projected_import,
+    Candidate, blocked, candidate, coordinated_w, fleet_baseline_w, hold, projected_import,
 };
+use crate::safety::rules_limits::physical_limits;
 use crate::safety::solar::TELEMETRY_FRESH_MS;
 use crate::safety::state::{ImportLatch, LadderState};
-use crate::safety::{Rule, SafetyInput, fresh_enough};
+use crate::safety::{AUTHORIZATION_MIN_MS, Rule, SafetyInput, fresh_enough};
 
 fn update_latch(input: &SafetyInput, state: &mut LadderState, now_ms: i64) -> bool {
     let latch = state
@@ -62,7 +62,7 @@ fn remedy(input: &SafetyInput, state: &LadderState) -> Option<Candidate> {
         hold(Rule::ImportCeiling)
     };
     let mut limits = physical_limits(input, false, ask_w);
-    if ask_w < 0.0 && input.command_budget_remaining_ms == 0 {
+    if ask_w < 0.0 && input.command_budget_remaining_ms < AUTHORIZATION_MIN_MS as u32 {
         limits.push("observation_budget_exhausted");
     }
     if !limits.is_empty() {

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::dispatch::SafetyAction;
 use crate::dispatch::constants::HOLD_DEADBAND_W;
+use crate::safety::verification::HoldAttemptState;
 use crate::safety::{
     COMMAND_SAMPLE_MAX_MS, HoldProof, Rule, SafetyDecision, SafetyInput, UNOBSERVED_BUDGET_MS,
     fresh_enough,
@@ -60,23 +61,26 @@ pub(crate) fn observe_budget(state: &mut LadderState, input: &SafetyInput, now_m
         return budget.remaining_ms;
     }
     let elapsed = now_ms.saturating_sub(budget.last_eval_at_ms);
-    let fresh = fresh_enough(Some(sample), now_ms, COMMAND_SAMPLE_MAX_MS)
+    let mut remaining = budget
+        .remaining_ms
+        .saturating_sub(u32::try_from(elapsed).unwrap_or(u32::MAX));
+    let new_fresh_sample = fresh_enough(Some(sample), now_ms, COMMAND_SAMPLE_MAX_MS)
         && budget
             .last_sample_seen_at_ms
-            .is_none_or(|seen| sample > seen);
-    if fresh {
-        let credited_from = budget.last_eval_at_ms.max(sample);
-        let credit = u32::try_from(now_ms.saturating_sub(credited_from)).unwrap_or(u32::MAX);
-        budget.remaining_ms = budget
-            .remaining_ms
+            .is_none_or(|seen| sample > seen)
+        && sample > budget.last_eval_at_ms;
+    if new_fresh_sample {
+        // A fresh sample only covers time up to its own freshness expiry; cap at the elapsed tick.
+        let age = now_ms.saturating_sub(sample);
+        let remaining_freshness = COMMAND_SAMPLE_MAX_MS.saturating_sub(age);
+        let covered = remaining_freshness.min(elapsed);
+        let credit = u32::try_from(covered).unwrap_or(u32::MAX);
+        remaining = remaining
             .saturating_add(credit)
             .min(UNOBSERVED_BUDGET_MS as u32);
         budget.last_sample_seen_at_ms = Some(sample);
-    } else {
-        budget.remaining_ms = budget
-            .remaining_ms
-            .saturating_sub(u32::try_from(elapsed).unwrap_or(u32::MAX));
     }
+    budget.remaining_ms = remaining;
     budget.last_eval_at_ms = now_ms;
     budget.remaining_ms
 }
@@ -115,15 +119,18 @@ pub(crate) fn proof_for(
     let target_w = action.target_w();
     let existing = state.holds.get(&input.pack_id).cloned();
     let mut prior_escalation = Vec::new();
-    if let Some(mut current) = existing
-        && current.blocks_ordinary()
-    {
-        if (current.target_w - target_w).abs() <= HOLD_DEADBAND_W {
+    if let Some(mut current) = existing {
+        if current.attempt_state == HoldAttemptState::Terminal && current.superseded_by.is_none() {
             return current;
         }
-        prior_escalation.clone_from(&current.escalation.steps);
-        current.supersede(rule.reason());
-        state.holds.insert(input.pack_id.clone(), current);
+        if current.blocks_ordinary() {
+            if (current.target_w - target_w).abs() <= HOLD_DEADBAND_W {
+                return current;
+            }
+            prior_escalation.clone_from(&current.escalation.steps);
+            current.supersede(rule.reason());
+            state.holds.insert(input.pack_id.clone(), current);
+        }
     }
     state.seq = state.seq.saturating_add(1);
     let mut proof = HoldProof::new(state.seq, at_ms, target_w, duration_ms);

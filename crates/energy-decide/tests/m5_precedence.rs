@@ -191,7 +191,7 @@ fn s272_emergency_charge_checks_pack_limit_without_meter() {
     input.max_charge_w = 800.0;
     input.grid_w = Some(0.0);
     input.grid_sample_at_ms = Some(20_000);
-    input.last_sample_at_ms = 20_000;
+    input.last_sample_at_ms = 19_999;
     ladder.observe(input);
     let allowed = ladder.decide(&economic("P", -800.0, 20_000), 20_000);
     assert_eq!(
@@ -238,7 +238,7 @@ fn s275_solar_advice_has_no_precedence_slot_and_never_changes_the_command() {
     assert_eq!(clear.action, None);
 
     input.pv_w = None;
-    input.last_sample_at_ms = 20_000;
+    input.last_sample_at_ms = 19_999;
     input.grid_sample_at_ms = Some(20_000);
     ladder.observe(input);
     let missing = ladder.decide(&economic("P", 1000.0, 20_000), 20_000);
@@ -292,7 +292,7 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     ladder.decide(&economic("P", 0.0, 0), 0);
 
     input.grid_w = Some(7900.0);
-    input.last_sample_at_ms = 20_000;
+    input.last_sample_at_ms = 19_999;
     input.grid_sample_at_ms = Some(20_000);
     input.settled_grid_w = Some(7400.0);
     input.settled_at_ms = Some(-1_000);
@@ -302,7 +302,7 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     assert!(contradictory.reasons.contains(&"grid_import_ceiling"));
 
     input.grid_w = Some(7400.0);
-    input.last_sample_at_ms = 60_000;
+    input.last_sample_at_ms = 59_999;
     input.grid_sample_at_ms = Some(60_000);
     input.settled_at_ms = Some(21_000);
     ladder.observe(input.clone());
@@ -311,14 +311,14 @@ fn s281_import_guard_releases_only_on_fresh_post_breach_settled_evidence() {
     assert_eq!(retained.rule, Rule::ImportCeiling);
 
     input.settled_at_ms = Some(70_000);
-    input.last_sample_at_ms = 60_000;
+    input.last_sample_at_ms = 59_999;
     input.grid_sample_at_ms = Some(60_000);
     ladder.observe(input.clone());
     let future = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
     assert_eq!(future.rule, Rule::ImportCeiling);
 
     input.settled_at_ms = Some(50_000);
-    input.last_sample_at_ms = 60_000;
+    input.last_sample_at_ms = 59_999;
     input.grid_sample_at_ms = Some(60_000);
     ladder.observe(input);
     let released = ladder.decide(&economic("P", 0.0, 60_000), 60_000);
@@ -338,7 +338,7 @@ fn s282_unresolved_hold_blocks_economic_traffic_until_neutrality_is_proven() {
     ladder.decide(&economic("P", -800.0, 0), 0);
 
     input.cell_latch = false;
-    input.last_sample_at_ms = 20_000;
+    input.last_sample_at_ms = 19_999;
     input.grid_sample_at_ms = Some(20_000);
     ladder.observe(input.clone());
     let blocked = ladder.decide(&economic("P", 800.0, 20_000), 20_000);
@@ -347,7 +347,7 @@ fn s282_unresolved_hold_blocks_economic_traffic_until_neutrality_is_proven() {
     assert_eq!(blocked.rule, Rule::UnverifiedHold);
 
     ladder.recover_hold("P", 40_000);
-    input.last_sample_at_ms = 40_000;
+    input.last_sample_at_ms = 39_999;
     input.grid_sample_at_ms = Some(40_000);
     ladder.observe(input);
     let cleared = ladder.decide(&economic("P", 800.0, 40_000), 40_000);
@@ -432,6 +432,7 @@ fn s288_emergency_charge_is_minimum_bounded_and_service_limited() {
     ladder.recover_hold("P", 1);
 
     input.cell_min_v = 2.99;
+    input.last_sample_at_ms = 1;
     ladder.observe(input.clone());
     let large_deficit = ladder.decide(&economic("P", 5_000.0, 2), 2);
     assert_eq!(
@@ -449,6 +450,7 @@ fn s288_emergency_charge_is_minimum_bounded_and_service_limited() {
     input.grid_w = Some(7900.0);
     input.battery_w = Some(0.0);
     input.grid_sample_at_ms = Some(3);
+    input.last_sample_at_ms = 3;
     ladder.observe(input.clone());
     let fuse = ladder.decide(&economic("P", 5_000.0, 4), 4);
     assert_eq!(fuse.reason, "emergency_charge_impossible");
@@ -456,6 +458,7 @@ fn s288_emergency_charge_is_minimum_bounded_and_service_limited() {
     ladder.recover_hold("P", 5);
 
     input.physical_service_limit_w = 9_000.0;
+    input.last_sample_at_ms = 5;
     ladder.observe(input);
     let margin = ladder.decide(&economic("P", 5_000.0, 6), 6);
     assert_eq!(

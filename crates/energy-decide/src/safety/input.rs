@@ -184,9 +184,13 @@ pub const COMMAND_SAMPLE_MAX_MS: i64 = 40_000;
 pub const DECISION_CADENCE_MS: i64 = 20_000;
 /// Maximum future timestamp skew accepted before evidence is rejected.
 pub const FUTURE_SKEW_MS: i64 = 5_000;
-/// Cumulative unobserved-time permission: `COMMAND_SAMPLE_MAX_MS - DECISION_CADENCE_MS`.
-/// A sample landing just after a tick is first evaluated one cadence later, leaving 20 s.
-pub const UNOBSERVED_BUDGET_MS: i64 = COMMAND_SAMPLE_MAX_MS - DECISION_CADENCE_MS;
+/// Largest physically plausible magnitude for meter, battery and service-limit values, W.
+pub const MAX_PLAUSIBLE_POWER_W: f64 = 100_000.0;
+/// Cumulative observation bucket capacity: one full maximum accepted sample age.
+/// Authorization requires at least one decision cadence (`DECISION_CADENCE_MS`) in the bucket.
+pub const UNOBSERVED_BUDGET_MS: i64 = COMMAND_SAMPLE_MAX_MS;
+/// Credit required before a pack is authorised for a nonzero command: one cadence plus skew.
+pub const AUTHORIZATION_MIN_MS: i64 = DECISION_CADENCE_MS + FUTURE_SKEW_MS;
 
 /// Freshness predicate with an explicit future-skew policy.
 pub fn fresh_enough(at: Option<i64>, now_ms: i64, max_age_ms: i64) -> bool {

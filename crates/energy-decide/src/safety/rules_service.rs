@@ -3,9 +3,9 @@
 use crate::dispatch::SafetyAction;
 use crate::dispatch::constants::HOLD_DEADBAND_W;
 use crate::safety::rules::{
-    Candidate, blocked, candidate, coordinated_w, fleet_baseline_w, physical_limits,
-    service_projection,
+    Candidate, blocked, candidate, coordinated_w, fleet_baseline_w, service_projection,
 };
+use crate::safety::rules_limits::physical_limits;
 use crate::safety::{Rule, SafetyInput};
 
 fn reduction(input: &SafetyInput, baseline: f64) -> SafetyAction {

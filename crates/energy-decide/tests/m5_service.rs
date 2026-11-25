@@ -112,7 +112,7 @@ fn s291_intermittent_fresh_samples_do_not_reauthorise_a_charge() {
     let stale_again = ladder.decide(&economic("P", 1000.0, 61_000), 61_000);
     assert_eq!(stale_again.reason, "observation_budget_exhausted");
     assert_eq!(stale_again.action, Some(SafetyAction::NeutralHold));
-    assert_eq!(UNOBSERVED_BUDGET_MS, COMMAND_SAMPLE_MAX_MS - 20_000);
+    assert_eq!(UNOBSERVED_BUDGET_MS, COMMAND_SAMPLE_MAX_MS);
 }
 
 #[test]
@@ -193,4 +193,124 @@ fn s294_inactive_expired_and_future_receipts_cannot_verify() {
     future.observe_receipt(&receipt, now);
     assert!(future.steps.contains(&"future_dated_report"));
     assert!(!future.verified);
+}
+
+#[test]
+fn s296_invalid_service_evidence_fails_closed() {
+    let invalid = [
+        ("grid_nan", f64::NAN, 0.0, 7_700.0),
+        ("grid_pos_inf", f64::INFINITY, 0.0, 7_700.0),
+        ("grid_neg_inf", f64::NEG_INFINITY, 0.0, 7_700.0),
+        ("grid_negative", -1.0, 0.0, 7_700.0),
+        ("limit_zero", 100.0, 0.0, 0.0),
+        ("limit_implausible", 100.0, 0.0, 100_000_000.0),
+    ];
+    for (name, grid_w, battery_w, limit_w) in invalid {
+        let ladder = SafetyLadder::new();
+        let mut input = SafetyInput::new("P", 0);
+        input.cell_force_charge = true;
+        input.cell_min_v = 2.99;
+        input.grid_w = Some(grid_w);
+        input.battery_w = Some(battery_w);
+        input.physical_service_limit_w = limit_w;
+        ladder.observe(input);
+        let decision = ladder.decide(&economic("P", -800.0, 0), 0);
+        assert_eq!(decision.reason, "emergency_charge_impossible", "{name}");
+        assert!(
+            decision
+                .binding_limits
+                .contains(&"service_headroom_unavailable"),
+            "{name}: {:?}",
+            decision.binding_limits
+        );
+    }
+
+    let ladder = SafetyLadder::new();
+    let mut zero = SafetyInput::new("P", 0);
+    zero.cell_force_charge = true;
+    zero.cell_min_v = 2.99;
+    zero.grid_w = Some(0.0);
+    ladder.observe(zero);
+    let allowed = ladder.decide(&economic("P", -800.0, 0), 0);
+    assert!(matches!(
+        allowed.action,
+        Some(SafetyAction::EmergencyCharge { .. })
+    ));
+}
+
+#[test]
+fn s297_sparse_sample_schedules_cannot_reauthorise_a_charge() {
+    let ladder = SafetyLadder::new();
+    let mut input = SafetyInput::new("P", 0);
+    for at_ms in [0, 20_000, 40_000, 60_000] {
+        input.last_sample_at_ms = at_ms - 39_000;
+        input.grid_sample_at_ms = Some(at_ms);
+        ladder.observe(input.clone());
+        let decision = ladder.decide(&economic("P", 1000.0, at_ms), at_ms);
+        if at_ms == 0 {
+            assert_eq!(decision.rule, Rule::Ordinary);
+        } else {
+            assert_eq!(
+                decision.reason, "observation_budget_exhausted",
+                "at {at_ms}"
+            );
+        }
+    }
+
+    let alternate = SafetyLadder::new();
+    let mut input = SafetyInput::new("P", 0);
+    input.last_sample_at_ms = 0;
+    alternate.observe(input.clone());
+    assert_eq!(
+        alternate.decide(&economic("P", 1000.0, 0), 0).rule,
+        Rule::Ordinary
+    );
+    for (at_ms, sample_at_ms) in [(20_000, 0), (40_000, 20_000), (60_000, 40_000)] {
+        input.last_sample_at_ms = sample_at_ms;
+        input.grid_sample_at_ms = Some(at_ms);
+        alternate.observe(input.clone());
+        let decision = alternate.decide(&economic("P", 1000.0, at_ms), at_ms);
+        assert_eq!(
+            decision.reason, "observation_budget_exhausted",
+            "late fresh sample at {at_ms}"
+        );
+    }
+}
+
+#[test]
+fn s298_terminal_proof_is_not_escaped_by_a_changed_target() {
+    let ladder = SafetyLadder::new();
+    let mut input = SafetyInput::new("P", 0);
+    input.cell_force_charge = true;
+    input.cell_min_v = 2.99;
+    ladder.observe(input.clone());
+    ladder.decide(&economic("P", -800.0, 0), 0);
+    let first_seq = ladder.hold_proof("P").map_or(0, |proof| proof.safety_seq);
+    ladder.fail_hold("P", 0, "ack_timeout");
+    let retry = ladder
+        .hold_proof("P")
+        .and_then(|proof| proof.escalation.retry_at_ms)
+        .unwrap_or(0);
+    ladder.fail_hold("P", retry, "ramp_end_unverified");
+    let retry = ladder
+        .hold_proof("P")
+        .and_then(|proof| proof.escalation.retry_at_ms)
+        .unwrap_or(0);
+    ladder.fail_hold("P", retry, "receipt_missing");
+
+    input.cell_force_charge = false;
+    input.cell_min_v = 3.3;
+    input.cell_latch = true;
+    ladder.observe(input);
+    let refused = ladder.decide(&economic("P", -800.0, retry + 1), retry + 1);
+    assert_eq!(refused.reason, "terminal_target_change_refused");
+    assert_eq!(refused.action, Some(SafetyAction::NeutralHold));
+    assert!(refused.binding_limits.contains(&"terminal_hold_retained"));
+    let proof = ladder.hold_proof("P").unwrap_or_else(direct_proof);
+    assert_eq!(proof.safety_seq, first_seq);
+    assert_eq!(proof.target_w, 800.0);
+    assert!(proof.blocks_ordinary());
+
+    ladder.recover_hold("P", retry + 2);
+    assert!(ladder.hold_proof("P").is_none());
 }
