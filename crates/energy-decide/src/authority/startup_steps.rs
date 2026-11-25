@@ -52,6 +52,16 @@ fn try_bootstrap(
     else {
         return BootstrapAttempt::NotAllowed(source);
     };
+    // Fail closed unless `begin` durably consumed the marker before returning.
+    if !anchors
+        .load()
+        .ok()
+        .flatten()
+        .and_then(|stored| stored.bootstrap_issue)
+        .is_some_and(|issue| issue.consumed)
+    {
+        return BootstrapAttempt::Failed(source);
+    }
     let token = tx.token();
     let event = tx.event();
     if tx.write_token(token, 1).is_err() || tx.write_event(event).is_err() {
@@ -60,13 +70,6 @@ fn try_bootstrap(
     match tx.commit() {
         Ok(committed) => {
             let warning = committed.warning().to_owned();
-            if let Ok(Some(mut issued)) = anchors.load()
-                && let Some(mut marker) = issued.bootstrap_issue.take()
-            {
-                marker.consume();
-                issued.bootstrap_issue = Some(marker);
-                let _ = anchors.atomic_write(&issued);
-            }
             BootstrapAttempt::Booted {
                 ledger: committed.into_ledger(),
                 warning,

@@ -6,11 +6,11 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::authority::{
     AnchorStore, AuthorityAnchor, AuthorityLedger, BootstrapAuthorityTx, BootstrapIssue,
-    BootstrapTxError, FileAnchorStore, IssuedBootstrapCapability,
+    BootstrapTxError, FileAnchorStore, IssuedBootstrapCapability, StorageError,
 };
 
 static DIR_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -107,6 +107,8 @@ fn s329_second_issuance_from_identical_pre_bootstrap_snapshot_refused() {
     );
     assert_eq!(anchors.load().expect("anchor load"), Some(consumed));
     assert_eq!(ledger_shape(&ledger), before_ledger);
+    // The first transaction is still held and was never committed.
+    assert!(first.is_ok(), "first transaction remains uncommitted");
 }
 
 #[test]
@@ -143,4 +145,48 @@ fn s331_foreign_transaction_capability_refused() {
         BootstrapTxError::CapabilityDenied
     );
     assert_unchanged(&anchors, &ledger, &before_anchor, before_ledger);
+}
+
+/// Refuses the first atomic write that would persist an unconsumed marker, i.e. the
+/// consumption write performed by `begin`.
+struct FailMarkerConsumption {
+    inner: FileAnchorStore,
+    failed: AtomicBool,
+}
+
+impl AnchorStore for FailMarkerConsumption {
+    fn load(&self) -> Result<Option<AuthorityAnchor>, StorageError> {
+        self.inner.load()
+    }
+
+    fn atomic_write(&self, anchor: &AuthorityAnchor) -> Result<(), StorageError> {
+        // The store is installed after issuance setup, so its first write is the one `begin`
+        // performs to persist consumption.
+        if !self.failed.swap(true, Ordering::SeqCst) {
+            return Err(StorageError::PromotionFailed);
+        }
+        self.inner.atomic_write(anchor)
+    }
+}
+
+#[test]
+fn s338_bootstrap_issuance_fails_closed_when_marker_persistence_fails() {
+    let dir = SealDir::new("failclose");
+    let base = FileAnchorStore::in_dir(&dir.0);
+    let (ledger, capability) = issued(&base, 1, 2, 7);
+    let before_anchor = base.load().expect("anchor load").expect("anchor");
+    let before_ledger = ledger_shape(&ledger);
+    let anchors = FailMarkerConsumption {
+        inner: base,
+        failed: AtomicBool::new(false),
+    };
+
+    let attempt =
+        BootstrapAuthorityTx::begin(ledger.clone(), 1_000, "authority", &anchors, &capability);
+    assert_eq!(
+        attempt.expect_err("issuance must fail closed"),
+        BootstrapTxError::CapabilityDenied
+    );
+    assert_eq!(anchors.load().expect("anchor load"), Some(before_anchor));
+    assert_eq!(ledger_shape(&ledger), before_ledger);
 }

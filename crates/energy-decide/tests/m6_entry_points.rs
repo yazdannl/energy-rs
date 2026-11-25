@@ -1,6 +1,6 @@
-//! Paired behavioural evidence at the actual crate entry points (S333-S337).
-//! Each path is refused while latched and proceeds in auto; no enum-tagged gate call substitutes
-//! for the entry point under test.
+//! Authorization-level probes only (S333-S337), not real-path enforcement.
+//! The crate is unwired: no engine entry point, hardware neutralisation, settings mutation or
+//! websocket forwarding is invoked. Coverage of those paths is DEFERRED in M6-AMENDMENT.md.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 mod m4_support;
 mod m6_support;
