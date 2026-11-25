@@ -1,9 +1,7 @@
 //! M5 import-latch convergence, proof-only recovery and audited manual release regressions.
 
 use energy_decide::dispatch::{SafetyAction, SlotRequest};
-use energy_decide::safety::{
-    IMPORT_CONVERGENCE_MARGIN_W, ImportReleaseRecord, Rule, SafetyInput, SafetyLadder,
-};
+use energy_decide::safety::{IMPORT_CONVERGENCE_MARGIN_W, Rule, SafetyInput, SafetyLadder};
 
 fn economic(pack: &str, requested_w: f64, at_ms: i64) -> SlotRequest {
     SlotRequest::economic(pack, requested_w, at_ms, "plan")
@@ -115,15 +113,10 @@ fn s306_manual_import_release_is_guarded_and_audited() {
     let record = ladder
         .release_import("P", "operator-7", "load isolated and verified", 2)
         .unwrap_or_default();
-    assert_eq!(
-        record,
-        ImportReleaseRecord {
-            pack_id: "P".to_owned(),
-            actor: "operator-7".to_owned(),
-            reason: "load isolated and verified".to_owned(),
-            at_ms: 2,
-        }
-    );
+    assert_eq!(record.pack_id, "P");
+    assert_eq!(record.actor, "operator-7");
+    assert_eq!(record.reason, "load isolated and verified");
+    assert_eq!(record.at_ms, 2);
     assert!(ladder.import_release_history().contains(&record));
     assert!(!ladder.import_protection_active("P"));
     assert!(
@@ -131,4 +124,50 @@ fn s306_manual_import_release_is_guarded_and_audited() {
             .last_decision("P")
             .is_some_and(|decision| decision.steps.contains(&"import_guard_manually_released"))
     );
+}
+
+#[test]
+fn s308_settled_remedy_releases_the_latch_even_when_the_next_plan_still_breaches() {
+    let (ladder, mut input) = armed_ladder();
+    ladder.decide(&economic("P", 0.0, 0), 0);
+    ladder.recover_hold("P", 1);
+
+    // Protective discharge is active: measured import is inside the release band, but the next
+    // economic request would still project above the ceiling.
+    input.grid_w = Some(7_440.0);
+    input.battery_w = Some(0.0);
+    input.physical_service_limit_w = 9_000.0;
+    input.grid_sample_at_ms = Some(20_000);
+    input.last_sample_at_ms = 19_000;
+    input.settled_grid_w = Some(7_440.0);
+    input.settled_at_ms = Some(10_000);
+    ladder.observe(input);
+
+    let decision = ladder.decide(&economic("P", 800.0, 20_000), 20_000);
+    assert!(!ladder.import_protection_active("P"));
+    assert_eq!(decision.rule, Rule::ImportCeiling);
+    assert_eq!(decision.action, Some(SafetyAction::NeutralHold));
+    assert!(!decision.reasons.contains(&"settled_grid_evidence_missing"));
+}
+
+#[test]
+fn s309_manual_release_record_captures_engine_belief() {
+    let (ladder, mut input) = armed_ladder();
+    ladder.decide(&economic("P", 0.0, 0), 0);
+    input.grid_w = Some(7_400.0);
+    ladder.observe(input);
+    let record = ladder
+        .release_import("P", "operator-7", "load isolated and verified", 2)
+        .unwrap_or_default();
+
+    assert_eq!(record.projected_import_w, Some(7_400.0));
+    assert_eq!(record.current_import_w, Some(7_400.0));
+    assert_eq!(record.proposed_plan_w, 0.0);
+    assert_eq!(record.release_threshold_w, 7_490.0);
+    assert_eq!(record.import_ceiling_w, 7_500.0);
+    assert_eq!(record.import_deadband_w, 10.0);
+    assert_eq!(record.settled_grid_w, None);
+    assert!(!record.proposed_plan_breach);
+    assert!(!record.current_import_breach);
+    assert!(!record.breach_remedied);
 }

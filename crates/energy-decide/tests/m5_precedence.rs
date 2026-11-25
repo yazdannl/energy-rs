@@ -155,7 +155,7 @@ fn s271_import_remedy_respects_discharge_limit_and_floor() {
     let ladder = SafetyLadder::new();
     ladder.observe(input.clone());
     let blocked = ladder.decide(&economic("P", -800.0, 0), 0);
-    assert_eq!(blocked.reason, "import_remedy_blocked");
+    assert_eq!(blocked.reason, "import_remedy_unavailable");
     assert_eq!(blocked.action, Some(SafetyAction::NeutralHold));
     assert!(blocked.binding_limits.contains(&"max_discharge_w"));
 
@@ -165,7 +165,7 @@ fn s271_import_remedy_respects_discharge_limit_and_floor() {
     let floored = ladder.decide(&economic("P", -800.0, 20_000), 20_000);
     assert_eq!(floored.rule, Rule::SocFloor);
     assert_eq!(floored.reasons[0], "soc_floor");
-    assert_eq!(floored.reasons[1], "grid_import_ceiling");
+    assert_eq!(floored.reasons[1], "import_remedy_unavailable");
     assert_eq!(floored.action, Some(SafetyAction::NeutralHold));
 }
 

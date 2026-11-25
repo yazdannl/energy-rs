@@ -3,7 +3,11 @@
 use crate::safety::RecoveryStatus;
 use crate::safety::import_release::ImportReleaseRecord;
 use crate::safety::ladder::SafetyLadder;
-use crate::safety::rules_import::{import_breach_active, import_guard_active};
+use crate::safety::rules::projected_import;
+use crate::safety::rules_import::{
+    breach_remedied, current_import_breach, import_guard_active, live_import_breach,
+    proposed_plan_breach, release_threshold_w,
+};
 use crate::safety::state::note;
 
 impl SafetyLadder {
@@ -52,25 +56,36 @@ impl SafetyLadder {
         if actor.trim().is_empty() || reason.trim().is_empty() {
             return Err("manual_release_audit_required");
         }
-        if import_breach_active(&input) {
+        if live_import_breach(&input) {
             return Err("import_breach_active");
         }
-        let latch = state
-            .imports
-            .get_mut(pack_id)
-            .ok_or("import_guard_not_armed")?;
-        if !latch.armed {
+        if !state.imports.get(pack_id).is_some_and(|latch| latch.armed) {
             return Err("import_guard_not_armed");
         }
-        latch.armed = false;
-        latch.ask_w = 0.0;
-        latch.unavailable_reason = None;
         let record = ImportReleaseRecord {
             pack_id: pack_id.to_owned(),
             actor: actor.to_owned(),
             reason: reason.to_owned(),
             at_ms,
+            snapshot_at_ms: input.at_ms,
+            grid_sample_at_ms: input.grid_sample_at_ms,
+            proposed_plan_w: input.plan_w,
+            projected_import_w: projected_import(&input, input.plan_w),
+            current_import_w: projected_import(&input, 0.0),
+            import_ceiling_w: input.import_ceiling_w,
+            import_deadband_w: input.import_deadband_w,
+            release_threshold_w: release_threshold_w(&input),
+            settled_grid_w: input.settled_grid_w,
+            settled_at_ms: input.settled_at_ms,
+            proposed_plan_breach: proposed_plan_breach(&input),
+            current_import_breach: current_import_breach(&input),
+            breach_remedied: breach_remedied(&input, &state, at_ms),
         };
+        if let Some(latch) = state.imports.get_mut(pack_id) {
+            latch.armed = false;
+            latch.ask_w = 0.0;
+            latch.unavailable_reason = None;
+        }
         state.import_releases.push(record.clone());
         note(&mut state, pack_id, "import_guard_manually_released");
         Ok(record)
