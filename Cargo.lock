@@ -671,6 +671,8 @@ version = "0.15.12"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

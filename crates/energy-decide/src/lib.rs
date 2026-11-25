@@ -1,10 +1,12 @@
-//! Pure decision-core modules M1 (horizon), M2 (optimizer), M3 (plan assembly) and M4 (dispatch).
+//! Pure decision-core modules M1 (horizon), M2 (optimizer), M3 (plan assembly), M4 (dispatch),
+//! M5 (safety) and M6 (write authority).
 //!
 //! This crate never talks to hardware or writes a setpoint. It turns price/source input into a
 //! typed horizon, minimizes the stated economic objective over hard physical bounds, and turns a
 //! finished timeline into a typed plan whose state says what dispatch may do. Every refusal
 //! stays a typed value.
 
+pub mod authority;
 pub mod dispatch;
 pub mod horizon;
 pub mod optimizer;
