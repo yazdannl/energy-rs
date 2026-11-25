@@ -61,22 +61,22 @@ pub(crate) fn observe_budget(state: &mut LadderState, input: &SafetyInput, now_m
         return budget.remaining_ms;
     }
     let elapsed = now_ms.saturating_sub(budget.last_eval_at_ms);
+    let age = now_ms.saturating_sub(sample);
+    // Unobserved time is the sample's age at this decision, bounded by the accepted window.
+    let unobserved = age.min(COMMAND_SAMPLE_MAX_MS);
     let mut remaining = budget
         .remaining_ms
-        .saturating_sub(u32::try_from(elapsed).unwrap_or(u32::MAX));
+        .saturating_sub(u32::try_from(unobserved).unwrap_or(u32::MAX));
     let new_fresh_sample = fresh_enough(Some(sample), now_ms, COMMAND_SAMPLE_MAX_MS)
         && budget
             .last_sample_seen_at_ms
             .is_none_or(|seen| sample > seen)
         && sample > budget.last_eval_at_ms;
     if new_fresh_sample {
-        // A fresh sample only covers time up to its own freshness expiry; cap at the elapsed tick.
-        let age = now_ms.saturating_sub(sample);
-        let remaining_freshness = COMMAND_SAMPLE_MAX_MS.saturating_sub(age);
-        let covered = remaining_freshness.min(elapsed);
-        let credit = u32::try_from(covered).unwrap_or(u32::MAX);
+        // Credit only the genuinely observed part of the elapsed interval, not the freshness verdict.
+        let credit = elapsed.saturating_sub(age);
         remaining = remaining
-            .saturating_add(credit)
+            .saturating_add(u32::try_from(credit).unwrap_or(u32::MAX))
             .min(UNOBSERVED_BUDGET_MS as u32);
         budget.last_sample_seen_at_ms = Some(sample);
     }

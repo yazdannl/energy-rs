@@ -243,7 +243,11 @@ fn s297_sparse_sample_schedules_cannot_reauthorise_a_charge() {
     let ladder = SafetyLadder::new();
     let mut input = SafetyInput::new("P", 0);
     for at_ms in [0, 20_000, 40_000, 60_000] {
-        input.last_sample_at_ms = at_ms - 39_000;
+        input.last_sample_at_ms = if at_ms == 0 {
+            at_ms - 1
+        } else {
+            at_ms - 39_000
+        };
         input.grid_sample_at_ms = Some(at_ms);
         ladder.observe(input.clone());
         let decision = ladder.decide(&economic("P", 1000.0, at_ms), at_ms);
@@ -313,4 +317,63 @@ fn s298_terminal_proof_is_not_escaped_by_a_changed_target() {
 
     ladder.recover_hold("P", retry + 2);
     assert!(ladder.hold_proof("P").is_none());
+}
+
+#[test]
+fn s300_one_missed_tick_recovers_under_continuous_fresh_telemetry() {
+    let ladder = SafetyLadder::new();
+    let mut input = SafetyInput::new("P", 0);
+    ladder.observe(input.clone());
+    let initial = ladder.decide(&economic("P", 1000.0, 0), 0);
+    assert_eq!(initial.rule, Rule::Ordinary);
+
+    ladder.observe(input.clone());
+    let missed = ladder.decide(&economic("P", 1000.0, 20_000), 20_000);
+    assert_eq!(missed.reason, "observation_budget_exhausted");
+    assert_eq!(missed.action, Some(SafetyAction::NeutralHold));
+    ladder.recover_hold("P", 20_001);
+
+    for at_ms in [40_000, 60_000, 80_000] {
+        input.last_sample_at_ms = at_ms - 1_000;
+        input.grid_sample_at_ms = Some(at_ms);
+        ladder.observe(input.clone());
+        let restored = ladder.decide(&economic("P", 1000.0, at_ms), at_ms);
+        assert_eq!(restored.rule, Rule::Ordinary, "at {at_ms}");
+        ladder.recover_hold("P", at_ms + 1);
+    }
+}
+
+#[test]
+fn s301_credit_boundary_is_the_observed_interval_not_the_freshness_verdict() {
+    for age_ms in [1_000, 19_000, 21_000, 39_000] {
+        let ladder = SafetyLadder::new();
+        let mut input = SafetyInput::new("P", 0);
+        ladder.observe(input.clone());
+        ladder.decide(&economic("P", 1000.0, 0), 0);
+        input.last_sample_at_ms = 20_000 - age_ms;
+        input.grid_sample_at_ms = Some(20_000);
+        ladder.observe(input.clone());
+        let decision = ladder.decide(&economic("P", 1000.0, 20_000), 20_000);
+        if age_ms == 1_000 {
+            assert_eq!(decision.rule, Rule::Ordinary, "age {age_ms}");
+        } else {
+            assert_eq!(
+                decision.reason, "observation_budget_exhausted",
+                "age {age_ms}"
+            );
+        }
+    }
+
+    let ladder = SafetyLadder::new();
+    let mut input = SafetyInput::new("P", 0);
+    for at_ms in [19_000, 39_000] {
+        input.last_sample_at_ms = at_ms - 1_000;
+        input.grid_sample_at_ms = Some(at_ms);
+        ladder.observe(input.clone());
+        assert_eq!(
+            ladder.decide(&economic("P", 1000.0, at_ms), at_ms).rule,
+            Rule::Ordinary,
+            "sustained fresh sample at {at_ms}"
+        );
+    }
 }

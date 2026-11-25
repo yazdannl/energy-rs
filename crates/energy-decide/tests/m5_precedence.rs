@@ -169,7 +169,7 @@ fn s271_import_remedy_respects_discharge_limit_and_floor() {
 }
 
 #[test]
-fn s272_emergency_charge_checks_pack_limit_without_meter() {
+fn s272_emergency_charge_requires_pack_limit_and_fresh_meter() {
     let mut input = SafetyInput::new("P", 0);
     input.cell_min_v = 2.99;
     input.cell_force_charge = true;
@@ -189,6 +189,16 @@ fn s272_emergency_charge_checks_pack_limit_without_meter() {
     );
 
     input.max_charge_w = 800.0;
+    ladder.observe(input.clone());
+    let no_meter = ladder.decide(&economic("P", -800.0, 0), 0);
+    assert_eq!(no_meter.rule, Rule::CellEmergency);
+    assert_eq!(no_meter.reason, "emergency_charge_impossible");
+    assert!(
+        no_meter
+            .binding_limits
+            .contains(&"service_headroom_unavailable")
+    );
+
     input.grid_w = Some(0.0);
     input.grid_sample_at_ms = Some(20_000);
     input.last_sample_at_ms = 19_999;

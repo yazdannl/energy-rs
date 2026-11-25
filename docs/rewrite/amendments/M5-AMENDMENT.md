@@ -3,12 +3,12 @@
 Ruling: `SCENARIOS.md` rows beat `SPEC.md` prose; the owner's M5 brief and its 2026-11-24 solar
 ruling outrank both where no row exists; anything still undecided is asked as a single point, not
 silently invented. New rows start at S260. Every row below needs reviewer sign-off before merge.
-These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 4 adds S296-S299, revises J2 and retracts the 94 s claim.
+These rows extend, and do not rewrite, the M5 rows already in `SCENARIOS.md`. Reviewer round 5 adds S300/S301, marks finding 62 DISCLOSED, and aligns J1/J2 with authorization-only bounds.
 
 The SPEC M5 acceptance paragraph names S33–S42, S93–S99, S132–S137, S150, S159, S160, S165 and S169.
 S132/S133 belong to M4 flow receipts and S169 to M7 durable sessions; this module claims
 S33–S40, S42, S93–S99, S134–S137, S150, S159, S160, S165, S171–S178, S183, S187 and the new
-S260–S299 below. M4/M6/M7-only rows are not claimed as M5 tests.
+S260–S301 below. M4/M6/M7-only rows are not claimed as M5 tests.
 
 ## Implemented override order (one list, first firing command wins)
 
@@ -54,7 +54,7 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S269 | M5 | contradictory soft guideline and hard floor | soft 0.78575 kWh, floor 1.178625 kWh, ceiling 7.8575 kWh | ladder derives target | effective target is 1.178625 kWh (`max(soft, floor).min(ceiling)`), raw 0.78575 kWh is preserved in the decision; no zeroed grid charge | unit | no | IN SCOPE | Invariant from brief; owns only the resolution, M3 remains owner of plan targets. |
 | S270 | M5 | stale sample stops reserving a pack silently | last sample 301 s old, no other hazard, plan asks charge | ladder evaluates the request | `stale_sample_unreachable` commands a 0 W verified hold; if neutrality cannot be proven, escalation follows S267 | regression | no | IN SCOPE | Owner ruling 2026-11-24: live reservation had no TTL. New documented bound 300 s needs reviewer sign-off. |
 | S271 | M5 | import remedy respects physics but still holds | import breach, `max_discharge_w=0` or SoC at floor, cell clear | ladder evaluates | `import_remedy_blocked` names the binding limit, commands 0 W and records `soc_floor` before `grid_import_ceiling` when both bind | regression | no | IN SCOPE | S37/S135/S150/S160; GAPS 81. |
-| S272 | M5 | emergency charge impossible by pack limit | min cell 2.99 V, force-charge latch, `max_charge_w=0`, meter missing | ladder evaluates | no +800 W command; `emergency_charge_impossible` names `max_charge_w`; with 800 W available the charge proceeds despite missing meter | unit | no | IN SCOPE | S93; cell protection must not wait for grid telemetry. |
+| S272 | M5 | emergency charge requires pack limit AND fresh meter | min cell 2.99 V, force-charge latch, `max_charge_w=0`, meter missing; then 800 W pack limit still with no meter; then fresh valid meter | ladder evaluates | no +800 W command while either limit is missing; `emergency_charge_impossible` names `max_charge_w` and `service_headroom_unavailable`; only fresh valid meter evidence permits the charge | unit | no | IN SCOPE | Review item 67: the old row allowed a missing meter with 800 W available. |
 | S273 | M5 | gate decision and safety execution stay separate | gate preempts with a hold; M4 row reports accepted, rejected or timed out | report joins row and decision | execution comes from M4's `safety_execution`, never from the decision; rejected/timeout is not `Skipped`; order of preemption reasons is unchanged | contract | no | IN SCOPE | S229/S236: a gate reason must not hide a failed safety action. |
 | S274 | M5 | protective discharge is expressible through the M4 port | import breach with settled demand 8600 W and ceiling 7500 W | gate returns its intervention | `SafetyAction::ProtectiveDischarge{target_w:-1100.0}` carries the signed W; existing `NeutralHold`/`EmergencyCharge` behaviour is unchanged | contract | no | IN SCOPE (public M4 enum extended; firmware wiring REQUIRES WIRING) | S09/S35 require a discharge, which the provisional two-variant M4 enum could not express. Loud public-behaviour note in the report. |
 | S275 | M5 | solar advice is outside the precedence list | any hazard combination plus solar telemetry | ladder evaluates and reports | no solar rule appears in `RULE_ORDER`; solar value/reason is reported after all rule reasons and never changes `winner`, `action` or `command_w` | contract | no | IN SCOPE | Owner ruling 2026-11-24 item 5. |
@@ -71,7 +71,7 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S285 | M5 | escalation advances from elapsed time and stays terminal | no receipts arrive; repeated ticks cross 74 s, retries 0/2/6 s and exhaustion | ladder decides on each tick | deadline/retry transitions happen inside the core; after three failures the outcome is `Failed`, the proof is retained, and only explicit recovery clears it | regression | no | IN SCOPE | Review item 40: missing receipts stayed pending forever and a later tick reset the budget. |
 | S286 | M5/M4 | backoff is a deferral, not permission | backoff is the only firing rule | gate and M4 row are evaluated | `DecisionOutcome::Deferred` and `SafetyIntervention::Defer` carry `retry_at_ms`; the M4 row is `Deferred`, never `Proceed` | regression | no | IN SCOPE (M4 port extended; existing variants unchanged) | Review item 41: an actionless candidate became `no_safety_hazard`. |
 | S287 | M5 | stale samples stop every nonzero action | 41 s old cell/meter/pack samples under emergency, import and ordinary charge rules | ladder evaluates each case | no nonzero command is granted; each path falls back to a verified hold and bounded escalation; 300 s remains only the economic-reachability TTL | regression | yes | IN SCOPE | Review item 42 and J2: a stale hold sat below the nonzero actions. |
-| S288 | M5 | emergency charge is minimum, bounded and time-limited | cell deficit, 1200 W pack cap, four-pack fleet, meter over/under fuse | ladder decides and proof is opened | target is the voltage-deficit estimate capped by pack and 3200 W aggregate share; economic margin may be breached with reason, physical fuse never; proof duration 180 s | contract | no | IN SCOPE | Reviewer ruling J1; replaces `max(800 W, requested)`. |
+| S288 | M5 | emergency charge is minimum, bounded and attempt-limited | cell deficit, 1200 W pack cap, four-pack fleet, meter over/under fuse | ladder decides and proof is opened | target is the voltage-deficit estimate capped by pack and 3200 W aggregate share; economic margin may be breached with reason, physical fuse never; proof ATTEMPT duration 180 s bounds the verification attempt only, never physical charging | contract | no | IN SCOPE | Reviewer ruling J1; replaces `max(800 W, requested)`. |
 | S289 | M5/M4 | incident regressions assert the execution boundary | each of S260/S261/S262/S263/S264 plus its mutation | dispatcher runs and row/device power are joined to the decision | fixed path asserts device W and report steps; mutation case proves the old defect would be caught at that boundary | regression | yes | IN SCOPE (S276/S277/S279 remain wiring-only) | Review item 43: decision-only assertions could not detect downstream clamps or missing deferral. |
 
 | S290 | M5 | physical service fuse is unconditional | fresh meter projection above service limit; then missing, stale or future-dated meter sample; then operator limit raised | ladder evaluates a charge | protective reduction under the fuse; any unavailable headroom denies the charge with `service_headroom_unavailable`; operator-configured limit is honoured | regression | yes | IN SCOPE (J1 revised) | Review item 47: emergency must fail closed when the fuse argument is absent. |
@@ -82,38 +82,47 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
 | S295 | M5 | future timestamps are rejected before evidence | settled sample dated beyond skew; flow report dated beyond skew | latch and proof ingest them | no release and no verification; skew bound is `FUTURE_SKEW_MS = 5_000` | regression | no | IN SCOPE | Review item 52: future-dated evidence was treated as fresh. |
 
 | S296 | M5 | invalid service evidence fails closed | grid NaN, ±inf, negative, service limit zero or implausible; zero grid reading as the valid boundary | emergency rule evaluates | projection is denied with `service_headroom_unavailable`; `MAX_PLAUSIBLE_POWER_W = 100000 W`; zero import remains a valid reading | regression | no | IN SCOPE | Review item 60: NaN comparisons bypassed the fuse. |
-| S297 | M5 | sparse samples drain the bucket | every tick a nearly-stale sample; alternating fresh/stale with each fresh sample almost an interval late | ladder evaluates each tick | each tick debits elapsed time, credits only genuinely covered freshness, and sustained sparse schedules end in `observation_budget_exhausted` | regression | no | IN SCOPE | Review item 61: interval accounting preserved the bucket. |
+| S297 | M5 | sparse samples drain the bucket | every tick a nearly-stale sample; alternating fresh/stale with each fresh sample almost an interval late | ladder evaluates each tick | each tick debits sample age, credits `max(0, elapsed - age)`, and sustained sparse schedules end in `observation_budget_exhausted` | regression | no | IN SCOPE | Review item 61: interval accounting preserved the bucket. |
 | S298 | M5 | terminal proof cannot be escaped by a target change | terminal emergency proof, then a different target is selected | ladder decides again | changed target is recorded as `terminal_target_change_refused`, 0 W is commanded, seq/target stay terminal, and only explicit recovery or reconcile clears it | regression | no | IN SCOPE | Review item 63: a replacement proof restarted escalation. |
-| S299 | M5/M4 | independent expiry for an already-commanded charge | observation budget empties while a nonzero command is standing | expiry mechanism wired outside the decision core | device-side command expiry or transport shutdown, or a verified hold that actually lands, stops physical charging; M5 alone only withdraws authorization | contract | no | REQUIRES WIRING | Review item 62: physical cessation is UNBOUNDED in this crate; the 94 s claim is retracted. |
+| S299 | M5/M4 | disclosed physical limitation and operator-alert path | observation budget empties while a nonzero command is standing | bounded hold escalation and operator alert wiring | on this hardware the pack retains the last setpoint and exposes no device command expiry; M5 cannot bound physical charging once a command has left. Existing mitigation: verified-hold attempts with bounded escalation to an OPERATOR ALERT; the alert path is the wiring item | disclosure | no | DISCLOSED (alert path REQUIRES WIRING) | Review items 62/66: no independent expiry exists; a hold that may not land is not an independent safeguard. |
+
+| S300 | M5 | one missed tick recovers under fresh telemetry | full bucket, one tick with no new sample, then fresh samples every 20 s | ladder evaluates each tick | missed tick leaves only one cadence of credit and denies; genuinely fresh samples refill to capacity and restore authorization within one further tick | regression | no | IN SCOPE | Review item 64: the old debit model could never recover. |
+| S301 | M5 | credit is observed coverage, not freshness verdict | sample ages 1, 19, 21 and 39 s at a 20 s decision cadence | ladder observes and decides | `credit = max(0, elapsed - age)`; only the 1 s-old sample sustains authorization, 19/21/39 s samples drain and withdraw; boundary is `age < elapsed` | regression | no | IN SCOPE | Review item 65: a consistently 19 s-old sample previously preserved the bucket. |
 
 ## Interpretations that need reviewer attention
 
 * The owner was asked about solar headroom before implementation and ruled "advisory headroom only":
   no precedence slot, no command, no feasibility effect, zero-on-missing-telemetry means grant nothing.
   This is implemented literally in `safety::solar` and recorded as S262/S263/S275.
-* J2 as corrected by reviewer round 4 (2026-11-24): the previous `94 s` derivation is RETRACTED.
+* J2 as corrected by reviewer rounds 4-5 (2026-11-24): the previous `94 s` derivation is RETRACTED.
   M5 bounds AUTHORISATION to charge, not the physical duration of an already-commanded charge.
   `STALE_SAMPLE_MS = 300_000` remains only the economic reachability/unreachable escalation bound
   (S270). Nonzero permission uses a cumulative leaky bucket: capacity `COMMAND_SAMPLE_MAX_MS =
-  40 s`, debit the full elapsed tick first, then credit only the remaining freshness of a genuinely
-  new sample (`≤ 40 s`, capped at the elapsed interval). Authorization requires
+  40 s`; every tick debits the sample's age at decision (bounded by the accepted window) and credits
+  `max(0, elapsed - age)` only for a genuinely new in-window sample, capped at capacity. Credit is
+  OBSERVED COVERAGE, not the freshness verdict: on a 20 s cadence, a 1 s-old sample credits 19 s and
+  refills, while a 19 s-old sample credits 1 s and debits 19 s, so it drains (S300/S301). The
+  lateness boundary is `age < elapsed`; at or beyond it, credit is zero. Authorization requires
   `AUTHORIZATION_MIN_MS = DECISION_CADENCE_MS + FUTURE_SKEW_MS = 25 s`, from the 20 s decision
-  cadence plus the 5 s accepted skew. Sparse or late samples therefore drain the bucket and the
-  nonzero command is withdrawn (S291/S297). The 74 s `SAFETY_ATTEMPT_DEADLINE_MS` bounds one
-  verification ATTEMPT only; retries and ownership retention leave physical charging open.
-  Physical cessation bound: **UNBOUNDED**. The mitigation requires an independent mechanism —
-  a device-side command expiry, a transport shutdown, or a verified hold that actually lands. This
-  crate has no device-side expiry and no observation-budget-driven transport shutdown; it only
-  decides and records a verified hold, whose landing is not guaranteed here. S299 tracks that
-  wiring. No derived-looking number is presented as a physical guarantee.
+  cadence plus the 5 s accepted skew. The 74 s `SAFETY_ATTEMPT_DEADLINE_MS` bounds one verification
+  ATTEMPT only; it is not a physical bound. Finding 62 is **DISCLOSED**: on this hardware the pack
+  retains the last setpoint and exposes no device command expiry or watchdog, so M5 cannot bound
+  physical charging once a command has left. The zenSDK command API exposes no setpoint TTL or
+  watchdog; the server's `ttlS` override is an API-level override lease, not a device command expiry.
+  The mitigation that exists here is verified-hold attempts with bounded escalation to an
+  OPERATOR ALERT; wiring that alert path is S299 (`REQUIRES WIRING`). A hold whose landing is not
+  guaranteed is not claimed as an independent safeguard. No derived-looking number is presented as
+  a physical guarantee.
 * J1 revised (reviewer ruling, 2026-11-24): `physical_service_limit_w` defaults to 7700 W and is
   operator-configurable. It is an unconditional hard bound on EVERY nonzero path. Emergency charge
   is permitted only when projected import including the emergency charge is at or below it, using
   fresh meter evidence (`grid_sample_at_ms` within `COMMAND_SAMPLE_MAX_MS`, no future skew beyond
   5 s). Missing, stale or future-dated service evidence DENIES the emergency with
   `service_headroom_unavailable` and escalates. The 3200 W aggregate share and 180 s attempt
-  duration bound only the emergency charge's own magnitude and runtime; they are not fuse safety.
-  The fuse argument is the service rating plus measured load, and only that (S290).
+  duration bound only the emergency AUTHORIZATION magnitude and VERIFICATION ATTEMPT duration; they
+  are not physical runtime guarantees and not fuse safety. Emergency charge requires fresh valid
+  meter evidence, full stop. The fuse argument is the service rating plus measured load, and only
+  that (S290).
 * SPEC's ordered list names six steps but omits the floor, ceiling, backoff, uncertainty and solar
   cases. SCENARIOS S37/S150/S225 decide floor and safety-lane exemption; the remaining positions
   follow M4's own `ordinary_deferral` order (transport, uncertainty, backoff, pause) and are listed
@@ -128,7 +137,7 @@ make it constrain later, so `RULE_ORDER` deliberately excludes it.
   device-clock coherent status, reusing M4's `FlowStatus`/echo predicates. A contradictory report
   invalidates the neutral run and resumed flow forces re-proof. The 30 s report freshness bound and
   74 s total attempt deadline come from SPEC/0.15.12; the two-report requirement comes from
-  S83/S99/S178. Emergency charge uses a separate 180 s attempt duration (J1).
+  S83/S99/S178. Emergency charge uses a separate 180 s verification ATTEMPT duration, not a physical runtime bound (J1).
 * Clearance, latch persistence, dashboard text and all M6 authority states stay in M6. M5 only
   states what protection would do; M4 obeys and records, M6 authorises (S276).
 * The no-write guarantee in `dry_run_latched` is not reimplemented in M5; the gate is never asked
