@@ -15,6 +15,7 @@ use super::Dispatcher;
 struct Inputs<'a> {
     overridden: Option<&'a ManualOverride>,
     requested_w: f64,
+    /// The device ceiling verdict, carried only when this tick asks the pack to charge.
     skip: Option<&'a ChargeSkip>,
     backoff_cause: Option<String>,
     backoff: bool,
@@ -34,6 +35,25 @@ pub(super) fn plan(
     assemble(frame, reading, inputs)
 }
 
+/// The charge ceiling applies only to a pack being offered charge.
+///
+/// Allocation already ignores charge skips when the tick asks for discharge, so a negative
+/// allocation is authority to run the normal ladder. A charge-skipped pack has a zero allocation,
+/// so the post-guard tick target decides its direction: a positive target keeps the existing
+/// `ChargeAtCeiling` verdict, while an import-guarded reversal must still reach the device.
+fn charge_skip<'a>(frame: &'a TickFrame<'_>, pack_id: &str) -> Option<&'a ChargeSkip> {
+    let allocated = frame.allocation.watts_for(pack_id).unwrap_or(0.0);
+    let direction_w = if allocated.abs() > EPS_W {
+        allocated
+    } else {
+        frame.target_w
+    };
+    if direction_w <= 0.0 {
+        return None;
+    }
+    frame.skips.iter().find(|skip| skip.pack_id == pack_id)
+}
+
 fn inputs<'a>(
     dispatcher: &'a Dispatcher,
     frame: &'a TickFrame<'a>,
@@ -49,9 +69,10 @@ fn inputs<'a>(
     let before = frame.baseline.watts_for(pack_id).unwrap_or(0.0);
     let allocated = frame.allocation.watts_for(pack_id).unwrap_or(0.0);
     let guarded = frame.import_ceiling && allocated < before - EPS_W;
-    let skip = frame.skips.iter().find(|skip| skip.pack_id == pack_id);
-    // Device charge authority outranks even an override: a closed pack gets exactly 0 W, and its
-    // share was already offered to the packs that can still charge.
+    let skip = charge_skip(frame, pack_id);
+    // Device charge authority outranks even an override, but only on the charge side: a closed
+    // pack gets exactly 0 W in a charge tick, and its share was offered to the packs that can
+    // still charge. A discharge allocation runs the ladder like any other pack.
     let requested_w = if skip.is_some() {
         0.0
     } else {
@@ -126,6 +147,8 @@ fn note(input: &Inputs<'_>) -> Option<String> {
 }
 
 fn command_w(input: &Inputs<'_>, may_write: bool) -> f64 {
+    // Only a charge-side ceiling verdict cancels the command; a ceiling-latched pack may still
+    // serve an import-guarded discharge or a negative plan.
     if input.skip.is_some() {
         0.0
     } else if may_write {
