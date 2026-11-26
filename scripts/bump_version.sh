@@ -27,8 +27,8 @@ INTERNAL_CRATES="$(awk '
   /^\[/ { in_workspace = 0 }
   in_workspace && /"crates\// {
     name = $0
-    sub(/^[^\"]*\"/, "", name)
-    sub(/\"[,]?.*$/, "", name)
+    sub(/^[^"]*"/, "", name)
+    sub(/",?.*$/, "", name)
     sub(/^crates\//, "", name)
     printf "%s ", name
   }
