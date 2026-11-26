@@ -271,6 +271,13 @@ async fn charge_skip_rows_are_honest_in_both_directions() {
         row.note
     );
     assert!(!row.capability_skipped);
+    assert!(
+        sink.commands().iter().any(|(id, sent)| {
+            id == "SN-FULL" && matches!(sent, Sent::Write(watts) if *watts < 0.0)
+        }),
+        "an honest discharge row must have a negative write: {:?}",
+        sink.commands()
+    );
 }
 
 /// A stale pack behaves exactly as 0.15.12: no skip, no reservation, no target subtraction.

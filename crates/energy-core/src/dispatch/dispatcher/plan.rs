@@ -35,16 +35,20 @@ pub(super) fn plan(
     assemble(frame, reading, inputs)
 }
 
-/// The charge ceiling applies only to a pack being offered charge.
+/// The charge ceiling applies only to a request that actually charges the pack.
 ///
-/// Allocation already ignores charge skips when the tick asks for discharge, so a negative
-/// allocation is authority to run the normal ladder. A charge-skipped pack has a zero allocation,
-/// so the post-guard tick target decides its direction: a positive target keeps the existing
-/// `ChargeAtCeiling` verdict, while an import-guarded reversal must still reach the device.
-fn charge_skip<'a>(frame: &'a TickFrame<'_>, pack_id: &str) -> Option<&'a ChargeSkip> {
-    let allocated = frame.allocation.watts_for(pack_id).unwrap_or(0.0);
-    let direction_w = if allocated.abs() > EPS_W {
-        allocated
+/// The request is resolved from the override, the allocation or a guarded hold before this verdict
+/// is taken: an override can ask a charge-skipped pack to charge even when its allocation is zero
+/// or the tick target is non-positive. A zero request falls back to the post-guard tick target, so
+/// a stale or charge-skipped pack with no allocation still keeps the `ChargeAtCeiling` verdict on a
+/// positive tick. An import-guarded reversal or a discharge override carries no charge skip.
+fn charge_skip<'a>(
+    frame: &'a TickFrame<'_>,
+    pack_id: &str,
+    requested_w: f64,
+) -> Option<&'a ChargeSkip> {
+    let direction_w = if requested_w.abs() > EPS_W {
+        requested_w
     } else {
         frame.target_w
     };
@@ -69,15 +73,13 @@ fn inputs<'a>(
     let before = frame.baseline.watts_for(pack_id).unwrap_or(0.0);
     let allocated = frame.allocation.watts_for(pack_id).unwrap_or(0.0);
     let guarded = frame.import_ceiling && allocated < before - EPS_W;
-    let skip = charge_skip(frame, pack_id);
-    // Device charge authority outranks even an override, but only on the charge side: a closed
-    // pack gets exactly 0 W in a charge tick, and its share was offered to the packs that can
-    // still charge. A discharge allocation runs the ladder like any other pack.
-    let requested_w = if skip.is_some() {
-        0.0
-    } else {
-        requested_watts(&context, overridden, allocated, guarded)
-    };
+    let mut requested_w = requested_watts(&context, overridden, allocated, guarded);
+    // Device charge authority outranks even an override, but only on the charge side: resolve the
+    // effective request first, then cancel a charging one. A discharge request runs the ladder.
+    let skip = charge_skip(frame, pack_id, requested_w);
+    if skip.is_some() {
+        requested_w = 0.0;
+    }
     let maintenance_full = overridden.is_some_and(|entry| {
         entry.source == OverrideSource::Maintenance
             && matches!(entry.action, OverrideAction::Charge { .. })
