@@ -20,7 +20,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CARGO_TOML="$ROOT/Cargo.toml"
 CARGO_LOCK="$ROOT/Cargo.lock"
 MANIFEST="$ROOT/energy_rs/config.yaml"
-INTERNAL_CRATES="energy-battery energy-core energy-forecast energy-ha energy-ledger energy-opt energy-price energy-server"
+# Derive the list from the workspace itself: a new crate must never be omitted (v0.15.13 shipped
+# with energy-decide at the old version in Cargo.lock and --locked builds failed in CI).
+INTERNAL_CRATES="$(awk '
+  /^\[workspace\]/ { in_workspace = 1; next }
+  /^\[/ { in_workspace = 0 }
+  in_workspace && /"crates\// {
+    name = $0
+    sub(/^[^\"]*\"/, "", name)
+    sub(/\"[,]?.*$/, "", name)
+    sub(/^crates\//, "", name)
+    printf "%s ", name
+  }
+' "$CARGO_TOML")"
 
 usage() {
   sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
