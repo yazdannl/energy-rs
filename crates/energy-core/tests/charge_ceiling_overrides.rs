@@ -29,6 +29,17 @@ fn full(id: &str) -> PackReading {
     reading
 }
 
+/// A full-charge protection report that has fallen past 100 % but not past the latch release.
+fn nearly_full(id: &str) -> PackReading {
+    let mut reading = pack(id, 99.0);
+    reading.spec.max_soc_pct = 100.0;
+    reading.device_soc_pct = Some(99.0);
+    reading.soc_limit = SocLimit::Upper;
+    reading.fault_level = Some(2);
+    reading.energy_kwh = Some(reading.spec.capacity_kwh * 0.99);
+    reading
+}
+
 fn able(id: &str, soc_pct: f64) -> PackReading {
     let mut reading = pack(id, soc_pct);
     reading.spec.max_soc_pct = 100.0;
@@ -88,6 +99,33 @@ async fn latch(dispatcher: &Dispatcher, fleet: &[PackReading]) {
         &Overrides::none(),
     )
     .await;
+}
+
+/// Latch at 100 %, then ask for a positive charge at 99 % with a zero-power plan.
+async fn zero_target_charge_override_is_blocked(overrides: Overrides) {
+    let dispatcher = Dispatcher::new(limits(), true, 10);
+    latch(&dispatcher, &[full("SN-FULL")]).await;
+    let fleet = [nearly_full("SN-FULL")];
+    let sink = FakeSink::new();
+    let outcome = tick(
+        &dispatcher,
+        &sink,
+        &fleet,
+        &plan_at(0.0, 1.9),
+        NOW + 5,
+        &overrides,
+    )
+    .await;
+    let row = outcome.report("SN-FULL").expect("latched row");
+    assert_eq!(row.requested_w, 0.0);
+    assert_eq!(row.intended_w, 0.0);
+    assert_eq!(row.reason, Reason::ChargeAtCeiling);
+    assert!(row.capability_skipped);
+    assert!(
+        sink.commands().is_empty(),
+        "a zero-target charge override must not reach the latched pack: {:?}",
+        sink.commands()
+    );
 }
 
 fn no_write_to(sink: &FakeSink, pack_id: &str) -> bool {
@@ -297,6 +335,65 @@ async fn a_maintenance_hold_override_on_a_latched_pack_is_not_a_charge_skip() {
             .is_some_and(|note| note.contains("ceiling")),
         "{:?}",
         row.note
+    );
+    assert!(hold_to(&sink, "SN-FULL"), "{:?}", sink.commands());
+}
+
+/// A zero-power plan does not make a manual charge override at 99 % an exception.
+#[tokio::test]
+async fn a_zero_target_manual_charge_override_stays_blocked_at_a_99_percent_latch() {
+    zero_target_charge_override_is_blocked(Overrides::new(vec![ManualOverride::manual(
+        "SN-FULL",
+        OverrideAction::Charge { watts: 800.0 },
+        NOW + 30,
+    )]))
+    .await;
+}
+
+/// Nor does it make the maintenance full-charge path an exception.
+#[tokio::test]
+async fn a_zero_target_maintenance_charge_override_stays_blocked_at_a_99_percent_latch() {
+    zero_target_charge_override_is_blocked(Overrides::new(vec![ManualOverride::maintenance(
+        "SN-FULL",
+        OverrideAction::Charge { watts: 800.0 },
+        NOW + 30,
+    )]))
+    .await;
+}
+
+/// `Off` resolves to 0 W (`override_off` slug) and is a hold, not a charge skip.
+#[tokio::test]
+async fn an_off_override_on_a_latched_pack_sends_a_hold_with_the_override_reason() {
+    let fleet = vec![full("SN-FULL"), able("SN-A", 60.0)];
+    let dispatcher = Dispatcher::new(limits(), true, 10);
+    latch(&dispatcher, &fleet).await;
+
+    let sink = FakeSink::new();
+    let overrides = Overrides::new(vec![ManualOverride::manual(
+        "SN-FULL",
+        OverrideAction::Off,
+        NOW + 30,
+    )]);
+    let outcome = tick(
+        &dispatcher,
+        &sink,
+        &fleet,
+        &plan_at(1600.0, 20.0),
+        NOW + 5,
+        &overrides,
+    )
+    .await;
+    let row = outcome.report("SN-FULL").expect("full row");
+    assert_eq!(row.requested_w, 0.0);
+    assert_eq!(row.intended_w, 0.0);
+    assert_eq!(row.reason, Reason::ManualOverride);
+    assert!(!row.capability_skipped);
+    assert!(
+        sink.commands()
+            .iter()
+            .all(|(id, sent)| { id != "SN-FULL" || matches!(sent, Sent::Hold) }),
+        "the Off pack gets a hold and no positive write: {:?}",
+        sink.commands()
     );
     assert!(hold_to(&sink, "SN-FULL"), "{:?}", sink.commands());
 }
