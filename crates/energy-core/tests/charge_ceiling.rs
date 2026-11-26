@@ -17,7 +17,7 @@ use energy_core::dispatch::{
 };
 use energy_core::plan::Plan;
 use energy_core::safety::{Authority, Reason, SafetyLimits};
-use support::fakes::{FakeSink, NOW, pack, plan};
+use support::fakes::{FakeSink, NOW, Sent, pack, plan};
 
 const EPS_W: f64 = 0.5;
 
@@ -47,6 +47,16 @@ fn charge_plan(watts: f64) -> Plan {
     planned
 }
 
+/// A plan whose end-of-slot target leaves room for a 1.6 kW fleet discharge.
+fn discharge_plan(soc_kwh: f64) -> Plan {
+    let mut planned = charge_plan(-1600.0);
+    for slot in &mut planned.slots {
+        slot.soc_kwh = soc_kwh;
+        slot.target_soc_kwh = soc_kwh - 1.6;
+    }
+    planned
+}
+
 fn limits() -> SafetyLimits {
     SafetyLimits {
         ramp_limit_w: 10_000.0,
@@ -61,13 +71,32 @@ async fn tick(
     planned: &Plan,
     now: i64,
 ) -> TickOutcome {
+    tick_with(
+        dispatcher,
+        sink,
+        fleet,
+        planned,
+        now,
+        &MeterReading::default(),
+    )
+    .await
+}
+
+async fn tick_with(
+    dispatcher: &Dispatcher,
+    sink: &FakeSink,
+    fleet: &[PackReading],
+    planned: &Plan,
+    now: i64,
+    meter: &MeterReading,
+) -> TickOutcome {
     let view = FleetView::new(fleet.to_vec());
     let input = TickInput {
         now,
         mode: Authority::Auto,
         plan: Some(planned),
         fleet: &view,
-        meter: &MeterReading::default(),
+        meter,
         latches: &[],
         overrides: &Overrides::none(),
         stale: false,
@@ -117,6 +146,138 @@ async fn a_fresh_99_percent_pack_is_not_latched() {
     let outcome = tick(&dispatcher, &sink, &[almost], &charge_plan(800.0), NOW).await;
     assert!(!outcome.report("SN-A").expect("report").capability_skipped);
     assert_eq!(sink.writes(), vec![800.0]);
+}
+
+/// A latched full pack must still receive a discharge command: the ceiling blocks charge only.
+#[tokio::test]
+async fn a_ceiling_latched_full_pack_can_discharge() {
+    let fleet = vec![
+        full("SN-FULL"),
+        able("SN-A", 97.0),
+        able("SN-B", 97.0),
+        able("SN-C", 97.0),
+    ];
+    let dispatcher = Dispatcher::new(limits(), true, 10);
+    let charge_sink = FakeSink::new();
+    tick(&dispatcher, &charge_sink, &fleet, &charge_plan(2400.0), NOW).await;
+    assert!(
+        charge_sink.commands().iter().all(|(id, _)| id != "SN-FULL"),
+        "the charge tick latched the full pack"
+    );
+
+    let sink = FakeSink::new();
+    let outcome = tick(&dispatcher, &sink, &fleet, &discharge_plan(7.4), NOW + 5).await;
+    let row = outcome.report("SN-FULL").expect("full report");
+    assert!(
+        row.requested_w < 0.0 && row.intended_w < 0.0,
+        "requested={} intended={}: a charge latch must not zero a discharge",
+        row.requested_w,
+        row.intended_w
+    );
+    assert_ne!(row.reason, Reason::ChargeAtCeiling);
+    assert!(!row.capability_skipped);
+    assert!(
+        row.note.is_none(),
+        "no charge note on a discharge row: {:?}",
+        row.note
+    );
+    assert!(
+        sink.commands().iter().any(|(id, sent)| {
+            id == "SN-FULL" && matches!(sent, Sent::Write(watts) if *watts < 0.0)
+        }),
+        "the full pack must get a negative write: {:?}",
+        sink.commands()
+    );
+}
+
+/// An import-guarded reversal is a discharge even when the plan asked to charge.
+#[tokio::test]
+async fn a_full_pack_can_discharge_under_an_import_guarded_command() {
+    let fleet = vec![full("SN-FULL")];
+    let dispatcher = Dispatcher::new(
+        SafetyLimits {
+            max_grid_import_w: 7700.0,
+            grid_import_margin_w: 200.0,
+            ramp_limit_w: 10_000.0,
+            ..limits()
+        },
+        true,
+        10,
+    );
+    let mut planned = charge_plan(500.0);
+    for slot in &mut planned.slots {
+        slot.buy_all_in = 0.30;
+        slot.feed_in = 0.30;
+        slot.soc_kwh = 7.4;
+        slot.target_soc_kwh = 7.525;
+    }
+    let meter = MeterReading::grid(7600.0).observed(NOW);
+    let sink = FakeSink::new();
+    let outcome = tick_with(&dispatcher, &sink, &fleet, &planned, NOW, &meter).await;
+
+    assert_eq!(outcome.target_w, -100.0, "the guard reversed the charge");
+    let row = outcome.report("SN-FULL").expect("full report");
+    assert!(row.intended_w < 0.0, "the full pack serves the breach");
+    assert_eq!(row.reason, Reason::GridImportCeiling);
+    assert!(!row.capability_skipped);
+    assert!(row.note.is_none());
+    assert!(
+        sink.commands().iter().any(|(id, sent)| {
+            id == "SN-FULL" && matches!(sent, Sent::Write(watts) if *watts < 0.0)
+        }),
+        "{:?}",
+        sink.commands()
+    );
+}
+
+/// The row names a charge skip only when it actually refused charge; a real discharge row is clean.
+#[tokio::test]
+async fn charge_skip_rows_are_honest_in_both_directions() {
+    let fleet = vec![full("SN-FULL"), able("SN-A", 60.0)];
+    let dispatcher = Dispatcher::new(limits(), true, 10);
+    let sink = FakeSink::new();
+    let charge = tick(&dispatcher, &sink, &fleet, &charge_plan(1600.0), NOW).await;
+    let row = charge.report("SN-FULL").expect("charge row");
+    assert_eq!(row.requested_w, 0.0);
+    assert_eq!(row.intended_w, 0.0);
+    assert_eq!(row.reason, Reason::ChargeAtCeiling);
+    assert!(
+        row.note
+            .as_deref()
+            .is_some_and(|note| note.contains("ceiling")),
+        "the charge row explains the ceiling: {:?}",
+        row.note
+    );
+    assert!(row.capability_skipped);
+
+    let sink = FakeSink::new();
+    // Two packs each hold half the fleet's plan energy: 3.7 kWh leaves the full pack room to
+    // serve while respecting the plan-target clause of the safety ladder.
+    let discharge = tick(&dispatcher, &sink, &fleet, &discharge_plan(3.7), NOW + 5).await;
+    let row = discharge.report("SN-FULL").expect("discharge row");
+    assert!(
+        row.requested_w < 0.0 && row.intended_w < 0.0,
+        "requested={} intended={} reason={:?}",
+        row.requested_w,
+        row.intended_w,
+        row.reason
+    );
+    assert_ne!(row.reason, Reason::ChargeAtCeiling);
+    assert!(
+        !row.note
+            .as_deref()
+            .is_some_and(|note| note.contains("ceiling")),
+        "the discharge row must not carry a charge note: {:?}",
+        row.note
+    );
+    assert!(!row.capability_skipped);
+    assert!(
+        sink.commands().iter().any(|(id, sent)| {
+            id == "SN-FULL" && matches!(sent, Sent::Write(watts) if *watts < 0.0)
+        }),
+        "an honest discharge row must have a negative write: {:?}",
+        sink.commands()
+    );
 }
 
 /// A stale pack behaves exactly as 0.15.12: no skip, no reservation, no target subtraction.

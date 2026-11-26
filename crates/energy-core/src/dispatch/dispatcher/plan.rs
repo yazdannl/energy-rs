@@ -15,6 +15,7 @@ use super::Dispatcher;
 struct Inputs<'a> {
     overridden: Option<&'a ManualOverride>,
     requested_w: f64,
+    /// The device ceiling verdict, carried only when this tick asks the pack to charge.
     skip: Option<&'a ChargeSkip>,
     backoff_cause: Option<String>,
     backoff: bool,
@@ -34,6 +35,29 @@ pub(super) fn plan(
     assemble(frame, reading, inputs)
 }
 
+/// The charge ceiling applies only to a request that actually charges the pack.
+///
+/// The request is resolved from the override, the allocation or a guarded hold before this verdict
+/// is taken: an override can ask a charge-skipped pack to charge even when its allocation is zero
+/// or the tick target is non-positive. A zero request falls back to the post-guard tick target, so
+/// a stale or charge-skipped pack with no allocation still keeps the `ChargeAtCeiling` verdict on a
+/// positive tick. An import-guarded reversal or a discharge override carries no charge skip.
+fn charge_skip<'a>(
+    frame: &'a TickFrame<'_>,
+    pack_id: &str,
+    requested_w: f64,
+) -> Option<&'a ChargeSkip> {
+    let direction_w = if requested_w.abs() > EPS_W {
+        requested_w
+    } else {
+        frame.target_w
+    };
+    if direction_w <= 0.0 {
+        return None;
+    }
+    frame.skips.iter().find(|skip| skip.pack_id == pack_id)
+}
+
 fn inputs<'a>(
     dispatcher: &'a Dispatcher,
     frame: &'a TickFrame<'a>,
@@ -49,14 +73,21 @@ fn inputs<'a>(
     let before = frame.baseline.watts_for(pack_id).unwrap_or(0.0);
     let allocated = frame.allocation.watts_for(pack_id).unwrap_or(0.0);
     let guarded = frame.import_ceiling && allocated < before - EPS_W;
-    let skip = frame.skips.iter().find(|skip| skip.pack_id == pack_id);
-    // Device charge authority outranks even an override: a closed pack gets exactly 0 W, and its
-    // share was already offered to the packs that can still charge.
-    let requested_w = if skip.is_some() {
-        0.0
+    let mut requested_w = requested_watts(&context, overridden, allocated, guarded);
+    // Device charge authority outranks even an override, but only on the charge side: resolve the
+    // effective request first, then cancel a charging one. A discharge request runs the ladder.
+    // An explicit neutral override is not a charge request either: its hold must reach the device
+    // and its row must keep the override reason, even when the tick target is positive.
+    let neutral_override = overridden
+        .is_some_and(|entry| matches!(entry.action, OverrideAction::Hold | OverrideAction::Off));
+    let skip = if neutral_override {
+        None
     } else {
-        requested_watts(&context, overridden, allocated, guarded)
+        charge_skip(frame, pack_id, requested_w)
     };
+    if skip.is_some() {
+        requested_w = 0.0;
+    }
     let maintenance_full = overridden.is_some_and(|entry| {
         entry.source == OverrideSource::Maintenance
             && matches!(entry.action, OverrideAction::Charge { .. })
@@ -126,6 +157,8 @@ fn note(input: &Inputs<'_>) -> Option<String> {
 }
 
 fn command_w(input: &Inputs<'_>, may_write: bool) -> f64 {
+    // Only a charge-side ceiling verdict cancels the command; a ceiling-latched pack may still
+    // serve an import-guarded discharge or a negative plan.
     if input.skip.is_some() {
         0.0
     } else if may_write {
