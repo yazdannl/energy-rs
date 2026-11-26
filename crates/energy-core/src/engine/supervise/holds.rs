@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use energy_ledger::{DispatchEntry, EventLevel};
+use energy_ledger::{DispatchEntry, EventLevel, MeasuredWatts};
 
 use crate::dispatch::{AppliedPowerReason, CommandSink, SinkError};
 use crate::engine::control::Engine;
@@ -32,6 +32,23 @@ impl UnverifiedHold {
     }
 }
 
+/// The evidence a verified hold actually carries.
+struct VerifiedHold {
+    applied_w: f64,
+    flow_measured: bool,
+    measured_at: Option<i64>,
+}
+
+impl VerifiedHold {
+    fn from_receipt(receipt: &crate::dispatch::WriteReceipt) -> Self {
+        Self {
+            applied_w: receipt.applied_w,
+            flow_measured: receipt.flow_measured,
+            measured_at: receipt.measured_at,
+        }
+    }
+}
+
 impl Engine {
     /// One real hold through the gate; a verified echo clears the pack's latch.
     pub(super) async fn hold_one(
@@ -47,7 +64,13 @@ impl Engine {
         let call = sink.hold(pack_id);
         match tokio::time::timeout(budget, call).await {
             Ok(Ok(receipt)) if receipt.verified => {
-                self.record_verified(pack_id, ledger_id, now, reason, receipt.applied_w)?;
+                self.record_verified(
+                    pack_id,
+                    ledger_id,
+                    now,
+                    reason,
+                    &VerifiedHold::from_receipt(&receipt),
+                )?;
                 Ok(HoldState::Verified)
             }
             Ok(Ok(_)) => {
@@ -76,12 +99,16 @@ impl Engine {
         ledger_id: Option<i64>,
         now: i64,
         reason: Reason,
-        applied_w: f64,
+        hold: &VerifiedHold,
     ) -> Result<(), EngineError> {
         self.clear_owned(pack_id, now)?;
-        let entry = DispatchEntry::new(now, ledger_id, 0.0, applied_w, reason.as_str(), "auto")
-            .verified(applied_w)
-            .flow_measured(true);
+        let entry =
+            DispatchEntry::new(now, ledger_id, 0.0, reason.as_str(), "auto").echo_verified();
+        let entry = if let Some(at) = hold.measured_at.filter(|_| hold.flow_measured) {
+            entry.measured(MeasuredWatts::new(hold.applied_w, at))
+        } else {
+            entry
+        };
         self.ledger.dispatch()?.insert(&entry)?;
         Ok(())
     }
@@ -112,7 +139,7 @@ impl Engine {
             "hold.failed",
             format!("{pack_id}: {cause}"),
         )?;
-        let mut entry = DispatchEntry::new(now, ledger_id, 0.0, 0.0, row_reason.as_str(), "auto")
+        let mut entry = DispatchEntry::new(now, ledger_id, 0.0, row_reason.as_str(), "auto")
             .failed(format!("hold failed: {cause}"));
         if unreachable {
             entry = entry.with_applied_w_reason(AppliedPowerReason::ReadFailed.as_str());
@@ -162,9 +189,8 @@ impl Engine {
             "hold.unverified",
             format!("{pack_id}: {}", verdict.detail),
         )?;
-        let mut entry =
-            DispatchEntry::new(now, ledger_id, 0.0, 0.0, verdict.reason.as_str(), "auto")
-                .failed(verdict.detail);
+        let mut entry = DispatchEntry::new(now, ledger_id, 0.0, verdict.reason.as_str(), "auto")
+            .failed(verdict.detail);
         if let Some(applied_reason) = verdict.applied_w_reason {
             entry = entry.with_applied_w_reason(applied_reason.as_str());
         }

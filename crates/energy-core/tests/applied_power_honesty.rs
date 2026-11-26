@@ -224,7 +224,7 @@ async fn a_stale_nonzero_sample_has_null_applied_w_and_sample_stale_reason() {
         independent_grid_w.abs() > 1.0,
         "an independent meter sees real power"
     );
-    assert_unmeasured(&report, AppliedPowerReason::SampleStale);
+    assert_unmeasured(&report, AppliedPowerReason::ConfirmationPending);
     assert_eq!(report.reason, Reason::ConfirmationPending);
     assert!(
         !report.verified,
@@ -255,7 +255,7 @@ async fn a_partial_command_is_reported_as_pending_not_measured_zero() {
     let (report, independent_grid_w) = tick_case(&device, false, Case::Partial).await;
 
     assert!(independent_grid_w.abs() > 1.0);
-    assert_unmeasured(&report, AppliedPowerReason::SampleStale);
+    assert_unmeasured(&report, AppliedPowerReason::ConfirmationPending);
     assert_eq!(report.reason, Reason::ConfirmationPending);
 }
 
@@ -264,7 +264,7 @@ async fn a_stale_hold_has_null_applied_w_and_sample_stale_reason() {
     let device = std::sync::Arc::new(ScriptedDevice::new(STALE_AGE_S));
     let (report, _) = tick_case(&device, false, Case::Hold).await;
 
-    assert_unmeasured(&report, AppliedPowerReason::SampleStale);
+    assert_unmeasured(&report, AppliedPowerReason::ConfirmationPending);
 }
 
 #[tokio::test]

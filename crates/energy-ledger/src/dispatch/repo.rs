@@ -7,7 +7,7 @@ use rusqlite::{Connection, params};
 use crate::dispatch::DispatchEntry;
 use crate::error::LedgerError;
 
-const COLUMNS: &str = "id, ts, pack_id, requested_w, applied_w, reason, mode, verified, error, note, written, flow_measured, applied_w_reason";
+const COLUMNS: &str = "id, ts, pack_id, requested_w, applied_w, reason, mode, verified, error, note, written, flow_measured, applied_w_reason, applied_w_measured, judged_sample_at, judged_write_at";
 
 /// Repository for the `dispatch_log` table.
 pub struct DispatchLog<'a> {
@@ -24,21 +24,25 @@ impl<'a> DispatchLog<'a> {
         self.conn.execute(
             "INSERT INTO dispatch_log
                 (ts, pack_id, requested_w, applied_w, reason, mode, verified, error, note,
-                 written, flow_measured, applied_w_reason)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 written, flow_measured, applied_w_reason, applied_w_measured,
+                 judged_sample_at, judged_write_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 entry.ts,
                 entry.pack_id,
                 entry.requested_w,
-                entry.applied_w,
+                entry.applied_w().unwrap_or(0.0),
                 entry.reason,
                 entry.mode,
                 entry.verified,
                 entry.error,
                 entry.note,
                 entry.written,
-                entry.flow_measured,
-                entry.applied_w_reason,
+                entry.flow_measured(),
+                entry.applied_w_reason(),
+                entry.measured_marker(),
+                entry.flow_verdict().0,
+                entry.flow_verdict().1,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())

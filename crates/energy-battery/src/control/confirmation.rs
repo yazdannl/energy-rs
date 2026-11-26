@@ -1,13 +1,19 @@
 //! Bounded echo waiting and safety preemption for one controller.
 
+mod uncertain;
+
 use std::time::Duration;
+pub use uncertain::mark_uncertain_write;
 
 use tokio::time::Instant;
 
 use crate::control::controller::{DeviceController, SAFETY_HOLD_WINDOW};
 use crate::control::echo::ECHO_POLL_INTERVAL;
 use crate::control::fault::ControlFault;
-use crate::control::flow::FLOW_CONFIRM_WINDOW;
+use crate::control::flow::{
+    FLOW_CONFIRM_WINDOW, FLOW_EVIDENCE_RECOVERY_SECS, FLOW_THRESHOLD_W, assess as assess_flow,
+    flow_evidence_causal,
+};
 use crate::control::observation::Observation;
 use crate::error::BatteryError;
 use crate::transport::DeviceIo;
@@ -22,9 +28,7 @@ enum LoopEnd {
 ///
 /// Expire a deferred confirmation once its whole flow window has elapsed.
 ///
-/// The dispatcher no longer waits for flow on the tick path, so the next fleet read must still turn
-/// a never-delivered command into a typed fault; otherwise the 300 s no-flow backoff would never
-/// fire. Only `expire` can resolve the exact pending command, so a replacement cannot be lost.
+/// The next fleet read must turn a never-delivered command into a typed fault without losing it.
 pub(super) fn reap_aged_pending<T: DeviceIo>(
     controller: &DeviceController<T>,
 ) -> Option<ControlFault> {
@@ -35,6 +39,29 @@ pub(super) fn reap_aged_pending<T: DeviceIo>(
         return None;
     }
     let sn = controller.sn().to_owned();
+    // A skewed device clock can make a real delivery look non-causal. Positive flow already
+    // observed for this command is proof of delivery, so it must never be re-labelled as an
+    // uncertain write and neutralised by a hold. Absence still needs a causal post-write sample.
+    let delivered = pending.flow_w > FLOW_THRESHOLD_W
+        || controller.last_report().is_some_and(|report| {
+            !assess_flow(&pending.command, &report).is_absent()
+                && report.message_id > pending.baseline.0
+        });
+    if delivered {
+        return None;
+    }
+    let causal = controller
+        .last_report()
+        .is_some_and(|report| flow_evidence_causal(report.timestamp, pending.accepted_at));
+    if !causal {
+        mark_uncertain_write(
+            controller,
+            format!(
+                "flow evidence unavailable after {FLOW_EVIDENCE_RECOVERY_SECS}s; verified hold required"
+            ),
+        );
+        return controller.active_fault();
+    }
     let fallback = timeout_fallback(controller, pending.request_id, "flow window elapsed", &sn);
     controller
         .record_timeout(pending.request_id, fallback)
@@ -48,21 +75,6 @@ pub(super) fn reap_aged_pending<T: DeviceIo>(
                     request_id: pending.request_id,
                 })
         })
-}
-
-/// A timed-out write is uncertain: only a verified hold may authorise another ordinary write.
-pub fn mark_uncertain_write<T: DeviceIo>(controller: &DeviceController<T>, detail: String) {
-    if let Some(mut inner) = controller.lock() {
-        let request_id = inner
-            .pending
-            .as_ref()
-            .map_or(0, |pending| pending.request_id);
-        inner.note_fault(ControlFault::UncertainWrite {
-            sn: controller.sn().to_owned(),
-            request_id,
-            detail,
-        });
-    }
 }
 
 /// A read that misses is retried inside the window and ends as a read-miss observation, never as a

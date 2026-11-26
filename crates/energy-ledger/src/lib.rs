@@ -73,7 +73,7 @@ pub mod settings;
 pub mod stats;
 
 pub use db::{Ledger, LedgerConfig};
-pub use dispatch::DispatchEntry;
+pub use dispatch::{DispatchEntry, MeasuredWatts};
 pub use error::LedgerError;
 pub use event::{Event, EventLevel};
 pub use measurement::{Measurement, RollupReport, Sample, SampleKind, Tier};

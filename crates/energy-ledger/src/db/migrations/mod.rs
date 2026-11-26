@@ -4,6 +4,8 @@ pub(crate) mod v1;
 pub(crate) mod v10;
 pub(crate) mod v11;
 pub(crate) mod v12;
+pub(crate) mod v13;
+pub(crate) mod v14;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -28,4 +30,6 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     v10::MIGRATION,
     v11::MIGRATION,
     v12::MIGRATION,
+    v13::MIGRATION,
+    v14::MIGRATION,
 ];

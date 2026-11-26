@@ -190,7 +190,7 @@ async fn a_never_confirming_pack_cannot_stall_the_tick_or_its_peers() {
         assert!(!row.verified && !row.flow_measured, "{sn}: {row:?}");
         assert_eq!(
             row.applied_w_reason,
-            Some(AppliedPowerReason::SampleStale),
+            Some(AppliedPowerReason::ConfirmationPending),
             "{sn}: {row:?}"
         );
         assert_eq!(row.applied_w, 0.0);

@@ -1,6 +1,6 @@
 //! The inputs of one fleet split, so the call site stays readable.
 
-use crate::allocation::Hold;
+use crate::allocation::{ChargeSkip, Hold};
 
 /// Everything the split needs besides the target: pack bounds, the tick length and the policy.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,6 +23,9 @@ pub struct SplitInput<'a> {
     pub now: i64,
     /// How long a hold keeps the slot, seconds.
     pub hold_seconds: i64,
+    /// Packs whose device report closes charge this tick. Their headroom is zero and their
+    /// share is offered to the remaining packs before a shortfall is declared.
+    pub charge_skips: &'a [ChargeSkip],
 }
 
 impl Default for SplitInput<'_> {
@@ -37,6 +40,7 @@ impl Default for SplitInput<'_> {
             soc_band_pct: 2.0,
             now: 0,
             hold_seconds: 1800,
+            charge_skips: &[],
         }
     }
 }

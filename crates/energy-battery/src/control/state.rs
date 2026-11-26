@@ -8,9 +8,17 @@ use crate::control::command::Command;
 use crate::control::echo;
 use crate::control::fault::ControlFault;
 use crate::control::flow;
+use crate::control::flow_verdict::{self, FlowVerdict};
 use crate::control::pending::Pending;
 use crate::control::watch;
 use crate::report::Report;
+
+type Folded = (
+    Option<Command>,
+    Option<Command>,
+    Option<ControlFault>,
+    Option<u32>,
+);
 
 /// Everything one controller remembers between calls.
 #[derive(Debug, Default)]
@@ -29,21 +37,13 @@ pub(super) struct Inner {
     pub(super) active_fault: Option<ControlFault>,
     /// Emergency holds sent in the current wedge episode.
     pub(super) emergency_holds: u32,
+    /// Override for tests; `None` uses the documented flow window.
+    pub(super) flow_window: Option<Duration>,
 }
 
 impl Inner {
-    /// Fold one report into the state: identity, ordering, wedge, restart, then echo confirmation.
-    /// The last result is the request id resolved by this read; resync never verifies a command.
-    pub(super) fn record(
-        &mut self,
-        report: &Report,
-        sn: &str,
-    ) -> (
-        Option<Command>,
-        Option<Command>,
-        Option<ControlFault>,
-        Option<u32>,
-    ) {
+    /// Fold one report: identity, ordering, wedge, restart, echo. Resync never verifies.
+    pub(super) fn record(&mut self, report: &Report, sn: &str) -> Folded {
         if report.sn != sn {
             let fault = ControlFault::ForeignReport {
                 expected: sn.to_owned(),
@@ -157,30 +157,17 @@ impl Inner {
         self.pending.take().map(|pending| pending.request_id)
     }
 
-    /// Verify the pending command against a report that is actually newer than the command.
-    /// A duplicate, stale or inconclusive report keeps ownership until the bounded deadline.
-    fn confirm(
-        &mut self,
-        report: &Report,
-        sequence: u64,
-    ) -> (
-        Option<Command>,
-        Option<Command>,
-        Option<ControlFault>,
-        Option<u32>,
-    ) {
+    /// Verify a pending command with a strictly newer report; stale reads keep ownership.
+    fn confirm(&mut self, report: &Report, sequence: u64) -> Folded {
         let Some(mut pending) = self.pending.clone() else {
             return (None, None, None, None);
         };
         if !echo::is_fresh(&pending, report, sequence) {
             return (None, None, None, None);
         }
-        // Consume this counter step even when the limits are still old: a replay of the same
-        // report is not a second observation and must never confirm.
         pending.last_seen_sequence = sequence;
         self.pending = Some(pending.clone());
         let request_id = pending.request_id;
-        // Echo is the first gate; sustained full flow confirms, low flow is partial, zero faults.
         let evidence = flow::assess(&pending.command, report);
         match echo::verify(&pending.command, report) {
             Ok(()) if pending.command.is_hold() => {
@@ -188,31 +175,33 @@ impl Inner {
                 (Some(pending.command), None, None, Some(request_id))
             }
             Ok(()) => {
-                if let Some(fault) = Self::note_flow(&mut pending, report, evidence) {
-                    // Zero flow (or a broken charge status) is a failed start, not curtailment.
-                    pending.reset_flow();
-                    pending.inconclusive = Some(fault);
-                    self.pending = Some(pending);
-                    return (None, None, None, None);
+                let window = self.flow_window.unwrap_or(flow::FLOW_CONFIRM_WINDOW);
+                let verdict =
+                    flow_verdict::assess(&mut pending, report, evidence, Instant::now(), window);
+                match verdict {
+                    FlowVerdict::Waiting => {
+                        pending.inconclusive = None;
+                        self.pending = Some(pending);
+                        return (None, None, None, None);
+                    }
+                    FlowVerdict::Fault(fault) => {
+                        pending.reset_flow();
+                        pending.inconclusive = Some(fault);
+                        self.pending = Some(pending);
+                        return (None, None, None, None);
+                    }
+                    FlowVerdict::Qualifying => {}
                 }
-                pending.inconclusive = None;
-                pending.flow_samples = pending.flow_samples.saturating_add(1);
-                pending.full_flow_samples = if evidence.is_flowing() {
-                    pending.full_flow_samples.saturating_add(1)
-                } else {
-                    0
-                };
-                if pending.flow_samples < flow::FLOW_SAMPLES {
-                    self.pending = Some(pending);
-                    return (None, None, None, None);
+                if let Some(full) = flow_verdict::qualify(&mut pending, evidence.is_flowing()) {
+                    self.pending = None;
+                    return if full {
+                        (Some(pending.command), None, None, Some(request_id))
+                    } else {
+                        (None, Some(pending.command), None, Some(request_id))
+                    };
                 }
-                self.pending = None;
-                if pending.full_flow_samples >= flow::FLOW_SAMPLES {
-                    (Some(pending.command), None, None, Some(request_id))
-                } else {
-                    // Two qualifying but not full reports: real, lower flow, no fault.
-                    (None, Some(pending.command), None, Some(request_id))
-                }
+                self.pending = Some(pending);
+                (None, None, None, None)
             }
             Err(fault) if echo::is_echo_doubt(&fault) => {
                 // A doubtful echo is a new observation gap: neither streak can span it.
@@ -228,41 +217,29 @@ impl Inner {
         }
     }
 
-    /// Fold the flow verdict into the pending command; low-but-real power is only inconclusive.
-    fn note_flow(
-        pending: &mut Pending,
-        report: &Report,
-        evidence: flow::FlowEvidence,
-    ) -> Option<ControlFault> {
-        let measured = flow::measured_w(&pending.command, report);
-        pending.flow_w = pending.flow_w.max(measured);
-        if !evidence.is_absent() {
-            return None;
-        }
-        let direction = pending
-            .command
-            .direction()
-            .unwrap_or(crate::control::direction::Direction::Charge);
-        Some(ControlFault::NoFlow {
-            sn: report.sn.clone(),
-            direction,
-            echoed_w: direction.limit(&report.properties),
-            observed_w: measured,
-        })
-    }
-
-    /// Finish exactly this waiter's command; a real mismatch outranks the timeout fallback.
+    /// Finish this waiter; a real mismatch outranks the timeout fallback.
     pub(super) fn expire(
         &mut self,
         request_id: u32,
         fallback: ControlFault,
     ) -> Option<ControlFault> {
-        let pending = self.pending.take()?;
+        let mut pending = self.pending.take()?;
         if pending.request_id != request_id {
             self.pending = Some(pending);
             return None;
         }
-        let fault = pending.inconclusive.unwrap_or(fallback);
+        let fault = pending.inconclusive.take().unwrap_or(fallback);
+        // A downgraded no-flow verdict must keep ownership and its original deadline; otherwise
+        // later ticks can restart the ramp and never resolve a possibly standing charge.
+        if Instant::now() < pending.flow_deadline
+            && matches!(&fault, ControlFault::NoFlow { sample_at, write_at, .. }
+                if *sample_at <= *write_at
+                    || sample_at.saturating_sub(*write_at)
+                        < i64::try_from(flow::FLOW_CONFIRM_WINDOW.as_secs()).unwrap_or(i64::MAX))
+        {
+            pending.inconclusive = Some(fault.clone());
+            self.pending = Some(pending);
+        }
         self.note_fault(fault.clone());
         Some(fault)
     }

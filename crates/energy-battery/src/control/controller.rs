@@ -14,6 +14,7 @@ use crate::control::confirmation;
 use crate::control::echo;
 use crate::control::emergency;
 use crate::control::fault::ControlFault;
+use crate::control::flow;
 use crate::control::limits::ControlLimits;
 use crate::control::observation::Observation;
 use crate::control::pacer::Pacer;
@@ -29,9 +30,7 @@ use crate::report::Report;
 use crate::transport::{DeviceIo, WriteAck, WriteRequest};
 
 pub const FAULT_BACKOFF: Duration = Duration::from_secs(300);
-
 pub const MAX_EMERGENCY_HOLDS: u32 = 3;
-
 pub const SAFETY_HOLD_WINDOW: Duration = Duration::from_secs(2);
 
 /// One device's control plane: ordered, bounded writes and bounded confirmations.
@@ -41,7 +40,6 @@ pub struct DeviceController<T: DeviceIo> {
     pacer: Pacer,
     request_id: AtomicU32,
     inner: Mutex<Inner>,
-    /// One per-device transaction: a write and a readback cannot interleave.
     transaction: Transaction<()>,
 }
 
@@ -229,6 +227,8 @@ impl<T: DeviceIo> DeviceController<T> {
             acked_after: None,
             acked_sequence: None,
             sent_at: Instant::now(),
+            flow_deadline: Instant::now() + inner.flow_window.unwrap_or(flow::FLOW_CONFIRM_WINDOW),
+            accepted_at: chrono::Utc::now().timestamp(),
             emergency,
             inconclusive: None,
             flow_samples: 0,
@@ -282,7 +282,6 @@ impl<T: DeviceIo> DeviceController<T> {
         self.inner.lock().ok()
     }
 
-    /// Fold one report into the device state.
     fn record(
         &self,
         report: &Report,

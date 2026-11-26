@@ -1,5 +1,6 @@
 //! One pack's command as the tick decided it, before the fleet check and the send.
 
+use crate::allocation::ChargeSkip;
 use crate::safety::Reason;
 
 /// A pack's row for this tick, decided purely, then validated as a vector, then sent.
@@ -16,6 +17,8 @@ pub(crate) struct Planned {
     pub(crate) measured_w: f64,
     /// Signed pack power from a fresh reading; `None` when stale or unavailable.
     pub(crate) measured_flow_w: Option<f64>,
+    /// Device clock of that fresh reading, so a measured row can prove its sample.
+    pub(crate) measured_at: Option<i64>,
     pub(crate) requested_w: f64,
     pub(crate) command_w: f64,
     pub(crate) reason: Reason,
@@ -23,6 +26,8 @@ pub(crate) struct Planned {
     pub(crate) note: Option<String>,
     /// The fault that put this pack in backoff, when it is being skipped this tick.
     pub(crate) backoff_cause: Option<String>,
+    /// The device-reported ceiling verdict that removed this pack from the charge split.
+    pub(crate) skip: Option<ChargeSkip>,
     pub(crate) vector: bool,
     pub(crate) send: bool,
 }

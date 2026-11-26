@@ -10,13 +10,15 @@
 
 mod support;
 
-use std::time::Duration;
+use serde_json::json;
 
 use energy_battery::{
     Command, ControlFault, ControlLimits, DeviceController, FAULT_BACKOFF, FakeBehaviour,
     FakeDevice, FakeState, HttpTransport,
 };
-use support::SN;
+use std::sync::Arc;
+use std::time::Duration;
+use support::{SN, ScriptedDevice, report_at};
 
 async fn device(behaviour: FakeBehaviour) -> (FakeDevice, DeviceController<HttpTransport>) {
     let fake = FakeDevice::spawn(FakeState::new(SN).with_behaviour(behaviour))
@@ -28,9 +30,16 @@ async fn device(behaviour: FakeBehaviour) -> (FakeDevice, DeviceController<HttpT
     (fake, controller)
 }
 
+async fn device_no_window(
+    behaviour: FakeBehaviour,
+) -> (FakeDevice, DeviceController<HttpTransport>) {
+    let (fake, controller) = device(behaviour).await;
+    (fake, controller.with_flow_window(Duration::ZERO))
+}
+
 #[tokio::test]
 async fn an_echo_with_no_grid_flow_faults_and_is_not_resent() {
-    let (fake, controller) = device(FakeBehaviour::default().without_flow()).await;
+    let (fake, controller) = device_no_window(FakeBehaviour::default().without_flow()).await;
     controller
         .apply(Command::Charge { watts: 300 })
         .await
@@ -199,7 +208,7 @@ async fn a_low_command_taper_is_insufficient_evidence_not_a_no_flow_fault() {
 
 #[tokio::test]
 async fn idle_telemetry_does_not_erase_a_no_flow_episode() {
-    let (fake, controller) = device(FakeBehaviour::default().without_flow()).await;
+    let (fake, controller) = device_no_window(FakeBehaviour::default().without_flow()).await;
     controller
         .apply(Command::Charge { watts: 300 })
         .await
@@ -238,8 +247,11 @@ async fn idle_telemetry_does_not_erase_a_no_flow_episode() {
         Some(ControlFault::NoFlow { .. })
     ));
     controller.acknowledge_fault();
-    assert!(controller.last_fault().is_none());
-    assert!(controller.active_fault().is_none());
+    assert!(controller.last_fault().is_none(), "history is acknowledged");
+    assert!(
+        matches!(controller.active_fault(), Some(ControlFault::NoFlow { .. })),
+        "acknowledgement cannot clear an unresolved active episode"
+    );
 }
 
 #[tokio::test]
@@ -272,7 +284,7 @@ async fn a_sustained_low_taper_confirms_partially_without_a_fault() {
 
 #[tokio::test]
 async fn one_to_four_watts_is_noise_not_partial_confirmation() {
-    let (fake, controller) = device(FakeBehaviour::default().without_flow()).await;
+    let (fake, controller) = device_no_window(FakeBehaviour::default().without_flow()).await;
     controller
         .apply(Command::Charge { watts: 300 })
         .await
@@ -296,7 +308,7 @@ async fn one_to_four_watts_is_noise_not_partial_confirmation() {
 
 #[tokio::test]
 async fn five_watts_is_noise_and_six_watts_is_real_but_low_flow() {
-    let (fake, controller) = device(FakeBehaviour::default().without_flow()).await;
+    let (fake, controller) = device_no_window(FakeBehaviour::default().without_flow()).await;
     controller
         .apply(Command::Charge { watts: 500 })
         .await
@@ -331,4 +343,157 @@ async fn five_watts_is_noise_and_six_watts_is_real_but_low_flow() {
         .unwrap();
     assert_eq!(six.partial, Some(Command::Charge { watts: 500 }));
     assert!(six.fault.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn absent_reports_before_the_window_are_pending_not_partial_flow() {
+    let base = 1_700_000_000;
+    let echo = |id: u32, ts: i64| {
+        report_at(
+            SN,
+            id,
+            ts,
+            json!({
+                "acMode": 1, "inputLimit": 1000, "outputLimit": 0,
+                "acStatus": 0, "dcStatus": 0, "gridInputPower": 0, "faultLevel": 0
+            }),
+        )
+    };
+    let device = Arc::new(ScriptedDevice::new(
+        SN,
+        vec![
+            report_at(SN, 1, base, json!({})),
+            echo(2, base + 1),
+            echo(3, base + 2),
+            echo(4, base + 46),
+        ],
+    ));
+    let controller = DeviceController::new(Arc::clone(&device), ControlLimits::unlimited());
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 1000 })
+        .await
+        .unwrap();
+
+    for _ in 0..2 {
+        let seen = controller.poll().await.unwrap();
+        assert!(
+            seen.confirmed.is_none() && seen.partial.is_none() && seen.fault.is_none(),
+            "{seen:?}"
+        );
+    }
+    tokio::time::advance(Duration::from_secs(46)).await;
+    let _seen = controller.poll().await.unwrap();
+    let pending = controller
+        .pending()
+        .expect("ownership survives the downgrade");
+    assert!(
+        matches!(&pending.inconclusive, Some(ControlFault::NoFlow { observed_w, sample_at, write_at, .. })
+            if *observed_w <= 5 && *sample_at == base + 46 && *write_at > *sample_at),
+        "a zero after the original window is a real failed start: {pending:?}"
+    );
+    assert!(
+        matches!(
+            controller.active_fault(),
+            Some(ControlFault::UncertainWrite { .. })
+        ),
+        "skewed clocks escalate to a bounded verified-hold recovery"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn skewed_reports_keep_the_original_deadline_and_ownership() {
+    let base = 1_700_000_000;
+    let skewed = |id: u32| {
+        report_at(
+            SN,
+            id,
+            base - 100,
+            json!({
+                "acMode": 1, "inputLimit": 1000, "outputLimit": 0,
+                "acStatus": 0, "dcStatus": 0, "gridInputPower": 0, "faultLevel": 0
+            }),
+        )
+    };
+    let device = Arc::new(ScriptedDevice::new(
+        SN,
+        vec![report_at(SN, 1, base, json!({}))],
+    ));
+    let controller = DeviceController::new(Arc::clone(&device), ControlLimits::unlimited());
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 1000 })
+        .await
+        .unwrap();
+    let deadline = controller.pending().unwrap().flow_deadline;
+    let write_at = controller.pending().unwrap().accepted_at;
+
+    for id in 2..6 {
+        device.push_report(skewed(id));
+        let _ = controller.poll().await.unwrap();
+        let pending = controller.pending().expect("ownership is never lost");
+        assert_eq!(
+            pending.flow_deadline, deadline,
+            "the ramp deadline never resets"
+        );
+        assert_eq!(pending.accepted_at, write_at);
+    }
+    tokio::time::advance(Duration::from_secs(46)).await;
+    let _ = controller.poll().await.unwrap();
+    assert_eq!(controller.pending().unwrap().flow_deadline, deadline);
+    assert!(
+        controller.active_fault().is_some(),
+        "unusable evidence escalates after the bound"
+    );
+}
+
+/// A device clock can lag the write clock while the pack is genuinely charging. Real positive
+/// flow in the commanded direction must never be re-labelled as an uncertain write and held.
+#[tokio::test(start_paused = true)]
+async fn positive_flow_with_skewed_clocks_never_escalates_to_a_hold() {
+    let base = 1_700_000_000;
+    let flowing = |id: u32, ts: i64| {
+        report_at(
+            SN,
+            id,
+            ts,
+            json!({
+                "acMode": 1, "inputLimit": 1000, "outputLimit": 0,
+                "acStatus": 2, "dcStatus": 1, "gridInputPower": 1000, "faultLevel": 0
+            }),
+        )
+    };
+    let device = Arc::new(ScriptedDevice::new(
+        SN,
+        vec![report_at(SN, 1, base, json!({}))],
+    ));
+    let controller = DeviceController::new(Arc::clone(&device), ControlLimits::unlimited());
+    controller.poll().await.unwrap();
+    controller
+        .apply(Command::Charge { watts: 1000 })
+        .await
+        .unwrap();
+    let accepted_at = controller.pending().expect("command accepted").accepted_at;
+
+    // Every sample proves 1000 W charging, but its device clock is only five seconds past the
+    // write, far short of the 45 s causality bound. That clock skew must not arm a hold.
+    for id in 2..=8 {
+        device.push_report(flowing(id, accepted_at + 5));
+        let seen = controller.poll().await.unwrap();
+        assert!(seen.fault.is_none(), "skewed flow report: {seen:?}");
+        assert!(controller.active_fault().is_none(), "no hold escalation");
+    }
+    tokio::time::advance(Duration::from_secs(46)).await;
+    device.push_report(flowing(9, accepted_at + 6));
+    let seen = controller.poll().await.unwrap();
+    assert!(seen.fault.is_none(), "flow after the window: {seen:?}");
+    assert!(
+        controller.active_fault().is_none(),
+        "valid delivery survives an expired, skewed clock"
+    );
+    assert_eq!(
+        device.write_count(),
+        1,
+        "no re-command after a false no-flow"
+    );
 }

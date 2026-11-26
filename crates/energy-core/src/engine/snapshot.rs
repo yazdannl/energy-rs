@@ -35,10 +35,7 @@ impl Engine {
         self
     }
 
-    /// Build the read model for this instant without touching the channel.
-    ///
-    /// A poisoned state mutex yields the empty snapshot: a reader sees "no engine state" instead of
-    /// a torn mix, and the supervisor's watchdog is what reports the stall.
+    /// Read model for this instant; a poisoned mutex yields the empty snapshot.
     pub fn snapshot(&self, now: i64, view: &FleetView, meter: &MeterReading) -> EngineSnapshot {
         let Ok(state) = self.lock() else {
             return EngineSnapshot::default();
@@ -46,12 +43,7 @@ impl Engine {
         let plan = state.plan.clone();
         let (maintenance, unassigned) = plan.as_ref().map_or_else(
             || (Vec::new(), Vec::new()),
-            |plan| {
-                (
-                    plan.maintenance.clone(),
-                    plan.maintenance_unassigned.clone(),
-                )
-            },
+            |p| (p.maintenance.clone(), p.maintenance_unassigned.clone()),
         );
         let plan_id = state.plan_id;
         let overrides: Vec<ManualOverride> = state
@@ -63,11 +55,13 @@ impl Engine {
         let last_tick = state.watchdog.last_progress();
         let refusal = state.refusal.clone();
         drop(state);
-        let configured_packs = self
+        let configured = self
             .ledger
             .packs()
-            .and_then(|packs| packs.all())
-            .map_or(0, |rows| rows.len());
+            .and_then(|p| p.all())
+            .unwrap_or_default();
+        let required_packs: Vec<String> = configured.iter().map(|row| row.sn.clone()).collect();
+        let configured_packs = configured.len();
 
         let mode = self.gate.mode();
         let packs = self.pack_snapshots(view, now, &overrides, &maintenance, &unassigned);
@@ -82,6 +76,7 @@ impl Engine {
         );
         EngineSnapshot {
             mode,
+            required_packs,
             site: self
                 .runtime
                 .as_ref()
@@ -110,13 +105,16 @@ impl Engine {
         let mode = self.gate.mode();
         let view = FleetView::default();
         let meter = MeterReading::default();
-        let configured_packs = self
+        let configured = self
             .ledger
             .packs()
-            .and_then(|packs| packs.all())
-            .map_or(0, |rows| rows.len());
+            .and_then(|p| p.all())
+            .unwrap_or_default();
+        let required_packs: Vec<String> = configured.iter().map(|row| row.sn.clone()).collect();
+        let configured_packs = configured.len();
         publisher.publish(EngineSnapshot {
             mode,
+            required_packs,
             site: self
                 .runtime
                 .as_ref()
@@ -179,6 +177,7 @@ impl Engine {
                     stale: pack.stale || !pack.available,
                     control_fault: self.dispatcher.faults().blocker(sn, now),
                     last_control_fault: pack.historical_fault.clone(),
+                    active_control_fault: pack.active_fault.clone(),
                     flow_alarm: pack.flow_alarm.clone(),
                     max_charge_w: Some(pack.spec.max_charge_w),
                     max_discharge_w: Some(pack.spec.max_discharge_w),

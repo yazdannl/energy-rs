@@ -1,31 +1,27 @@
 //! Greedy, deterministic allocation: the fewest packs that can take the request, best SoC first.
 
-use crate::allocation::{ALLOCATION_DEADBAND_W, PackAllocation, SplitInput};
+use crate::allocation::{ALLOCATION_DEADBAND_W, ChargeSkip, PackAllocation, SplitInput};
 use crate::plan::PackState;
+use crate::safety::Reason;
 
 /// The fleet setpoint split into per-pack commands.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Allocation {
-    /// The fleet demand that was split, W.
+    /// Fleet demand, summed commands, and demand that did not fit, W.
     pub requested_w: f64,
-    /// Sum of the per-pack commands, W.
     pub allocated_w: f64,
-    /// The part that did not fit any pack's limits, W (same sign as the demand).
     pub unmet_w: f64,
     /// One entry per pack, in stable id order.
     pub packs: Vec<PackAllocation>,
+    /// Device-closed charge loss, W; unlike `unmet_w`, a deadband-sized loss is still named.
+    pub capability_shortfall_w: f64,
+    /// The packs whose own device report closed charge this tick.
+    pub skipped_packs: Vec<String>,
 }
 
 impl Allocation {
     /// Split `target_w` across `packs`, never exceeding a pack's own ceiling or floor.
-    ///
-    /// With `staggering` the fleet runs as few packs as the request needs: packs are taken in SoC
-    /// order (the emptiest charges first, the fullest discharges first) and each one is filled to
-    /// its own headroom before the next starts. A pack is only started when it can take at least
-    /// `min_active_w`, so a sliver is left to the grid instead of waking a pack for 20 W.
-    ///
-    /// Without `staggering` the target is spread proportionally over every pack's headroom, with
-    /// one redistribution pass for per-pack ceilings — the pre-0.4 behaviour, kept as a fallback.
+    /// Staggering fills the emptiest pack first; otherwise the target is spread over headroom.
     pub fn split(target_w: f64, packs: &[PackState], input: &SplitInput<'_>) -> Self {
         let mut ordered: Vec<&PackState> = packs.iter().collect();
         ordered.sort_by(|a, b| a.spec.pack_id.cmp(&b.spec.pack_id));
@@ -33,7 +29,7 @@ impl Allocation {
             return Self::empty(target_w);
         }
         if !target_w.is_finite() || target_w.abs() < ALLOCATION_DEADBAND_W {
-            return Self::fixed(&ordered, target_w);
+            return Self::fixed(&ordered, target_w, input.charge_skips);
         }
         let charging = target_w > 0.0;
         let demand = target_w.abs();
@@ -46,7 +42,7 @@ impl Allocation {
             redistribute(&ordered, &rooms, &mut allocated, demand, charging);
         }
         let deadband = input.min_active_w.max(ALLOCATION_DEADBAND_W);
-        Self::assemble(target_w, &ordered, allocated, deadband)
+        Self::assemble(target_w, &ordered, allocated, deadband, input.charge_skips)
     }
 
     /// The allocation for one pack, if it took part.
@@ -63,10 +59,17 @@ impl Allocation {
             allocated_w: 0.0,
             unmet_w: target_w,
             packs: Vec::new(),
+            capability_shortfall_w: 0.0,
+            skipped_packs: Vec::new(),
         }
     }
 
-    fn fixed(packs: &[&PackState], target_w: f64) -> Self {
+    fn fixed(packs: &[&PackState], target_w: f64, skips: &[ChargeSkip]) -> Self {
+        let capability_shortfall_w = if target_w > 0.0 && closed(skips) {
+            target_w
+        } else {
+            0.0
+        };
         let packs = packs
             .iter()
             .map(|state| PackAllocation {
@@ -79,10 +82,18 @@ impl Allocation {
             allocated_w: 0.0,
             unmet_w: 0.0,
             packs,
+            capability_shortfall_w,
+            skipped_packs: skips.iter().map(|skip| skip.pack_id.clone()).collect(),
         }
     }
 
-    fn assemble(target_w: f64, packs: &[&PackState], allocated: Vec<f64>, deadband: f64) -> Self {
+    fn assemble(
+        target_w: f64,
+        packs: &[&PackState],
+        allocated: Vec<f64>,
+        deadband: f64,
+        skips: &[ChargeSkip],
+    ) -> Self {
         let sign = if target_w >= 0.0 { 1.0 } else { -1.0 };
         let entries: Vec<PackAllocation> = packs
             .iter()
@@ -93,16 +104,26 @@ impl Allocation {
             })
             .collect();
         let allocated_w: f64 = entries.iter().map(|entry| entry.watts).sum();
-        let unmet = (target_w - allocated_w).abs();
+        let raw_loss = target_w - allocated_w;
+        let unmet_w = if raw_loss.abs() <= deadband {
+            0.0
+        } else {
+            raw_loss
+        };
+        // A closed device's lost share is a capability verdict. Unlike tolerated deviation it is
+        // reported even when it fits inside the deadband.
+        let capability_shortfall_w = if target_w > 0.0 && raw_loss > 0.0 && closed(skips) {
+            raw_loss
+        } else {
+            0.0
+        };
         Self {
             requested_w: target_w,
             allocated_w,
-            unmet_w: if unmet <= deadband {
-                0.0
-            } else {
-                target_w - allocated_w
-            },
+            unmet_w,
             packs: entries,
+            capability_shortfall_w,
+            skipped_packs: skips.iter().map(|skip| skip.pack_id.clone()).collect(),
         }
     }
 }
@@ -208,11 +229,27 @@ fn spread(rooms: &[f64], allocated: &mut [f64], demand: f64) {
     }
 }
 
+/// Whether a skip is a device verdict rather than an untrustworthy sample.
+fn closed(skips: &[ChargeSkip]) -> bool {
+    skips
+        .iter()
+        .any(|skip| skip.reason == Reason::ChargeAtCeiling)
+}
+
 fn headrooms(packs: &[&PackState], charging: bool, input: &SplitInput<'_>) -> Vec<f64> {
     packs
         .iter()
         .map(|state| {
             if !charging && input.block_discharge.contains(&state.spec.pack_id.as_str()) {
+                return 0.0;
+            }
+            // Closed: zero headroom, share absorbed by the remaining packs.
+            if charging
+                && input
+                    .charge_skips
+                    .iter()
+                    .any(|skip| skip.pack_id == state.spec.pack_id)
+            {
                 return 0.0;
             }
             state

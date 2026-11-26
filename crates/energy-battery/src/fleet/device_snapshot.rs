@@ -20,6 +20,9 @@ pub struct DeviceSnapshot {
     pub fetched_at: Option<Instant>,
     pub error: Option<String>,
     pub fault: Option<ControlFault>,
+    /// The controller's active episode, cleared only by verified recovery. Unlike `historical_fault`
+    /// this is the per-pack safety state that must gate health and further writes.
+    pub active_fault: Option<ControlFault>,
     /// Historical fault, kept after the transient observation has gone quiet.
     pub historical_fault: Option<ControlFault>,
     pub confirmed: Option<Command>,
@@ -33,6 +36,7 @@ impl DeviceSnapshot {
             fetched_at: None,
             error: None,
             fault: None,
+            active_fault: None,
             historical_fault: None,
             confirmed: None,
         }
@@ -42,6 +46,7 @@ impl DeviceSnapshot {
     pub fn from_observation(
         observation: Observation,
         at: Instant,
+        active_fault: Option<ControlFault>,
         historical_fault: Option<ControlFault>,
     ) -> Self {
         Self {
@@ -50,6 +55,7 @@ impl DeviceSnapshot {
             fetched_at: Some(at),
             error: None,
             fault: observation.fault,
+            active_fault,
             historical_fault,
             confirmed: observation.confirmed,
         }

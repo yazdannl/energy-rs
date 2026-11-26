@@ -7,6 +7,12 @@ pub enum AppliedPowerReason {
     SampleStale,
     /// A transport read failed, so no sample could be taken.
     ReadFailed,
+    /// The write landed but its flow is not yet confirmed; no sample was judged stale.
+    ConfirmationPending,
+    /// A previous command still owns the pack, so the new setpoint was not written.
+    PreviousCommandPending,
+    /// A fleet-level row records unplaced charge, not a measurement of pack flow.
+    CapabilityShortfall,
 }
 
 impl AppliedPowerReason {
@@ -15,6 +21,9 @@ impl AppliedPowerReason {
         match self {
             Self::SampleStale => "sample_stale",
             Self::ReadFailed => "read_failed",
+            Self::ConfirmationPending => "confirmation_pending",
+            Self::PreviousCommandPending => "previous_command_pending",
+            Self::CapabilityShortfall => "capability_shortfall",
         }
     }
 }

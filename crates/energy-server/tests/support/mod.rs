@@ -32,7 +32,7 @@ use energy_core::stream::{
     PlanSnapshot, SiteSnapshot, SiteSource,
 };
 use energy_ledger::{
-    DispatchEntry, Ledger, LedgerConfig, Pack, Plan, PlanSlot, Sample, SavingsDaily,
+    DispatchEntry, Ledger, LedgerConfig, MeasuredWatts, Pack, Plan, PlanSlot, Sample, SavingsDaily,
 };
 use energy_price::{
     MemoryPriceRepository, PriceBook, PriceRepository, Settlement, Slot, SlotSource,
@@ -221,22 +221,16 @@ fn seed_plans(ledger: &Ledger, base: i64) -> i64 {
 
 fn seed_dispatch(ledger: &Ledger, now: i64, pack: i64) {
     let log = ledger.dispatch().expect("dispatch");
-    let requested = DispatchEntry::new(now - 60, Some(pack), 800.0, 0.0, "dry_run", "dry_run");
+    let requested = DispatchEntry::new(now - 60, Some(pack), 800.0, "dry_run", "dry_run");
     log.insert(&requested).expect("requested row");
-    let applied = DispatchEntry::new(now - 30, Some(pack), -400.0, -395.0, "dispatch", "auto")
-        .verified(-395.0);
+    let applied = DispatchEntry::new(now - 30, Some(pack), -400.0, "dispatch", "auto")
+        .measured(MeasuredWatts::new(-395.0, 1))
+        .verified();
     log.insert(&applied).expect("applied row");
-    let backoff = DispatchEntry::new(
-        now - 10,
-        Some(pack),
-        -800.0,
-        -799.0,
-        "fault_backoff",
-        "auto",
-    )
-    .written(false)
-    .flow_measured(true)
-    .failed("not sent; backing off; previous command still standing; measured -799 W");
+    let backoff = DispatchEntry::new(now - 10, Some(pack), -800.0, "fault_backoff", "auto")
+        .written(false)
+        .measured(MeasuredWatts::new(-799.0, 1))
+        .failed("not sent; backing off; previous command still standing; measured -799 W");
     log.insert(&backoff).expect("backoff row");
 }
 
@@ -375,6 +369,7 @@ fn pack_snapshot(sn: &str, base: i64) -> PackSnapshot {
         stale: false,
         control_fault: None,
         last_control_fault: None,
+        active_control_fault: None,
         flow_alarm: None,
         max_charge_w: Some(800.0),
         max_discharge_w: Some(800.0),
@@ -392,6 +387,7 @@ fn standard_snapshot(base: i64, plan_id: i64, sn: &str) -> EngineSnapshot {
         plan: Some(plan_snapshot(base, plan_id)),
         packs: vec![pack_snapshot(sn, base)],
         configured_packs: 1,
+        required_packs: vec![sn.to_owned()],
         meter: Some(MeterSnapshot {
             at: base,
             grid_w: 250.0,

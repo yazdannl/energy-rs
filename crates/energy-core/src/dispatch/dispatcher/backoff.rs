@@ -57,6 +57,7 @@ pub(super) fn finish(last: &Mutex<LastCommands>, plan: &Planned, sent: &mut Sent
     if let Some(flow_w) = flow_w {
         sent.applied_w = flow_w;
         sent.flow_measured = true;
+        sent.measured_at = plan.measured_at;
         sent.applied_w_reason = None;
     } else {
         sent.applied_w_reason = Some(AppliedPowerReason::SampleStale);

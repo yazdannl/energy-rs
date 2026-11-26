@@ -26,6 +26,8 @@ pub(crate) struct StateDto {
     control_fault: Option<String>,
     /// Historical control fault, kept after the pack recovers or goes idle.
     last_control_fault: Option<String>,
+    /// Active per-pack uncertainty, cleared by a verified hold.
+    active_control_fault: Option<String>,
     /// A sustained power/status contradiction worth showing even though control continues.
     flow_alarm: Option<String>,
 }
@@ -42,6 +44,7 @@ pub(crate) fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> Stat
             stale: live.stale,
             control_fault: live.control_fault.clone(),
             last_control_fault: live.last_control_fault.clone(),
+            active_control_fault: live.active_control_fault.clone(),
             flow_alarm: live.flow_alarm.clone(),
         };
     }
@@ -55,6 +58,7 @@ pub(crate) fn state_dto(live: Option<&PackSnapshot>, stored: &PackState) -> Stat
         stale: sampled_at.is_none_or(|at| now - at > STALE_AFTER_S),
         control_fault: None,
         last_control_fault: None,
+        active_control_fault: None,
         flow_alarm: None,
     }
 }

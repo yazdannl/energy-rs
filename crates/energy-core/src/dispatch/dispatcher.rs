@@ -1,25 +1,26 @@
 //! The tick: read, allocate, plan every pack, validate the vector, then command.
 
 mod backoff;
+mod charge;
+mod plan;
+mod recovery;
 mod row;
 mod write;
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use crate::allocation::ChargeSkip;
 use crate::dispatch::grid_telemetry;
 use crate::dispatch::import_ceiling::{Guard, NO_PLAN_TARGET_W};
-use crate::dispatch::pack_context::{
-    cell_safety, measured, reason_for, requested_watts, telemetry_hold,
-};
 use crate::dispatch::sent::Sent;
 use crate::dispatch::{
-    CommandSink, FaultGuard, OverrideAction, OverrideSource, PackReading, PackReport, Planned,
-    TickFrame, TickInput, TickOutcome, allocate, decide, fleet_clamp, slot_power,
+    CommandSink, FaultGuard, PackReport, Planned, TickFrame, TickInput, TickOutcome, allocate,
+    fleet_clamp, slot_power,
 };
-use crate::safety::Reason;
-use crate::safety::{CommandRequest, EPS_W, SafetyLimits};
+use crate::safety::{Reason, SafetyLimits};
 
 /// Turns a plan and a fleet read into per-pack commands.
 ///
@@ -39,6 +40,8 @@ pub struct Dispatcher {
     ceiling: Guard,
     /// Last non-hold command issued per pack, so a backoff row can name a real standing command.
     last_commands: Mutex<backoff::LastCommands>,
+    /// Packs whose device reported a charge ceiling; released only past the hysteresis margin.
+    charge_latch: Mutex<BTreeSet<String>>,
 }
 
 /// One end-to-end per-pack budget, shared with every direct sink caller. It covers apply, echo
@@ -49,6 +52,8 @@ const PACK_SEND_BUDGET: Duration = energy_battery::control::PACK_IO_BUDGET;
 #[derive(Clone, Copy)]
 struct SendContext<'a> {
     now: i64,
+    /// Nonzero command accepted by this attempt, preserved through failed recovery.
+    accepted_intent_w: Option<f64>,
     safety_traffic: bool,
     recovery_started: &'a AtomicBool,
 }
@@ -62,6 +67,7 @@ impl Dispatcher {
             faults: FaultGuard::new(backoff_seconds),
             ceiling: Guard::default(),
             last_commands: Mutex::new(backoff::LastCommands::new()),
+            charge_latch: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -78,13 +84,14 @@ impl Dispatcher {
     /// Run one tick.
     pub async fn tick(&self, input: &TickInput<'_>, sink: &dyn CommandSink) -> TickOutcome {
         self.faults.prune(input.now);
+        let skips = charge::skips(self, input);
         let limits = self.limits_for(input);
-        let frame = self.frame(input, &limits);
+        let frame = self.frame(input, &limits, &skips);
         let mut plans: Vec<Planned> = input
             .fleet
             .packs
             .iter()
-            .map(|reading| self.plan_pack(&frame, reading))
+            .map(|reading| plan::plan(self, &frame, reading))
             .collect();
         let fleet_limit = fleet_clamp::apply(&mut plans, &frame);
         let mut outcome = TickOutcome::new(input.now, input.mode);
@@ -93,6 +100,8 @@ impl Dispatcher {
         outcome.target_w = frame.target_w;
         outcome.grid_limit = frame.grid_limit;
         outcome.fleet_clamp = fleet_limit;
+        outcome.capability_shortfall_w = frame.allocation.capability_shortfall_w;
+        outcome.capability_skipped = frame.allocation.skipped_packs.clone();
         // One unreachable device must not hold the other three hostage. Every pack is an
         // independent future; `join_all` keeps fleet order while their bounded writes overlap.
         // Each sink still bounds its own transport, and a non-hold write no longer awaits flow.
@@ -130,7 +139,12 @@ impl Dispatcher {
     }
 
     /// The per-tick values every pack shares: slot, split, grid base and ceilings.
-    fn frame<'a>(&self, input: &'a TickInput<'a>, limits: &'a SafetyLimits) -> TickFrame<'a> {
+    fn frame<'a>(
+        &self,
+        input: &'a TickInput<'a>,
+        limits: &'a SafetyLimits,
+        skips: &'a [ChargeSkip],
+    ) -> TickFrame<'a> {
         let slot = input.plan.and_then(|plan| plan.slot_at(input.now)).cloned();
         let stale = input.stale || slot.is_none();
         let plan_power_w = if stale {
@@ -155,11 +169,12 @@ impl Dispatcher {
         };
         // Safety over the plan: a measured breach of the import ceiling lowers the setpoint only.
         // The pre-guard split is kept so the reason can be attributed to the packs it changed.
-        let (baseline, _) = allocate(input, limits, replacement_w, slot.as_ref());
+        let (baseline, _) = allocate(input, limits, replacement_w, slot.as_ref(), skips);
         let ceiling =
             self.ceiling
                 .apply(input.now, replacement_w, input.meter, input.fleet, limits);
-        let (allocation, grid_limit) = allocate(input, limits, ceiling.target_w, slot.as_ref());
+        let (allocation, grid_limit) =
+            allocate(input, limits, ceiling.target_w, slot.as_ref(), skips);
         let grid_hold = grid_limit == Some(Reason::GridTelemetryMissing);
         let grid_base = grid_telemetry::base(input, slot.as_ref(), limits);
         TickFrame {
@@ -181,6 +196,7 @@ impl Dispatcher {
             target_w: ceiling.target_w,
             import_ceiling: ceiling.active,
             // An absent plan cannot prove the horizon is sunless: keep the reserve armed.
+            skips: skips.to_vec(),
             solar_reserve_armed: input
                 .plan
                 .is_none_or(|plan| plan.has_remaining_pv_surplus(input.now)),
@@ -197,68 +213,6 @@ impl Dispatcher {
         limits
     }
 
-    /// One pack, decided: request, ladder, shadow answer. No I/O.
-    fn plan_pack(&self, frame: &TickFrame<'_>, reading: &PackReading) -> Planned {
-        let context = frame.context();
-        let pack_id = reading.pack_id();
-        let latch = context
-            .latches
-            .iter()
-            .find(|latch| latch.pack_id == pack_id);
-        let overridden = context.overrides.active(pack_id, context.now);
-        let before = frame.baseline.watts_for(pack_id).unwrap_or(0.0);
-        let allocated = frame.allocation.watts_for(pack_id).unwrap_or(0.0);
-        let guarded = frame.import_ceiling && allocated < before - EPS_W;
-        // A stale plan normally holds every pack, but a protective guard discharge still goes out:
-        // safety must not depend on an economic plan being fresh.
-        let requested = requested_watts(&context, overridden, allocated, guarded);
-        let maintenance_full = overridden.is_some_and(|entry| {
-            entry.source == OverrideSource::Maintenance
-                && matches!(entry.action, OverrideAction::Charge { .. })
-        });
-        let request = CommandRequest::new(
-            pack_id,
-            requested,
-            context.slot.cloned(),
-            context.now,
-            measured(&context, reading),
-        )
-        .with_solar_reserve_forecast(frame.solar_reserve_armed);
-        let request = if maintenance_full {
-            request.as_maintenance_full_charge()
-        } else {
-            request
-        };
-        let decision = decide(&context, &request, reading, latch, false);
-        let intended = decide(&context, &request, reading, latch, true);
-        let backoff_cause = self.faults.blocker(pack_id, context.now);
-        let backoff = backoff_cause.is_some();
-        // Cell holds, import-ceiling corrections and armed solar-telemetry holds are safety
-        // traffic: backoff never suppresses them, and their fault state still backs off later writes.
-        let safety =
-            cell_safety(latch, decision.allowed_w, context.mode).or(telemetry_hold(&decision));
-        let vector = reading.available && (safety.is_some() || guarded || !backoff);
-        Planned {
-            pack_id: pack_id.to_owned(),
-            ledger_id: reading.ledger_id,
-            measured_w: reading.power_w,
-            measured_flow_w: (reading.available && !reading.stale).then_some(reading.power_w),
-            requested_w: requested,
-            command_w: if context.mode.may_write() {
-                decision.allowed_w
-            } else {
-                intended.allowed_w
-            },
-            reason: safety
-                .unwrap_or_else(|| reason_for(&context, &decision, overridden, backoff, guarded)),
-            intended_reason: intended.primary(),
-            note: crate::dispatch::pack_context::note_for(overridden),
-            backoff_cause,
-            vector,
-            send: vector && context.mode.may_write(),
-        }
-    }
-
     /// One pack, sent: the validated command, its receipt and its report.
     async fn send_plan(
         &self,
@@ -267,7 +221,8 @@ impl Dispatcher {
         sink: &dyn CommandSink,
         recovery_started: &AtomicBool,
     ) -> PackReport {
-        let sent = if plan.send {
+        let skipped = plan.skip.is_some();
+        let sent = if !skipped && plan.send {
             // A verified cell-safety write is not proof the transport recovered: it bypasses the
             // backoff, so it must not clear the fault that is still suppressing ordinary writes.
             let safety_traffic = matches!(
@@ -285,11 +240,15 @@ impl Dispatcher {
                 sink,
                 SendContext {
                     now: frame.now,
+                    accepted_intent_w: (plan.command_w.abs() > crate::dispatch::HOLD_DEADBAND_W)
+                        .then_some(plan.command_w),
                     safety_traffic,
                     recovery_started,
                 },
             )
             .await
+        } else if skipped {
+            row::skipped(&plan)
         } else {
             Sent::none()
         };
