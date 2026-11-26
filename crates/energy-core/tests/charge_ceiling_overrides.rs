@@ -100,6 +100,12 @@ fn negative_write_to(sink: &FakeSink, pack_id: &str) -> bool {
         .any(|(id, sent)| id == pack_id && matches!(sent, Sent::Write(watts) if *watts < 0.0))
 }
 
+fn hold_to(sink: &FakeSink, pack_id: &str) -> bool {
+    sink.commands()
+        .iter()
+        .any(|(id, sent)| id == pack_id && matches!(sent, Sent::Hold))
+}
+
 /// A manual charge override cannot re-authorise a ceiling-latched pack under a negative tick.
 #[tokio::test]
 async fn a_manual_charge_override_cannot_overcharge_a_ceiling_latched_pack() {
@@ -219,4 +225,78 @@ async fn a_manual_discharge_override_can_use_a_ceiling_latched_pack() {
         "the discharge override must reach the device: {:?}",
         sink.commands()
     );
+}
+
+/// An explicit neutral override is not a charge even with a positive tick target.
+#[tokio::test]
+async fn a_manual_hold_override_on_a_latched_pack_is_not_a_charge_skip() {
+    let fleet = vec![full("SN-FULL"), able("SN-A", 60.0)];
+    let dispatcher = Dispatcher::new(limits(), true, 10);
+    latch(&dispatcher, &fleet).await;
+
+    let sink = FakeSink::new();
+    let overrides = Overrides::new(vec![ManualOverride::manual(
+        "SN-FULL",
+        OverrideAction::Hold,
+        NOW + 30,
+    )]);
+    let outcome = tick(
+        &dispatcher,
+        &sink,
+        &fleet,
+        &plan_at(1600.0, 20.0),
+        NOW + 5,
+        &overrides,
+    )
+    .await;
+    let row = outcome.report("SN-FULL").expect("full row");
+    assert_eq!(row.requested_w, 0.0);
+    assert_eq!(row.intended_w, 0.0);
+    assert_eq!(row.reason, Reason::ManualOverride);
+    assert!(!row.capability_skipped);
+    assert!(
+        !row.note
+            .as_deref()
+            .is_some_and(|note| note.contains("ceiling")),
+        "{:?}",
+        row.note
+    );
+    assert!(hold_to(&sink, "SN-FULL"), "{:?}", sink.commands());
+}
+
+/// The maintenance hold is a neutral hold, not the maintenance full-charge path.
+#[tokio::test]
+async fn a_maintenance_hold_override_on_a_latched_pack_is_not_a_charge_skip() {
+    let fleet = vec![full("SN-FULL"), able("SN-A", 60.0)];
+    let dispatcher = Dispatcher::new(limits(), true, 10);
+    latch(&dispatcher, &fleet).await;
+
+    let sink = FakeSink::new();
+    let overrides = Overrides::new(vec![ManualOverride::maintenance(
+        "SN-FULL",
+        OverrideAction::Hold,
+        NOW + 30,
+    )]);
+    let outcome = tick(
+        &dispatcher,
+        &sink,
+        &fleet,
+        &plan_at(1600.0, 20.0),
+        NOW + 5,
+        &overrides,
+    )
+    .await;
+    let row = outcome.report("SN-FULL").expect("full row");
+    assert_eq!(row.requested_w, 0.0);
+    assert_eq!(row.intended_w, 0.0);
+    assert_eq!(row.reason, Reason::MaintenanceHold);
+    assert!(!row.capability_skipped);
+    assert!(
+        !row.note
+            .as_deref()
+            .is_some_and(|note| note.contains("ceiling")),
+        "{:?}",
+        row.note
+    );
+    assert!(hold_to(&sink, "SN-FULL"), "{:?}", sink.commands());
 }

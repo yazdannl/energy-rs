@@ -76,7 +76,15 @@ fn inputs<'a>(
     let mut requested_w = requested_watts(&context, overridden, allocated, guarded);
     // Device charge authority outranks even an override, but only on the charge side: resolve the
     // effective request first, then cancel a charging one. A discharge request runs the ladder.
-    let skip = charge_skip(frame, pack_id, requested_w);
+    // An explicit neutral override is not a charge request either: its hold must reach the device
+    // and its row must keep the override reason, even when the tick target is positive.
+    let neutral_override = overridden
+        .is_some_and(|entry| matches!(entry.action, OverrideAction::Hold | OverrideAction::Off));
+    let skip = if neutral_override {
+        None
+    } else {
+        charge_skip(frame, pack_id, requested_w)
+    };
     if skip.is_some() {
         requested_w = 0.0;
     }
