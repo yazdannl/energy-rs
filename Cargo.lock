@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "energy-battery"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "axum",
  "chrono",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "energy-core"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "chrono",
  "energy-battery",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "energy-forecast"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "energy-ha"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "chrono",
  "futures-util",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "energy-ledger"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "energy-opt"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "cc",
  "pretty_assertions",
@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "energy-price"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "energy-server"
-version = "0.15.12"
+version = "0.15.13"
 dependencies = [
  "anyhow",
  "axum",
