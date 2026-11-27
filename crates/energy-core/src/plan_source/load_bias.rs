@@ -12,7 +12,10 @@ pub(crate) const MIN_WINDOW_S: i64 = 60;
 /// Longest window the setting may ask for, seconds.
 pub(crate) const MAX_WINDOW_S: i64 = 3600;
 /// A gap longer than this is a hole in the evidence, not a plateau to integrate across.
-const MAX_SAMPLE_GAP_S: i64 = 60;
+/// Sampling is one tick (5 s), so 30 s tolerates skipped ticks without bridging a stale run.
+const MAX_SAMPLE_GAP_S: i64 = 30;
+/// The final sample must be at most this old: `max(30 s, 2 x tick)` for the 5 s tick.
+const FRESH_ENDPOINT_S: i64 = 30;
 
 /// The measured rate and how much real time it covers.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -53,9 +56,15 @@ pub(crate) fn effective_lookback_s(setting_s: i64, replan_s: i64) -> i64 {
 
 /// Integrate `(at, load_kw)` samples over the most recent `lookback_s` seconds.
 ///
-/// Samples must be chronological and non-negative; a non-finite value breaks the run instead of
-/// being zero-filled. Less than a minute of usable time is never a measurement.
+/// Samples must be chronological, non-negative and reach the present; a non-finite value or an
+/// interior gap breaks the run instead of being zero-filled or quietly skipped. Less than a minute
+/// of usable time is never a measurement.
 pub(crate) fn measure(samples: &[(i64, f64)], now: i64, lookback_s: i64) -> Option<Observation> {
+    // Old-but-complete windows are not live consumption evidence: the endpoint must be fresh.
+    let last_at = samples.last()?.0;
+    if last_at > now || now - last_at > FRESH_ENDPOINT_S {
+        return None;
+    }
     let window = lookback_s.max(MIN_WINDOW_S);
     let cutoff = now.saturating_sub(window);
     let mut energy_kwh = 0.0;
@@ -75,7 +84,10 @@ pub(crate) fn measure(samples: &[(i64, f64)], now: i64, lookback_s: i64) -> Opti
         }
         if let Some((prior_at, prior_load)) = previous {
             let dt = at - prior_at;
-            if dt > 0 && dt <= MAX_SAMPLE_GAP_S {
+            if dt > MAX_SAMPLE_GAP_S {
+                return None;
+            }
+            if dt > 0 {
                 energy_kwh += prior_load.midpoint(load_kw) * dt as f64 / 3600.0;
                 elapsed_s += dt as f64;
             }
@@ -131,7 +143,7 @@ mod tests {
 
     #[test]
     fn one_minute_is_the_shortest_usable_window() {
-        let samples = vec![(0, 1.0), (60, 1.0)];
+        let samples = vec![(0, 1.0), (30, 1.0), (60, 1.0)];
         assert_eq!(measure(&samples, 60, 300).unwrap().elapsed_s, 60);
         assert!(measure(&[(0, 1.0), (30, 1.0)], 30, 300).is_none());
         assert!(
@@ -142,37 +154,56 @@ mod tests {
 
     #[test]
     fn bad_samples_are_refused_not_zero_filled() {
-        let clean = vec![(0, 1.0), (60, 1.0)];
+        let clean = vec![(0, 1.0), (30, 1.0), (60, 1.0)];
         for (at, load) in [(60, f64::NAN), (60, f64::INFINITY), (60, -1.0)] {
             let mut samples = clean.clone();
-            samples[1] = (at, load);
+            samples[2] = (at, load);
             assert!(measure(&samples, 60, 300).is_none(), "{load}");
         }
         assert!(measure(&clean, 60, 300).is_some());
     }
 
     #[test]
-    fn a_longer_lookback_sees_older_samples() {
-        let samples = vec![
-            (0, 4.0),
-            (30, 4.0),
-            (300, 1.0),
-            (330, 1.0),
-            (360, 1.0),
-            (420, 1.0),
-        ];
-        let short = measure(&samples, 420, 120).expect("short window");
-        let long = measure(&samples, 420, 600).expect("long window");
+    fn a_stale_endpoint_is_not_evidence() {
+        let samples = vec![(0, 1.0), (30, 1.0), (60, 1.0)];
+        assert!(measure(&samples, 300, 300).is_none(), "no sample near now");
+        assert!(measure(&samples, 90, 300).is_some(), "still fresh at 30 s");
+    }
+
+    #[test]
+    fn an_interior_gap_poisons_the_window() {
+        let samples = vec![(0, 1.0), (30, 1.0), (120, 1.0), (150, 1.0)];
+        assert!(measure(&samples, 150, 300).is_none(), "a 90 s hole");
+        assert!(
+            measure(&samples[1..], 150, 120).is_none(),
+            "the hole stays inside the short window"
+        );
+        assert!(
+            measure(&[(0, 1.0), (30, 1.0), (60, 1.0)], 60, 300).is_some(),
+            "a connected window is still usable"
+        );
+    }
+
+    #[test]
+    fn a_longer_lookback_sees_older_connected_samples() {
+        let samples: Vec<(i64, f64)> = (0..=10)
+            .map(|index| {
+                let at = index * 30;
+                (at, if at <= 120 { 4.0 } else { 1.0 })
+            })
+            .collect();
+        let short = measure(&samples, 300, 120).expect("short window");
+        let long = measure(&samples, 300, 600).expect("long window");
         assert!((short.rate_kw - 1.0).abs() < 1e-9);
         assert!(long.rate_kw > 1.0, "{}", long.rate_kw);
-        assert_eq!(long.elapsed_s, 150, "the 270 s hole is not integrated");
+        assert_eq!(long.elapsed_s, 300, "every 30 s step is connected");
     }
 
     #[test]
     fn evidence_is_integrated_by_time_not_averaged_by_sample_count() {
-        let samples = vec![(0, 2.0), (30, 2.0), (90, 0.0)];
+        let samples = vec![(0, 2.0), (30, 2.0), (60, 2.0), (90, 0.0)];
         let observed = measure(&samples, 90, 300).expect("evidence");
-        assert!((observed.rate_kw - 4.0 / 3.0).abs() < 1e-9, "{observed:?}");
+        assert!((observed.rate_kw - 5.0 / 3.0).abs() < 1e-9, "{observed:?}");
     }
 
     #[test]

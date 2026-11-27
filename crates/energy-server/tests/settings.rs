@@ -271,8 +271,10 @@ async fn load_forecast_bias_settings_are_writable_and_bounded() {
     for (key, value) in [
         ("load_forecast_bias_slots", json!(-1)),
         ("load_forecast_bias_slots", json!(97)),
+        ("load_forecast_bias_slots", json!(1.5)),
         ("load_forecast_bias_lookback_s", json!(30)),
         ("load_forecast_bias_lookback_s", json!(3_601)),
+        ("load_forecast_bias_lookback_s", json!(600.5)),
     ] {
         let (status, _) = patch(
             &fixture.router(),

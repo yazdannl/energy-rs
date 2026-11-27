@@ -84,18 +84,15 @@ static SPECS: [SettingSpec; 36] = [
     },
     SettingSpec {
         key: "load_forecast_bias_slots",
-        kind: SettingKind::Number {
-            min: 0.0,
-            max: 96.0,
-        },
+        kind: SettingKind::Integer { min: 0, max: 96 },
         default: "1",
     },
     SettingSpec {
         key: "load_forecast_bias_lookback_s",
         // 0 is the dynamic default: the replan interval decides the window.
-        kind: SettingKind::NumberOrZero {
-            min: 60.0,
-            max: 3_600.0,
+        kind: SettingKind::IntegerOrZero {
+            min: 60,
+            max: 3_600,
         },
         default: "0",
     },

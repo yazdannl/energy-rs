@@ -125,6 +125,20 @@ async fn five_minutes_of_consumption_corrects_the_current_and_next_slot() {
 }
 
 #[tokio::test]
+async fn a_dynamic_default_follows_the_configured_replan_interval() {
+    let src = source(supply(), config(1, 0, 600));
+    observe(&src, NOW - 120, NOW, 1.2);
+    let plan = src.plan(NOW, packs()).await.expect("plan");
+    assert!((plan.slots[0].load_kw - 1.2).abs() < 1e-6);
+    assert!(
+        plan.degraded
+            .expect("note")
+            .contains("lookback 600 s from replan_seconds"),
+        "the dynamic default must follow the configured interval"
+    );
+}
+
+#[tokio::test]
 async fn zero_bias_slots_corrects_only_the_current_slot() {
     let src = source(supply(), config(0, 0, 300));
     observe(&src, NOW - 120, NOW, 1.2);
