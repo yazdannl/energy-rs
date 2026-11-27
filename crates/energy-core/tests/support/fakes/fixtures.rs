@@ -78,7 +78,9 @@ pub fn plan(now: i64, power_kw: f64, soc_kwh: f64) -> Plan {
         horizon_end: start + 900 * i64::try_from(HORIZON_SLOTS).unwrap_or(0),
         feasible: true,
         objective_eur: 0.0,
-        sell_floor: Some(0.05),
+        // The generic fixture has no cost-basis floor: tests that exercise the sell-floor gate
+        // set their own, and the rest keep following the meter as before.
+        sell_floor: None,
         export_floor_eur_per_kwh: None,
         cost_basis_eur_per_kwh: None,
         peak_reserve_kwh: None,

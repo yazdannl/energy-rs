@@ -1,11 +1,13 @@
 //! The plan setpoint corrected towards the measured grid, once per tick.
 //!
-//! The follow only ever holds the site at **zero** exchange. A slot that is deliberately exchanging
+//! The follow normally holds the site at **zero** exchange. A slot that is deliberately exchanging
 //! energy — charging from the grid, or selling — has already decided its battery rate, and that
 //! rate is the decision: following the grid there would trade the plan's charge (or sale) for a
 //! net-import target, which is not what the plan said. So those slots are left alone, and every
 //! other slot is self-consumption: absorb the surplus, cover the house, export or import only what
-//! the fleet physically cannot avoid.
+//! the fleet physically cannot avoid. The hybrid exception is a self-consumption slot whose
+//! feed-in price clears the plan's cost-basis floor: its planned discharge stays, and the ladder
+//! judges any resulting export.
 
 use crate::dispatch::{FleetView, MeterReading};
 use crate::safety::{FollowRequest, GridFollow, SafetyLimits};
@@ -37,7 +39,7 @@ pub(crate) fn target(
     let (Some(slot), Some(grid_w)) = (slot, meter.grid_w) else {
         return plan_power_w;
     };
-    let Some(desired_grid_w) = desired_grid_w(slot) else {
+    let Some(desired_grid_w) = desired_grid_w(slot, limits.sell_floor_eur_per_kwh) else {
         return plan_power_w;
     };
     let follow = GridFollow {
@@ -53,23 +55,23 @@ pub(crate) fn target(
     })
 }
 
-/// The grid this slot should hold, W; `None` when the slot is deliberately exchanging energy.
+/// The grid this slot should hold, W; `None` when its plan setpoint stands.
 ///
 /// A slot whose battery and grid flow point the same way is buying to charge or selling on purpose.
 /// Its number is a *battery rate*, not a grid target, so the follow leaves it alone. Every other
 /// slot's grid is an artefact of the load and PV the plan assumed, and the site holds the meter at
-/// zero instead — absorb what the sun delivers, cover what the house draws, rather than importing
-/// to match a forecast that turned out wrong. A zero-rate hold whose *published* buy and feed-in
-/// prices match is the exception: buying and selling have the same price there, so following only
-/// loses wear and round-trip energy. The per-slot prices are the signal, not the operator's
-/// `net_metering` flag: a provider can publish equal prices with the flag off, and a netted regime
-/// can still publish a lower feed-in in a slot (e.g. after the saldering budget runs out). What
-/// settles this slot's energy is the price pair, so that is what dispatch must judge.
+/// zero — unless the feed-in price pays for the planned discharge under the plan's own cost-basis
+/// floor; then the plan stands and the ladder judges the export. A zero-rate hold whose *published*
+/// buy and feed-in prices match is also an exception: buying and selling have the same price there,
+/// so following only loses wear and round-trip energy. The per-slot prices are the signal, not the
+/// operator's `net_metering` flag: a provider can publish equal prices with the flag off, and a
+/// netted regime can still publish a lower feed-in in a slot (e.g. after the saldering budget runs
+/// out). What settles this slot's energy is the price pair, so that is what dispatch must judge.
 ///
 /// The planner's convention is `battery_kw > 0` charges and `battery_kw < 0` discharges, with
 /// `planned_grid = load_kw - pv_kw + battery_kw` (positive imports). A discharging slot with
 /// negative planned grid is therefore exporting on purpose, not idle.
-fn desired_grid_w(slot: &PlanSlot) -> Option<f64> {
+fn desired_grid_w(slot: &PlanSlot, sell_floor: Option<f64>) -> Option<f64> {
     if ![slot.load_kw, slot.pv_kw, slot.battery_kw]
         .iter()
         .all(|value| value.is_finite())
@@ -91,7 +93,20 @@ fn desired_grid_w(slot: &PlanSlot) -> Option<f64> {
     }
     let planned_grid = slot.load_kw - slot.pv_kw + slot.battery_kw;
     let exchanging = slot.battery_kw * planned_grid > 0.0;
-    (!exchanging).then_some(0.0)
+    if exchanging {
+        return None;
+    }
+    // The ladder's cost-basis floor also settles a self-consumption discharge: when the slot pays
+    // for its export, the plan stands. Missing or non-finite prices fail closed to the zero-grid
+    // follow, and the comparison never sees a NaN or an infinity.
+    if let (Some(floor), feed) = (sell_floor, slot.feed_in)
+        && feed.is_finite()
+        && floor.is_finite()
+        && feed >= floor - PRICE_EPSILON
+    {
+        return None;
+    }
+    Some(0.0)
 }
 
 /// The fleet's AC capability, W: what the packs together could take or deliver.
@@ -115,6 +130,10 @@ mod tests {
 
     fn slot(load_kw: f64, pv_kw: f64, battery_kw: f64) -> PlanSlot {
         priced_slot(load_kw, pv_kw, battery_kw, 0.0, 0.0)
+    }
+
+    fn wanted(slot: &PlanSlot) -> Option<f64> {
+        desired_grid_w(slot, None)
     }
 
     fn priced_slot(load_kw: f64, pv_kw: f64, battery_kw: f64, buy: f64, feed: f64) -> PlanSlot {
@@ -141,7 +160,7 @@ mod tests {
     #[test]
     fn peak_discharge_keeps_its_export_setpoint() {
         let slot = slot(0.4646, 0.0, -3.2);
-        assert_eq!(desired_grid_w(&slot), None, "a deliberate export");
+        assert_eq!(wanted(&slot), None, "a deliberate export");
         assert_eq!(
             follow(&slot, -3_200.0, 0.0, &FleetView::default()),
             -3_200.0
@@ -151,21 +170,21 @@ mod tests {
     #[test]
     fn self_consumption_follows_the_grid_to_zero() {
         let slot = slot(0.5, 0.0, -0.2);
-        assert_eq!(desired_grid_w(&slot), Some(0.0), "grid is an artefact");
+        assert_eq!(wanted(&slot), Some(0.0), "grid is an artefact");
         assert_eq!(follow(&slot, -200.0, 500.0, &FleetView::default()), -500.0);
     }
 
     #[test]
     fn net_metered_reserve_hold_keeps_the_plan_setpoint() {
         let slot = priced_slot(0.8, 0.0, 0.0, 0.415_838, 0.415_838);
-        assert_eq!(desired_grid_w(&slot), None, "self-consumption pays nothing");
+        assert_eq!(wanted(&slot), None, "self-consumption pays nothing");
         assert_eq!(follow(&slot, 0.0, 800.0, &FleetView::default()), 0.0);
     }
 
     #[test]
     fn a_zero_price_hold_is_not_treated_as_netting() {
         let slot = priced_slot(0.5, 0.0, 0.0, 0.0, 0.0);
-        assert_eq!(desired_grid_w(&slot), Some(0.0), "prices are missing");
+        assert_eq!(wanted(&slot), Some(0.0), "prices are missing");
         assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
     }
 
@@ -209,71 +228,63 @@ mod tests {
     #[test]
     fn a_small_nonzero_setpoint_is_not_a_hold_under_netting() {
         let slot = priced_slot(0.8, 0.0, -0.05, 0.32, 0.32);
-        assert_eq!(desired_grid_w(&slot), Some(0.0), "0.05 kW is real");
+        assert_eq!(wanted(&slot), Some(0.0), "0.05 kW is real");
         assert_eq!(follow(&slot, -50.0, 500.0, &FleetView::default()), -500.0);
     }
 
     #[test]
     fn net_metered_hold_does_not_store_pv_surplus() {
         let slot = priced_slot(0.2, 0.7, 0.0, 0.32, 0.32);
-        assert_eq!(desired_grid_w(&slot), None, "export pays the same");
+        assert_eq!(wanted(&slot), None, "export pays the same");
         assert_eq!(follow(&slot, 0.0, -500.0, &FleetView::default()), 0.0);
     }
 
     #[test]
     fn metered_hold_still_follows_when_buy_and_feed_differ() {
         let slot = priced_slot(0.5, 0.0, 0.0, 0.45, 0.08);
-        assert_eq!(desired_grid_w(&slot), Some(0.0), "import is dearer");
+        assert_eq!(wanted(&slot), Some(0.0), "import is dearer");
         assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
     }
 
     #[test]
     fn deliberate_charge_still_ignores_grid_follow_under_netting() {
         let slot = priced_slot(0.8, 0.0, 0.5, 0.32, 0.32);
-        assert_eq!(desired_grid_w(&slot), None, "a deliberate grid charge");
+        assert_eq!(wanted(&slot), None, "a deliberate grid charge");
         assert_eq!(follow(&slot, 500.0, 1300.0, &FleetView::default()), 500.0);
     }
 
     #[test]
     fn a_positive_spread_inside_tolerance_is_netting() {
         let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_555);
-        assert_eq!(desired_grid_w(&slot), None, "50 micro-euro is rounding");
+        assert_eq!(wanted(&slot), None, "50 micro-euro is rounding");
         assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), 0.0);
     }
 
     #[test]
     fn a_positive_spread_outside_tolerance_still_follows() {
         let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_705);
-        assert_eq!(
-            desired_grid_w(&slot),
-            Some(0.0),
-            "0.0002 EUR is a real spread"
-        );
+        assert_eq!(wanted(&slot), Some(0.0), "0.0002 EUR is a real spread");
         assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
     }
 
     #[test]
     fn a_negative_spread_inside_tolerance_is_netting() {
         let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_455);
-        assert_eq!(desired_grid_w(&slot), None, "50 micro-euro either way");
+        assert_eq!(wanted(&slot), None, "50 micro-euro either way");
         assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), 0.0);
     }
 
     #[test]
     fn a_negative_spread_outside_tolerance_still_follows() {
         let slot = priced_slot(0.5, 0.0, 0.0, 0.315_505, 0.315_305);
-        assert_eq!(desired_grid_w(&slot), Some(0.0), "dearer import is real");
+        assert_eq!(wanted(&slot), Some(0.0), "dearer import is real");
         assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
     }
 
     #[test]
     fn an_equal_negative_price_pair_is_not_netting() {
         let slot = priced_slot(0.5, 0.0, 0.0, -0.05, -0.05);
-        assert_eq!(
-            desired_grid_w(&slot),
-            Some(0.0),
-            "negative prices are a signal"
-        );
+        assert_eq!(wanted(&slot), Some(0.0), "negative prices are a signal");
         assert_eq!(follow(&slot, 0.0, 500.0, &FleetView::default()), -500.0);
     }
 }
