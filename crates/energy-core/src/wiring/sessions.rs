@@ -185,12 +185,11 @@ fn learn_and_publish(
     );
     let profile = LearningProfile::from_report(&report);
     let event = LearningEvent::new(state.sn.clone(), now, report.summary());
-    // `learned_at` is also the provenance stamp the precedence resolver reads. A capacity-only
-    // pass carries a current `measured_at`, but no round trip was measured: keep the
-    // never-measured stamp so the typed default (or the operator's entry) still applies. A fresh
-    // measurement, a carried-forward one and a partial pairing all carry round-trip evidence.
-    let published_round_trip =
-        report.efficiency.applied || report.efficiency.kept_previous || report.efficiency.pairs > 0;
+    // `learned_at` is also the provenance stamp the precedence resolver reads. Only a confident
+    // measurement or a confident profile carried forward publishes a round trip: capacity-only
+    // and partial-pair passes keep the typed seed, so they keep the never-measured stamp and an
+    // operator's entry stays the default.
+    let published_round_trip = report.efficiency.applied || report.efficiency.kept_previous;
     let learned_at = if published_round_trip {
         report.measured_at.timestamp()
     } else {
@@ -282,6 +281,8 @@ mod boundary_tests;
 mod event_tests;
 #[cfg(test)]
 mod failure_tests;
+#[cfg(test)]
+mod legacy_eta_tests;
 #[cfg(test)]
 mod legacy_tests;
 #[cfg(test)]

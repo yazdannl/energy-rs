@@ -134,6 +134,26 @@ fn a_capacity_only_pass_keeps_the_unmeasured_stamp_and_the_manual_entry() {
 }
 
 #[test]
+fn a_partial_pair_pass_without_a_confident_prior_keeps_the_manual_entry() {
+    let (ledger, id) = pack_with_manual();
+    let store = LedgerLearningStore::new(Arc::clone(&ledger));
+    let base = 1_700_000_000;
+    // One closed cycle is a candidate pair, but below MIN_PAIRS: the estimate stays the typed
+    // seed. Accepted pairs alone are not a published round trip.
+    seed_cycle(&ledger, id, base);
+    let reports = relearn(&ledger, &store, base + 6 * 3600);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].efficiency.pairs, 1);
+    assert!(!reports[0].efficiency.applied);
+    assert!(!reports[0].efficiency.kept_previous);
+
+    let pack = row(&ledger);
+    assert_eq!(pack.learned_at, Some(NEVER_MEASURED_AT.timestamp()));
+    assert_eq!(pack.learned_round_trip, Some(DEFAULT_ROUND_TRIP));
+    assert_eq!(effective(&ledger), (MANUAL, RoundTripSource::Manual));
+}
+
+#[test]
 fn a_fresh_measurement_from_the_wiring_outranks_the_manual_entry() {
     let (ledger, id) = pack_with_manual();
     let store = LedgerLearningStore::new(Arc::clone(&ledger));
@@ -190,23 +210,4 @@ fn a_retained_confident_measurement_still_outranks_the_manual_entry() {
     assert!(pack.learned_at.is_some_and(|at| at >= now));
     assert_eq!(pack.learned_round_trip, Some(measured));
     assert_eq!(effective(&ledger), (measured, RoundTripSource::Learned));
-}
-
-#[test]
-fn a_pre_v15_legacy_row_keeps_its_published_round_trip_over_the_manual_entry() {
-    let (ledger, id) = pack_with_manual();
-    // Upgrade-era shape: a v14 file had learned_capacity_kwh, learned_round_trip,
-    // learned_confidence and learned_at, but no manual_round_trip column at all. After migration
-    // v15 that column is NULL and the old published numbers still decide the efficiency.
-    ledger
-        .packs()
-        .expect("packs")
-        .set_manual_round_trip(SN, None)
-        .expect("a pre-v15 file has no manual column");
-    ledger
-        .packs()
-        .expect("packs")
-        .set_learning(id, Some(1.80), 0.88, 0.7, 1_700_000_000)
-        .expect("the older binary's published numbers");
-    assert_eq!(effective(&ledger), (0.88, RoundTripSource::Learned));
 }

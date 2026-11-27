@@ -42,8 +42,13 @@ impl RoundTripSource {
 
 /// A ledger row's round trip counts as learned only once a pass published a measurement.
 ///
-/// Unmeasured passes store the typed seed with the never-measured stamp; treating that as a
-/// measurement would hide the operator's entry forever.
+/// The stamp is not proof on its own: older versions wrote a current `learned_at` on capacity-only
+/// passes that kept the typed round trip. Migration v15 backfills those rows to the never-measured
+/// sentinel using the durable profile JSON in `settings` (`learning.profile.<serial>`): only
+/// `efficiency_applied = true` leaves a stamp intact. Live passes now stamp the row only when an
+/// efficiency measurement was applied or confidently carried forward. A survivor of that stamp is
+/// therefore evidence of a measurement; treating anything else as learned would hide the
+/// operator's entry forever.
 pub fn published_round_trip(value: Option<f64>, learned_at: Option<i64>) -> Option<f64> {
     let published = learned_at.is_some_and(|at| at > NEVER_MEASURED_AT.timestamp());
     published.then_some(value).flatten()
