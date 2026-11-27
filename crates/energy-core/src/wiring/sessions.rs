@@ -2,6 +2,7 @@
 
 use energy_battery::learning::{
     CapacityBounds, CapacityPool, LearningEvent, LearningProfile, LearningReport, LearningStore,
+    NEVER_MEASURED_AT,
 };
 use energy_ledger::{Ledger, Session, SessionRules, Tier};
 
@@ -184,7 +185,18 @@ fn learn_and_publish(
     );
     let profile = LearningProfile::from_report(&report);
     let event = LearningEvent::new(state.sn.clone(), now, report.summary());
-    store_row(ledger, state.id, &report, report.measured_at.timestamp())?;
+    // `learned_at` is also the provenance stamp the precedence resolver reads. A capacity-only
+    // pass carries a current `measured_at`, but no round trip was measured: keep the
+    // never-measured stamp so the typed default (or the operator's entry) still applies. A fresh
+    // measurement, a carried-forward one and a partial pairing all carry round-trip evidence.
+    let published_round_trip =
+        report.efficiency.applied || report.efficiency.kept_previous || report.efficiency.pairs > 0;
+    let learned_at = if published_round_trip {
+        report.measured_at.timestamp()
+    } else {
+        NEVER_MEASURED_AT.timestamp()
+    };
+    store_row(ledger, state.id, &report, learned_at)?;
     let event = store.save_with_event(&profile, event)?;
     store.publish_event(&event)?;
     Ok(report)
@@ -272,6 +284,8 @@ mod event_tests;
 mod failure_tests;
 #[cfg(test)]
 mod legacy_tests;
+#[cfg(test)]
+mod manual_eta_tests;
 #[cfg(test)]
 mod pooling_tests;
 #[cfg(test)]

@@ -90,6 +90,34 @@ async fn patch_rejects_out_of_range_and_non_numeric_percentages() {
 }
 
 #[tokio::test]
+async fn a_failed_second_update_rolls_back_the_alias() {
+    let fixture = Fixture::new();
+    // The alias UPDATE runs first; a trigger that refuses the later manual UPDATE proves the two
+    // writes share one transaction. Without it the alias would stay changed after the 500.
+    let db = rusqlite::Connection::open(fixture.dir.path().join("energy_rs.db")).expect("db");
+    db.execute_batch(
+        "CREATE TRIGGER reject_manual BEFORE UPDATE OF manual_round_trip ON packs
+         BEGIN SELECT RAISE(ABORT, 'manual write refused'); END;",
+    )
+    .expect("the trigger is installed");
+    drop(db);
+
+    let router = fixture.router();
+    let (status, body) = patch(
+        &router,
+        &uri(),
+        json!({ "alias": "Should Roll Back", "roundTripPct": 83.0 }),
+    )
+    .await;
+    assert_eq!(status, 500, "{body}");
+    assert_eq!(body["error"]["code"], "internal");
+
+    let stored = pack_body(&router, SN).await;
+    assert_eq!(stored["alias"], Value::Null);
+    assert_eq!(stored["manualRoundTrip"], Value::Null);
+}
+
+#[tokio::test]
 async fn packs_reports_learned_manual_and_default_sources() {
     let fixture = Fixture::new();
     let router = fixture.router();
@@ -102,8 +130,12 @@ async fn packs_reports_learned_manual_and_default_sources() {
         .expect("a pack row")
         .id;
 
-    // A live profile with a published measurement wins over a manual entry on the other pack.
+    // The live pack has its OWN manual entry: its published profile must still win.
+    let live_uri = format!("/api/v1/packs/{}", fixture.pack_sn);
+    let (status, _) = patch(&router, &live_uri, json!({ "roundTripPct": 84.0 })).await;
+    assert_eq!(status, 200);
     let live = pack_body(&router, &fixture.pack_sn).await;
+    assert_eq!(live["manualRoundTrip"], 0.84);
     assert_eq!(live["learned"]["roundTripSource"], "measured");
     assert_eq!(live["roundTripSource"], "learned");
     assert_eq!(live["roundTrip"], 0.9);

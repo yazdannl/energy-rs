@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::LedgerError;
 use crate::measurement::Measurement;
-use crate::pack::{Pack, PackState};
+use crate::pack::{Pack, PackField, PackState};
 
 const COLUMNS: &str = "id, sn, name, alias, label_capacity_kwh, reported_capacity_kwh, max_charge_w, max_discharge_w, \
      first_seen, last_seen, learned_capacity_kwh, learned_round_trip, learned_confidence, learned_at, \
@@ -109,6 +109,58 @@ impl<'a> Packs<'a> {
             .conn
             .query_row(&sql, params![sn, round_trip], Pack::from_row)
             .optional()?;
+        Ok(pack)
+    }
+
+    /// Apply the operator's alias and manual round trip in one transaction.
+    ///
+    /// Both fields are optional edits: `Keep` leaves the stored value alone and `Clear` writes
+    /// `NULL`. A failure in either statement rolls both back, so a rejected PATCH cannot leave a
+    /// half-written pack.
+    pub fn patch(
+        &self,
+        sn: &str,
+        alias: PackField<&str>,
+        manual: PackField<f64>,
+    ) -> Result<Option<Pack>, LedgerError> {
+        let tx = self.conn.unchecked_transaction()?;
+        match alias {
+            PackField::Set(value) => {
+                tx.execute(
+                    "UPDATE packs SET alias = ?2 WHERE sn = ?1",
+                    params![sn, value],
+                )?;
+            }
+            PackField::Clear => {
+                tx.execute("UPDATE packs SET alias = NULL WHERE sn = ?1", params![sn])?;
+            }
+            PackField::Keep => {}
+        }
+        match manual {
+            PackField::Set(value) => {
+                tx.execute(
+                    "UPDATE packs SET manual_round_trip = ?2 WHERE sn = ?1",
+                    params![sn, value],
+                )?;
+            }
+            PackField::Clear => {
+                tx.execute(
+                    "UPDATE packs SET manual_round_trip = NULL WHERE sn = ?1",
+                    params![sn],
+                )?;
+            }
+            PackField::Keep => {}
+        }
+        let pack = tx
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM packs WHERE sn = ?1"),
+                params![sn],
+                Pack::from_row,
+            )
+            .optional()?;
+        if pack.is_some() {
+            tx.commit()?;
+        }
         Ok(pack)
     }
 

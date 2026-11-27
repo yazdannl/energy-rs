@@ -760,6 +760,7 @@ dependencies = [
  "energy-price",
  "futures-util",
  "http-body-util",
+ "rusqlite",
  "rust-embed",
  "serde",
  "serde_json",

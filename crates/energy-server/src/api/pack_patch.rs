@@ -21,7 +21,7 @@ use crate::service::Service;
 
 use energy_battery::learning::round_trip::{from_percent, to_percent, valid_manual, valid_percent};
 use energy_battery::learning::{MAX_ROUND_TRIP, MIN_ROUND_TRIP};
-use energy_ledger::{Ledger, Pack};
+use energy_ledger::{Ledger, Pack, PackField};
 
 /// Longest alias the API accepts, characters.
 const MAX_ALIAS_CHARS: usize = 40;
@@ -52,13 +52,6 @@ enum Field<T> {
 
 impl<T> Field<T> {
     fn as_option(&self) -> Option<&T> {
-        match self {
-            Self::Clear => None,
-            Self::Value(value) => Some(value),
-        }
-    }
-
-    fn into_option(self) -> Option<T> {
         match self {
             Self::Clear => None,
             Self::Value(value) => Some(value),
@@ -155,8 +148,8 @@ fn normalize(body: &PackPatchRequest) -> Result<Patch, ApiError> {
     Ok(Patch { alias, round_trip })
 }
 
-/// Write only the fields present in the body; discovery never touches either column.
-fn store(ledger: &Ledger, sn: &str, patch: Patch) -> Result<Pack, ApiError> {
+/// Validate and write both fields in one ledger transaction.
+fn store(ledger: &Ledger, sn: &str, patch: &Patch) -> Result<Pack, ApiError> {
     let packs = ledger
         .packs()
         .map_err(|err| ApiError::internal("write pack fields", err))?;
@@ -180,20 +173,20 @@ fn store(ledger: &Ledger, sn: &str, patch: Patch) -> Result<Pack, ApiError> {
             );
         }
     }
-    if let Some(alias) = patch.alias {
-        packs
-            .set_alias(sn, alias.into_option().as_deref())
-            .map_err(|err| ApiError::internal("write pack alias", err))?;
-    }
-    let pack = match patch.round_trip {
-        Some(field) => packs
-            .set_manual_round_trip(sn, field.into_option())
-            .map_err(|err| ApiError::internal("write pack round trip", err))?,
-        None => packs
-            .by_sn(sn)
-            .map_err(|err| ApiError::internal("look up pack", err))?,
+    let alias = match &patch.alias {
+        None => PackField::Keep,
+        Some(Field::Clear) => PackField::Clear,
+        Some(Field::Value(text)) => PackField::Set(text.as_str()),
     };
-    pack.ok_or_else(|| ApiError::unknown_pack(sn))
+    let manual = match &patch.round_trip {
+        None => PackField::Keep,
+        Some(Field::Clear) => PackField::Clear,
+        Some(Field::Value(value)) => PackField::Set(*value),
+    };
+    packs
+        .patch(sn, alias, manual)
+        .map_err(|err| ApiError::internal("write pack fields", err))?
+        .ok_or_else(|| ApiError::unknown_pack(sn))
 }
 
 /// `PATCH /api/v1/packs/{sn}`
@@ -203,7 +196,7 @@ pub(crate) async fn patch_pack(
     ApiJson(body): ApiJson<PackPatchRequest>,
 ) -> Result<Json<PackPatchResponse>, ApiError> {
     let patch = normalize(&body)?;
-    let pack = with_ledger(&service, move |ledger| store(ledger, &sn, patch)).await?;
+    let pack = with_ledger(&service, move |ledger| store(ledger, &sn, &patch)).await?;
     let manual_round_trip = pack.manual_round_trip.filter(|value| valid_manual(*value));
     Ok(Json(PackPatchResponse {
         sn: pack.sn,

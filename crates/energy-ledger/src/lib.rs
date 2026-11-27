@@ -80,7 +80,7 @@ pub use measurement::{Measurement, RollupReport, Sample, SampleKind, Tier};
 pub use outbox::{
     LearningOutbox, PendingLearningEvent, PublishOutcome, QuarantinedEvent, RawValue,
 };
-pub use pack::{Pack, PackState};
+pub use pack::{Pack, PackField, PackState};
 pub use plan::{Plan, PlanSlot};
 pub use retention::{RetentionPolicy, RetentionReport};
 pub use savings::SavingsDaily;
