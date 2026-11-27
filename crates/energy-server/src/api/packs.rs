@@ -14,6 +14,9 @@ use crate::api::state_dto::{StateDto, state_dto};
 use crate::service::Service;
 
 use energy_battery::learning::PairDiagnostics;
+use energy_battery::learning::round_trip::{
+    published_round_trip, resolve, to_percent, valid_manual,
+};
 use energy_battery::{CellLatch, LearningProfile};
 use energy_core::dispatch::{ManualOverride, OverrideAction};
 use energy_core::stream::PackSnapshot;
@@ -93,6 +96,15 @@ struct PackDto {
     alias: Option<String>,
     label_capacity_kwh: f64,
     reported_capacity_kwh: Option<f64>,
+    /// Effective AC round trip after learned > manual > default precedence.
+    round_trip: f64,
+    eta_charge: f64,
+    eta_discharge: f64,
+    /// `learned`, `manual` or `default`: which candidate won.
+    round_trip_source: &'static str,
+    /// The operator's entry, when one is stored and physical; `null` otherwise.
+    manual_round_trip: Option<f64>,
+    manual_round_trip_pct: Option<f64>,
     limits: LimitsDto,
     first_seen_at: Timestamp,
     last_seen_at: Timestamp,
@@ -206,12 +218,26 @@ fn pack_dto(
     interval_days: i64,
 ) -> Result<PackDto, ApiError> {
     let pack = &stored.pack;
+    let manual = pack.manual_round_trip.filter(|value| valid_manual(*value));
+    let learned = live
+        .and_then(|snapshot| snapshot.profile.as_ref())
+        .filter(|profile| profile.efficiency_applied)
+        .map(|profile| profile.round_trip)
+        .or_else(|| published_round_trip(pack.learned_round_trip, pack.learned_at));
+    let (round_trip, source) = resolve(learned, manual);
+    let eta = round_trip.sqrt();
     Ok(PackDto {
         sn: pack.sn.clone(),
         name: pack.name.clone(),
         alias: pack.alias.clone(),
         label_capacity_kwh: pack.label_capacity_kwh,
         reported_capacity_kwh: pack.reported_capacity_kwh,
+        round_trip,
+        eta_charge: eta,
+        eta_discharge: eta,
+        round_trip_source: source.slug(),
+        manual_round_trip: manual,
+        manual_round_trip_pct: manual.map(to_percent),
         limits: LimitsDto {
             max_charge_w: live
                 .and_then(|snapshot| snapshot.max_charge_w)

@@ -3,7 +3,8 @@
 //! Discovery may re-register the same serial every poll; the upsert keeps `first_seen`, only moves
 //! `last_seen` forward, and never blanks a known capacity or limit with a `NULL` from a later
 //! report. The operator's `alias` is not part of the upsert at all: only [`Packs::set_alias`] writes
-//! it, so a re-registration cannot rename a pack back.
+//! it, so a re-registration cannot rename a pack back. `manual_round_trip` is likewise written
+//! only by [`Packs::set_manual_round_trip`]; discovery never overwrites the operator's entry.
 
 use std::sync::MutexGuard;
 
@@ -15,7 +16,7 @@ use crate::pack::{Pack, PackState};
 
 const COLUMNS: &str = "id, sn, name, alias, label_capacity_kwh, reported_capacity_kwh, max_charge_w, max_discharge_w, \
      first_seen, last_seen, learned_capacity_kwh, learned_round_trip, learned_confidence, learned_at, \
-     last_full_charge_at, dwell_started_at";
+     last_full_charge_at, dwell_started_at, manual_round_trip";
 
 /// Repository for the `packs` table, holding the ledger connection guard for the duration of a
 /// scope.
@@ -89,6 +90,24 @@ impl<'a> Packs<'a> {
         let pack = self
             .conn
             .query_row(&sql, params![sn, alias], Pack::from_row)
+            .optional()?;
+        Ok(pack)
+    }
+
+    /// Set or clear the operator's pre-learning round trip, returning the stored row.
+    ///
+    /// The physical range is validated by the caller; this repository stores the fraction as
+    /// given, so a corrupt row can be inspected even though readers ignore it.
+    pub fn set_manual_round_trip(
+        &self,
+        sn: &str,
+        round_trip: Option<f64>,
+    ) -> Result<Option<Pack>, LedgerError> {
+        let sql =
+            format!("UPDATE packs SET manual_round_trip = ?2 WHERE sn = ?1 RETURNING {COLUMNS}");
+        let pack = self
+            .conn
+            .query_row(&sql, params![sn, round_trip], Pack::from_row)
             .optional()?;
         Ok(pack)
     }

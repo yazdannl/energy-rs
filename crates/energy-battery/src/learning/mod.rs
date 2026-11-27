@@ -41,6 +41,7 @@ pub mod refusal;
 pub mod relearn;
 pub mod report;
 mod robust;
+pub mod round_trip;
 pub mod sample;
 pub mod session;
 pub mod source;
@@ -70,6 +71,7 @@ pub use profile::{LearningProfile, NEVER_MEASURED_AT};
 pub use refusal::Refusal;
 pub use relearn::{relearn, relearn_with_pool};
 pub use report::LearningReport;
+pub use round_trip::RoundTripSource;
 pub use sample::{
     CapacitySample, FULL_SPAN_PCT, INFO_SCALE_POINTS, MIN_USEFUL_SPAN_PCT, span_quality,
 };
