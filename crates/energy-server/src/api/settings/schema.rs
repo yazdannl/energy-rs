@@ -15,7 +15,7 @@ const PV_MODES: [&str; 3] = ["auto", "model", "provider"];
 const NET_METERING: [&str; 2] = ["on", "off"];
 
 /// Every writable setting, in UI order.
-static SPECS: [SettingSpec; 34] = [
+static SPECS: [SettingSpec; 36] = [
     SettingSpec {
         key: "grid_import_limit_w",
         kind: SettingKind::Number {
@@ -81,6 +81,20 @@ static SPECS: [SettingSpec; 34] = [
             max: 3_600.0,
         },
         default: "300",
+    },
+    SettingSpec {
+        key: "load_forecast_bias_slots",
+        kind: SettingKind::Integer { min: 0, max: 96 },
+        default: "1",
+    },
+    SettingSpec {
+        key: "load_forecast_bias_lookback_s",
+        // 0 is the dynamic default: the replan interval decides the window.
+        kind: SettingKind::IntegerOrZero {
+            min: 60,
+            max: 3_600,
+        },
+        default: "0",
     },
     SettingSpec {
         key: "stale_input_seconds",

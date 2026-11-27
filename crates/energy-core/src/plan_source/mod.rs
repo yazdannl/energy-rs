@@ -25,6 +25,7 @@ mod ha_supply;
 mod history;
 mod live;
 mod live_support;
+mod load_bias;
 pub mod load_profiles;
 mod load_serve;
 mod policy_handle;

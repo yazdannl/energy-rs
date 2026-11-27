@@ -162,6 +162,7 @@ fn latch_dto(latch: &CellLatch) -> LatchDto {
 fn override_dto(state: &ManualOverride) -> Result<OverrideDto, ApiError> {
     let power_w = match state.action {
         OverrideAction::Charge { watts: request } => Some(watts(request)),
+        OverrideAction::Discharge { watts: request } => Some(watts(-request)),
         OverrideAction::Hold | OverrideAction::Off => None,
     };
     Ok(OverrideDto {

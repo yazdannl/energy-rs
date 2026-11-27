@@ -22,6 +22,10 @@ pub struct EngineConfig {
     pub failsafe_on_error: bool,
     /// Normal replan interval, seconds.
     pub replan_seconds: i64,
+    /// Following slots the replan's measured-load bias may move (0..=96).
+    pub load_forecast_bias_slots: usize,
+    /// Consumption lookback for that bias, seconds; 0 resolves to `replan_seconds`.
+    pub load_forecast_bias_lookback_s: i64,
     /// Absolute stale-plan bound, seconds.
     pub stale_plan_seconds: i64,
     /// Hard SoC floor, percent of each pack's capacity (at least its own minimum).
@@ -73,6 +77,8 @@ impl Default for EngineConfig {
             tick_seconds: 5,
             failsafe_on_error: true,
             replan_seconds: 300,
+            load_forecast_bias_slots: 1,
+            load_forecast_bias_lookback_s: 0,
             stale_plan_seconds: 1800,
             reserve_soc_pct: 0.0,
             solar_reserve_pct: 0.0,

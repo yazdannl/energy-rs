@@ -29,6 +29,8 @@ const DEFAULT_TTL_S: u32 = 900;
 const MAX_TTL_S: u32 = 86_400;
 /// Charge power used when the request omits it and the pack has no known limit.
 const DEFAULT_CHARGE_W: f64 = 800.0;
+/// Discharge power used when the request omits it and the pack has no known limit.
+const DEFAULT_DISCHARGE_W: f64 = 800.0;
 
 /// The override request.
 #[derive(Debug, Deserialize)]
@@ -55,13 +57,15 @@ pub(crate) struct Override {
 fn parse_action(value: &str) -> Result<OverrideAction, ApiError> {
     match value.trim() {
         "charge" => Ok(OverrideAction::Charge { watts: 0.0 }),
+        "discharge" => Ok(OverrideAction::Discharge { watts: 0.0 }),
         "hold" => Ok(OverrideAction::Hold),
         "off" => Ok(OverrideAction::Off),
         other => Err(
-            ApiError::validation("action must be one of charge, hold, off").with_details(json!({
-                "allowed": ["charge", "hold", "off"],
-                "received": other,
-            })),
+            ApiError::validation("action must be one of charge, discharge, hold, off")
+                .with_details(json!({
+                    "allowed": ["charge", "discharge", "hold", "off"],
+                    "received": other,
+                })),
         ),
     }
 }
@@ -77,6 +81,27 @@ fn charge_power(requested: Option<f64>, limit_w: Option<f64>) -> Result<f64, Api
     if power > ceiling {
         return Err(
             ApiError::validation("powerW exceeds the pack's charge limit")
+                .with_details(json!({ "maxPowerW": watts(ceiling) })),
+        );
+    }
+    Ok(watts(power))
+}
+
+/// Discharge magnitude: positive on the wire, negative as the engine setpoint.
+fn discharge_power(requested: Option<f64>, limit_w: Option<f64>) -> Result<f64, ApiError> {
+    let ceiling = match limit_w {
+        Some(limit) if limit.is_finite() && limit > 0.0 => limit,
+        _ => DEFAULT_DISCHARGE_W,
+    };
+    let power = requested.unwrap_or(ceiling);
+    if !power.is_finite() || power <= 0.0 {
+        return Err(ApiError::validation(
+            "powerW must be a finite positive number",
+        ));
+    }
+    if power > ceiling {
+        return Err(
+            ApiError::validation("powerW exceeds the pack's discharge limit")
                 .with_details(json!({ "maxPowerW": watts(ceiling) })),
         );
     }
@@ -104,6 +129,10 @@ pub(crate) async fn create_override(
             let power = charge_power(body.power_w, pack.max_charge_w)?;
             (OverrideAction::Charge { watts: power }, Some(power))
         }
+        OverrideAction::Discharge { .. } => {
+            let power = discharge_power(body.power_w, pack.max_discharge_w)?;
+            (OverrideAction::Discharge { watts: power }, Some(-power))
+        }
         other => (other, None),
     };
     service
@@ -126,4 +155,44 @@ pub(crate) async fn create_override(
             expires_at,
         }),
     ))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::discharge_power;
+
+    #[test]
+    fn a_discharge_without_power_uses_the_pack_limit() {
+        assert_eq!(discharge_power(None, Some(600.0)).unwrap(), 600.0);
+        assert_eq!(discharge_power(None, None).unwrap(), 800.0);
+        // A non-finite or non-positive capability is not a ceiling.
+        assert_eq!(discharge_power(None, Some(f64::NAN)).unwrap(), 800.0);
+        assert_eq!(discharge_power(None, Some(f64::INFINITY)).unwrap(), 800.0);
+    }
+
+    #[test]
+    fn a_discharge_rejects_missing_zero_negative_and_non_finite_power() {
+        for requested in [
+            Some(0.0),
+            Some(-400.0),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+            Some(f64::NEG_INFINITY),
+        ] {
+            assert!(
+                discharge_power(requested, Some(800.0)).is_err(),
+                "{requested:?} must be refused"
+            );
+            // A non-finite pack limit must not let the comparison accept a bad request either.
+            assert!(discharge_power(requested, Some(f64::INFINITY)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_discharge_is_bounded_by_the_pack_limit() {
+        assert_eq!(discharge_power(Some(250.0), Some(800.0)).unwrap(), 250.0);
+        assert!(discharge_power(Some(801.0), Some(800.0)).is_err());
+        assert!(discharge_power(Some(800.0), None).is_ok());
+    }
 }

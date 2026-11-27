@@ -8,6 +8,11 @@ pub enum OverrideAction {
         /// Requested charge power, W.
         watts: f64,
     },
+    /// Discharge at this many watts; `watts` is a positive magnitude.
+    Discharge {
+        /// Requested discharge magnitude, W (the setpoint is the negative of this).
+        watts: f64,
+    },
     /// Stay neutral, whatever the plan says.
     Hold,
     /// Get out of the way for this pack: hold it and exclude it from the plan's split.
@@ -19,6 +24,7 @@ impl OverrideAction {
     pub const fn watts(self) -> f64 {
         match self {
             Self::Charge { watts } => watts,
+            Self::Discharge { watts } => -watts,
             Self::Hold | Self::Off => 0.0,
         }
     }
@@ -27,6 +33,7 @@ impl OverrideAction {
     pub const fn slug(self) -> &'static str {
         match self {
             Self::Charge { .. } => "override_charge",
+            Self::Discharge { .. } => "override_discharge",
             Self::Hold => "override_hold",
             Self::Off => "override_off",
         }

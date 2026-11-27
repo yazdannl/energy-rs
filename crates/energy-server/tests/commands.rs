@@ -217,3 +217,62 @@ async fn learning_queues_a_fleet_relearn() {
         other => panic!("unexpected command {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn a_discharge_override_queues_a_signed_negative_setpoint() {
+    let mut fixture = Fixture::new();
+    let sn = fixture.pack_sn.clone();
+    let (status, body) = post(
+        &fixture.router(),
+        "/api/v1/override",
+        json!({ "pack": sn, "action": "discharge", "powerW": 400, "ttlS": 60 }),
+    )
+    .await;
+    assert_eq!(status, 202);
+    assert_eq!(body["accepted"], true);
+    assert_eq!(body["action"], "discharge");
+    assert_eq!(body["powerW"], -400.0, "the wire setpoint is signed");
+    assert_eq!(body["ttlS"], 60);
+    match fixture.handles.commands.try_recv().unwrap() {
+        EngineCommand::Override(command) => {
+            assert_eq!(command.action, OverrideAction::Discharge { watts: 400.0 });
+            assert_eq!(command.ttl_s, 60);
+        }
+        other => panic!("unexpected command {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_discharge_override_defaults_to_the_pack_limit_and_rejects_bad_power() {
+    let mut fixture = Fixture::new();
+    let sn = fixture.pack_sn.clone();
+    let (status, body) = post(
+        &fixture.router(),
+        "/api/v1/override",
+        json!({ "pack": sn, "action": "discharge" }),
+    )
+    .await;
+    assert_eq!(status, 202);
+    assert_eq!(body["powerW"], -800.0);
+    assert_eq!(
+        fixture.handles.commands.try_recv().unwrap(),
+        EngineCommand::Override(energy_core::stream::OverrideCommand {
+            pack: sn.clone(),
+            action: OverrideAction::Discharge { watts: 800.0 },
+            ttl_s: 900,
+        })
+    );
+
+    let router = fixture.router();
+    for power in [json!(0), json!(-400), json!(5_000)] {
+        let (status, body) = post(
+            &router,
+            "/api/v1/override",
+            json!({ "pack": sn, "action": "discharge", "powerW": power }),
+        )
+        .await;
+        assert_eq!(status, 422, "{power}");
+        assert_eq!(body["error"]["code"], "validation_failed");
+    }
+    // Non-finite JSON literals never parse; the api validation unit tests cover NaN/infinity.
+}

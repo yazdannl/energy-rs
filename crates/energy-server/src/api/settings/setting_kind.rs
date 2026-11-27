@@ -20,6 +20,20 @@ pub(crate) enum SettingKind {
         /// Inclusive upper bound.
         max: f64,
     },
+    /// A whole number in an inclusive range. Fractional input would be silently rounded at runtime.
+    Integer {
+        /// Inclusive lower bound.
+        min: i64,
+        /// Inclusive upper bound.
+        max: i64,
+    },
+    /// A whole number in a range, where 0 is the separate "dynamic default" sentinel.
+    IntegerOrZero {
+        /// Inclusive lower bound for non-zero values.
+        min: i64,
+        /// Inclusive upper bound.
+        max: i64,
+    },
     /// Free text (up to [`TEXT_MAX`] characters, no control characters).
     Text,
 }
@@ -30,6 +44,9 @@ impl SettingKind {
         match self {
             Self::Choice(options) => ("choice", options.to_vec(), None, None),
             Self::Number { min, max } => ("number", Vec::new(), Some(*min), Some(*max)),
+            Self::Integer { min, max } | Self::IntegerOrZero { min, max } => {
+                ("number", Vec::new(), Some(*min as f64), Some(*max as f64))
+            }
             Self::Text => ("text", Vec::new(), None, None),
         }
     }
@@ -46,6 +63,14 @@ impl SettingKind {
                 .filter(|value| value.is_finite() && *value >= *min && *value <= *max)
                 .and_then(serde_json::Number::from_f64)
                 .map(Value::Number),
+            Self::Integer { min, max } | Self::IntegerOrZero { min, max } => raw
+                .parse::<i64>()
+                .ok()
+                .filter(|value| {
+                    (*value >= *min && *value <= *max)
+                        || (matches!(self, Self::IntegerOrZero { .. }) && *value == 0)
+                })
+                .map(|value| json!(value)),
             Self::Text => Some(Value::String(raw.to_owned())),
         }
     }
@@ -75,6 +100,20 @@ impl SettingKind {
                     ))
                 }
             }
+            Self::Integer { min, max } | Self::IntegerOrZero { min, max } => {
+                let Ok(value) = raw.parse::<i64>() else {
+                    return Err(format!("value {raw:?} must be a whole number"));
+                };
+                if (value >= *min && value <= *max)
+                    || (matches!(self, Self::IntegerOrZero { .. }) && value == 0)
+                {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "value {raw} is outside the allowed range {min}..={max}"
+                    ))
+                }
+            }
             Self::Text => {
                 if raw.len() > TEXT_MAX {
                     return Err(format!("value is longer than {TEXT_MAX} characters"));
@@ -92,7 +131,9 @@ impl SettingKind {
     pub(crate) fn json_kind(&self) -> Value {
         match self {
             Self::Choice(_) | Self::Text => json!("string"),
-            Self::Number { .. } => json!("number"),
+            Self::Number { .. } | Self::Integer { .. } | Self::IntegerOrZero { .. } => {
+                json!("number")
+            }
         }
     }
 }
