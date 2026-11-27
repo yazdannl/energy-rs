@@ -52,6 +52,11 @@ impl Engine {
         self.set_phase("meter.read");
         let meter = self.meter.reading().await.with_pack_power(pack_w);
         self.mark(now)?;
+        // The replan biases its near-term load from what the house is actually drawing. Sampling
+        // here covers every tick, including the five minutes between two solves.
+        if let Some(load_kw) = meter.load_kw {
+            self.source.observe_load(now, load_kw);
+        }
         self.refresh_policy(now, &view, &meter);
         self.wire(now, &mut view)?;
         self.mark(now)?;

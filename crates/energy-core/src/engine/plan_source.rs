@@ -19,6 +19,12 @@ pub trait PlanSource: Send + Sync {
     /// Which upstream inputs changed since the last tick.
     fn changes(&self) -> Changes;
 
+    /// One live house-load sample for the windowed forecast bias.
+    ///
+    /// Sources that do not observe consumption keep the default no-op; the engine passes the
+    /// meter's kW reading once per tick, including while it is not replanning.
+    fn observe_load(&self, _now: i64, _load_kw: f64) {}
+
     /// The price-aware full-charge rule, when this source owns one.
     ///
     /// The engine uses the same port for the dwell writer and for manual requests, so a plan and

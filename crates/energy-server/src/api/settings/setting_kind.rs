@@ -20,6 +20,15 @@ pub(crate) enum SettingKind {
         /// Inclusive upper bound.
         max: f64,
     },
+    /// A number in an inclusive range, where 0 is a separate "dynamic default" sentinel.
+    ///
+    /// The schema still publishes the real range (e.g. 60..=3600 s); only the sentinel is extra.
+    NumberOrZero {
+        /// Inclusive lower bound for non-zero values.
+        min: f64,
+        /// Inclusive upper bound.
+        max: f64,
+    },
     /// Free text (up to [`TEXT_MAX`] characters, no control characters).
     Text,
 }
@@ -29,7 +38,9 @@ impl SettingKind {
     pub(crate) fn describe(&self) -> (&'static str, Vec<&'static str>, Option<f64>, Option<f64>) {
         match self {
             Self::Choice(options) => ("choice", options.to_vec(), None, None),
-            Self::Number { min, max } => ("number", Vec::new(), Some(*min), Some(*max)),
+            Self::Number { min, max } | Self::NumberOrZero { min, max } => {
+                ("number", Vec::new(), Some(*min), Some(*max))
+            }
             Self::Text => ("text", Vec::new(), None, None),
         }
     }
@@ -44,6 +55,14 @@ impl SettingKind {
                 .parse::<f64>()
                 .ok()
                 .filter(|value| value.is_finite() && *value >= *min && *value <= *max)
+                .and_then(serde_json::Number::from_f64)
+                .map(Value::Number),
+            Self::NumberOrZero { min, max } => raw
+                .parse::<f64>()
+                .ok()
+                .filter(|value| {
+                    value.is_finite() && (*value == 0.0 || (*value >= *min && *value <= *max))
+                })
                 .and_then(serde_json::Number::from_f64)
                 .map(Value::Number),
             Self::Text => Some(Value::String(raw.to_owned())),
@@ -63,11 +82,14 @@ impl SettingKind {
                     ))
                 }
             }
-            Self::Number { min, max } => {
+            Self::Number { min, max } | Self::NumberOrZero { min, max } => {
                 let Ok(value) = raw.parse::<f64>() else {
                     return Err(format!("value {raw:?} is not a number"));
                 };
-                if value.is_finite() && value >= *min && value <= *max {
+                if value.is_finite()
+                    && (value >= *min && value <= *max
+                        || matches!(self, Self::NumberOrZero { .. }) && value == 0.0)
+                {
                     Ok(())
                 } else {
                     Err(format!(
@@ -92,7 +114,7 @@ impl SettingKind {
     pub(crate) fn json_kind(&self) -> Value {
         match self {
             Self::Choice(_) | Self::Text => json!("string"),
-            Self::Number { .. } => json!("number"),
+            Self::Number { .. } | Self::NumberOrZero { .. } => json!("number"),
         }
     }
 }

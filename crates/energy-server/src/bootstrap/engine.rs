@@ -58,6 +58,8 @@ pub fn source_config(engine: &EngineConfig, policy: Policy) -> SourceConfig {
     SourceConfig {
         reserve_soc_pct: engine.reserve_soc_pct,
         wear_eur_per_kwh: policy.wear_eur_per_kwh,
+        load_forecast_bias_slots: engine.load_forecast_bias_slots,
+        load_forecast_bias_lookback_s: engine.load_forecast_bias_lookback_s,
         policy,
         ..SourceConfig::default()
     }

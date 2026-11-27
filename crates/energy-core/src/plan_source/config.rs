@@ -29,6 +29,10 @@ pub struct SourceConfig {
     pub terminal_target_pct: Option<f64>,
     /// Penalty per kWh of terminal-target error, EUR/kWh.
     pub target_penalty_eur_per_kwh: f64,
+    /// Number of slots after the current one that the measured-load bias may move (0..=96).
+    pub load_forecast_bias_slots: usize,
+    /// Consumption lookback for the bias, seconds; 0 resolves to `replan_seconds`.
+    pub load_forecast_bias_lookback_s: i64,
     /// Normal replan interval, seconds.
     pub replan_seconds: i64,
     /// Absolute stale-plan bound, seconds.
@@ -51,6 +55,8 @@ impl Default for SourceConfig {
             policy: Policy::legacy(),
             terminal_target_pct: None,
             target_penalty_eur_per_kwh: 1.0,
+            load_forecast_bias_slots: 1,
+            load_forecast_bias_lookback_s: 0,
             replan_seconds: 900,
             stale_plan_seconds: 1800,
             price_max_age_s: 6 * 3600,

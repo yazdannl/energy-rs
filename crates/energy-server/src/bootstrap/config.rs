@@ -24,6 +24,24 @@ pub fn engine_config(options: &Options, ledger: &Ledger) -> EngineConfig {
         mode: options.mode(),
         tick_seconds: options.tick_seconds(),
         replan_seconds: seconds(ledger, "replan_seconds", defaults.replan_seconds),
+        load_forecast_bias_slots: {
+            let slots = number(ledger, "load_forecast_bias_slots", 1.0);
+            if slots.is_finite() && slots >= 0.0 {
+                format!("{:.0}", slots.round().min(96.0))
+                    .parse::<usize>()
+                    .unwrap_or(1)
+            } else {
+                1
+            }
+        },
+        load_forecast_bias_lookback_s: {
+            let lookback = seconds(ledger, "load_forecast_bias_lookback_s", 0);
+            if lookback > 0 {
+                lookback.clamp(60, 3_600)
+            } else {
+                0
+            }
+        },
         stale_plan_seconds: seconds(ledger, "stale_input_seconds", defaults.stale_plan_seconds),
         reserve_soc_pct: number(ledger, "reserve_soc_pct", defaults.reserve_soc_pct),
         solar_reserve_pct: number(ledger, "solar_reserve_pct", 20.0),

@@ -2,14 +2,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use energy_price::PriceBook;
-
+use super::load_bias::{apply_bias, effective_lookback_s, measure};
 use crate::dispatch::BoxFuture;
 use crate::engine::PlanSource;
 use crate::maintenance::MaintenancePort;
-use crate::plan::{Differential, HORIZON_SLOTS, PackState, Plan, PlanError, SLOT_SECONDS};
-use crate::plan_source::PolicyHandle;
-use crate::plan_source::{MIN_HORIZON_SLOTS, PlanSupply, SourceConfig, Supply};
+use crate::plan::{Differential, PackState, Plan, PlanError, SLOT_SECONDS};
+use crate::plan_source::{PlanSupply, PolicyHandle, SourceConfig, Supply};
 use crate::replan::Changes;
 
 /// The engine's plan source over a [`PlanSupply`].
@@ -25,6 +23,10 @@ pub struct LivePlanSource<S: PlanSupply> {
     last: Mutex<Option<Fingerprint>>,
     differential: Differential,
     maintenance: Option<Arc<MaintenancePort>>,
+    /// Time-stamped live load samples, kept for at most an hour.
+    samples: Mutex<Vec<(i64, f64)>>,
+    /// Last accepted solve, for the bias note only; samples survive it on purpose.
+    last_solve_at: Mutex<Option<i64>>,
 }
 
 /// What makes a stored plan's inputs outdated without reading the inputs again.
@@ -55,6 +57,8 @@ impl<S: PlanSupply> LivePlanSource<S> {
             last: Mutex::new(None),
             differential: Differential::default(),
             maintenance: None,
+            samples: Mutex::new(Vec::new()),
+            last_solve_at: Mutex::new(None),
         }
     }
 
@@ -88,9 +92,15 @@ impl<S: PlanSupply> LivePlanSource<S> {
     /// Build one plan from one supply read.
     fn assemble(&self, now: i64, packs: Vec<PackState>, supply: Supply) -> Result<Plan, PlanError> {
         self.refuse_stale_prices(now, supply.price_fetched_at)?;
-        let slots = horizon_slots(&supply.prices, now)?;
+        let slots = super::live_support::horizon_slots(&supply.prices, now)?;
         let from = supply.prices.slot_at(now).map_or(now, |slot| slot.t_start);
-        let forecast = self.forecast(&supply, from, slots, now)?;
+        let mut forecast = self.forecast(&supply, from, slots, now)?;
+        if let Some(note) = self.load_bias(&mut forecast, now) {
+            forecast.note = Some(match forecast.note.take() {
+                Some(prior) => format!("{prior}; {note}"),
+                None => note,
+            });
+        }
         let maintenance_packs = packs.clone();
         let mut input = self
             .config
@@ -109,6 +119,9 @@ impl<S: PlanSupply> LivePlanSource<S> {
         };
         let check = self.differential.due(now).then_some(&self.differential);
         let mut plan = input.plan_checked(check)?;
+        if let Ok(mut anchor) = self.last_solve_at.lock() {
+            *anchor = Some(now);
+        }
         self.place_maintenance(now, &maintenance_packs, &mut plan);
         Ok(plan)
     }
@@ -198,6 +211,34 @@ impl<S: PlanSupply> LivePlanSource<S> {
         })
     }
 
+    /// Bias the near-term load forecast from the measured consumption window.
+    fn load_bias(&self, forecast: &mut PlannedForecast, now: i64) -> Option<String> {
+        let setting = self.config.load_forecast_bias_lookback_s;
+        let lookback_s = effective_lookback_s(setting, self.config.replan_seconds);
+        let samples = self.samples.lock().ok()?;
+        let observed = measure(&samples, now, lookback_s)?;
+        let (bias_kw, slots) = apply_bias(
+            &mut forecast.load_kw,
+            observed.rate_kw,
+            self.config.load_forecast_bias_slots,
+        )?;
+        drop(samples);
+        let anchor = self
+            .last_solve_at
+            .lock()
+            .ok()?
+            .map_or_else(|| "none".to_owned(), |at| at.to_string());
+        let source = if setting > 0 {
+            "setting"
+        } else {
+            "replan_seconds"
+        };
+        Some(format!(
+            "load bias: {:.3} kW over {} s (lookback {} s from {}, last solve {}), {:.3} kW on {} slot(s)",
+            observed.rate_kw, observed.elapsed_s, lookback_s, source, anchor, bias_kw, slots
+        ))
+    }
+
     /// Record which inputs changed since the previous read, for the next trigger check.
     ///
     /// A forecast's `as_of` is the read instant, and the real supply rebuilds its series (the EWMA
@@ -233,6 +274,10 @@ impl<S: PlanSupply> LivePlanSource<S> {
 }
 
 impl<S: PlanSupply> PlanSource for LivePlanSource<S> {
+    fn observe_load(&self, now: i64, load_kw: f64) {
+        super::load_bias::record_sample(&self.samples, now, load_kw);
+    }
+
     fn plan(&self, now: i64, packs: Vec<PackState>) -> BoxFuture<'_, Result<Plan, PlanError>> {
         Box::pin(async move {
             let supply = self.supply.supply(now).await?;
@@ -251,40 +296,4 @@ impl<S: PlanSupply> PlanSource for LivePlanSource<S> {
     fn maintenance(&self) -> Option<&MaintenancePort> {
         self.maintenance.as_deref()
     }
-}
-
-/// Contiguous quarter-hours the book covers from the slot containing `now`, capped at the horizon.
-///
-/// Never forward-fills: before the ~13:00 CET publication tomorrow's slots simply do not exist, so
-/// the plan is shorter and the replan trigger replaces it once they do. A book that cannot cover
-/// the next hour at all is refused as stale/insufficient instead of producing a one-slot plan.
-fn horizon_slots(prices: &PriceBook, now: i64) -> Result<usize, PlanError> {
-    let first = prices
-        .slot_at(now)
-        .ok_or(PlanError::PriceGap { t_start: now })?;
-    if first.source.slot_seconds() != SLOT_SECONDS {
-        return Err(PlanError::PriceResolution {
-            expected_s: SLOT_SECONDS,
-            got_s: first.source.slot_seconds(),
-        });
-    }
-    let mut slots = 0;
-    let mut t_start = first.t_start;
-    while slots < HORIZON_SLOTS {
-        let covered = prices
-            .slot_at(t_start)
-            .is_some_and(|slot| slot.t_start == t_start);
-        if !covered {
-            break;
-        }
-        slots += 1;
-        t_start = t_start.saturating_add(SLOT_SECONDS);
-    }
-    if slots < MIN_HORIZON_SLOTS {
-        return Err(PlanError::PriceCoverage {
-            slots,
-            minimum: MIN_HORIZON_SLOTS,
-        });
-    }
-    Ok(slots)
 }
