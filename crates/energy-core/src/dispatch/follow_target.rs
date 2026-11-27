@@ -5,9 +5,9 @@
 //! rate is the decision: following the grid there would trade the plan's charge (or sale) for a
 //! net-import target, which is not what the plan said. So those slots are left alone, and every
 //! other slot is self-consumption: absorb the surplus, cover the house, export or import only what
-//! the fleet physically cannot avoid. The hybrid exception is a self-consumption slot whose
-//! feed-in price clears the plan's cost-basis floor: its planned discharge stays, and the ladder
-//! judges any resulting export.
+//! the fleet physically cannot avoid. The hybrid exception is a planned discharge in such a slot
+//! whose feed-in price clears the plan's cost-basis floor: the setpoint stays, and the ladder
+//! judges any resulting export. Zero-power holds and PV charging still follow the meter.
 
 use crate::dispatch::{FleetView, MeterReading};
 use crate::safety::{FollowRequest, GridFollow, SafetyLimits};
@@ -96,13 +96,15 @@ fn desired_grid_w(slot: &PlanSlot, sell_floor: Option<f64>) -> Option<f64> {
     if exchanging {
         return None;
     }
-    // The ladder's cost-basis floor also settles a self-consumption discharge: when the slot pays
-    // for its export, the plan stands. Missing or non-finite prices fail closed to the zero-grid
-    // follow, and the comparison never sees a NaN or an infinity.
-    if let (Some(floor), feed) = (sell_floor, slot.feed_in)
+    // The ladder's cost-basis floor also settles a planned self-consumption discharge: at or above
+    // its floor the setpoint stands. Zero-power holds and PV charging are not planned discharges,
+    // so they keep following the meter. Missing or non-finite prices fail closed, and the
+    // comparison uses the ladder's exact rule (no netting epsilon here).
+    if slot.battery_kw < -NEGLIGIBLE_KW
+        && let (Some(floor), feed) = (sell_floor, slot.feed_in)
         && feed.is_finite()
         && floor.is_finite()
-        && feed >= floor - PRICE_EPSILON
+        && feed >= floor
     {
         return None;
     }

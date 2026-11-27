@@ -46,13 +46,21 @@ fn four_packs() -> Vec<PackReading> {
 
 /// One dispatcher tick; `target_w` is the fleet target after the follow and the grid clamps.
 async fn tick(plan: &Plan, packs: Vec<PackReading>, grid_w: f64) -> TickOutcome {
+    tick_with_meter(
+        plan,
+        packs,
+        MeterReading {
+            grid_w: Some(grid_w),
+            load_kw: Some(grid_w / 1000.0),
+            pv_kw: Some(0.0),
+            observed_at: None,
+        },
+    )
+    .await
+}
+
+async fn tick_with_meter(plan: &Plan, packs: Vec<PackReading>, meter: MeterReading) -> TickOutcome {
     let fleet = FleetView::new(packs);
-    let meter = MeterReading {
-        grid_w: Some(grid_w),
-        load_kw: Some(grid_w / 1000.0),
-        pv_kw: Some(0.0),
-        observed_at: None,
-    };
     let overrides = Overrides::none();
     let dispatcher = Dispatcher::new(SafetyLimits::default(), true, 10);
     let input = TickInput {
@@ -76,7 +84,20 @@ async fn target_w(plan: &Plan, grid_w: f64) -> f64 {
 
 #[tokio::test]
 async fn feed_at_the_floor_keeps_the_full_planned_discharge() {
-    let plan = gated_plan(PAID_FEED, Some(FLOOR), -3.2, 3.5);
+    let plan = gated_plan(FLOOR, Some(FLOOR), -3.2, 3.5);
+    assert_eq!(target_w(&plan, MEASURED_GRID_W).await, PLAN_W);
+}
+
+#[tokio::test]
+async fn feed_just_below_the_floor_still_follows_the_grid() {
+    // 5e-5 is inside the old netting epsilon: only the ladder's exact comparison catches this.
+    let plan = gated_plan(FLOOR - 5e-5, Some(FLOOR), -3.2, 3.5);
+    assert_eq!(target_w(&plan, MEASURED_GRID_W).await, -MEASURED_GRID_W);
+}
+
+#[tokio::test]
+async fn feed_just_above_the_floor_keeps_the_full_planned_discharge() {
+    let plan = gated_plan(FLOOR + 1e-6, Some(FLOOR), -3.2, 3.5);
     assert_eq!(target_w(&plan, MEASURED_GRID_W).await, PLAN_W);
 }
 
@@ -90,6 +111,30 @@ async fn feed_above_the_floor_keeps_the_full_planned_discharge() {
 async fn feed_below_the_floor_still_follows_the_grid_to_zero() {
     let plan = gated_plan(CHEAP_FEED, Some(FLOOR), -3.2, 3.5);
     assert_eq!(target_w(&plan, MEASURED_GRID_W).await, -MEASURED_GRID_W);
+}
+
+#[tokio::test]
+async fn a_paid_zero_power_hold_still_follows_the_grid() {
+    let plan = gated_plan(FLOOR, Some(FLOOR), 0.0, 0.8);
+    assert_eq!(target_w(&plan, MEASURED_GRID_W).await, -MEASURED_GRID_W);
+}
+
+#[tokio::test]
+async fn a_paid_pv_charging_slot_still_follows_the_grid() {
+    // Self-consumption charging from a PV surplus: battery and planned grid both flow in, so this
+    // is not a planned discharge even though the feed-in price clears the floor.
+    let mut plan = gated_plan(FLOOR, Some(FLOOR), 0.5, 0.5);
+    for slot in &mut plan.slots {
+        slot.pv_kw = 1.5;
+    }
+    let meter = MeterReading {
+        grid_w: Some(-1_000.0),
+        load_kw: Some(0.5),
+        pv_kw: Some(1.5),
+        observed_at: None,
+    };
+    let outcome = tick_with_meter(&plan, four_packs(), meter).await;
+    assert_eq!(outcome.target_w, 1_000.0, "absorb the measured surplus");
 }
 
 #[tokio::test]
