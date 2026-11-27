@@ -397,3 +397,71 @@ async fn an_off_override_on_a_latched_pack_sends_a_hold_with_the_override_reason
     );
     assert!(hold_to(&sink, "SN-FULL"), "{:?}", sink.commands());
 }
+
+/// The explicit discharge action takes the same route as a negative manual setpoint.
+#[tokio::test]
+async fn a_manual_discharge_action_can_use_a_ceiling_latched_pack() {
+    let fleet = vec![full("SN-FULL"), able("SN-A", 60.0)];
+    let dispatcher = Dispatcher::new(limits(), true, 10);
+    latch(&dispatcher, &fleet).await;
+
+    let sink = FakeSink::new();
+    let overrides = Overrides::new(vec![ManualOverride::manual(
+        "SN-FULL",
+        OverrideAction::Discharge { watts: 800.0 },
+        NOW + 30,
+    )]);
+    let outcome = tick(
+        &dispatcher,
+        &sink,
+        &fleet,
+        &plan_at(1600.0, 20.0),
+        NOW + 5,
+        &overrides,
+    )
+    .await;
+    let row = outcome.report("SN-FULL").expect("full row");
+    assert_eq!(row.requested_w, -800.0);
+    assert_eq!(row.intended_w, -800.0);
+    assert_eq!(row.reason, Reason::ManualOverride);
+    assert!(!row.capability_skipped);
+    assert!(negative_write_to(&sink, "SN-FULL"), "{:?}", sink.commands());
+}
+
+/// The ceiling latch is not an export permission: the SoC ladder still refuses a discharge.
+#[tokio::test]
+async fn a_manual_discharge_action_is_blocked_when_the_ladder_refuses_it() {
+    let tight = SafetyLimits {
+        reserve_soc_pct: 100.0,
+        ramp_limit_w: 10_000.0,
+        ..SafetyLimits::default()
+    };
+    let fleet = vec![full("SN-FULL"), able("SN-A", 60.0)];
+    let dispatcher = Dispatcher::new(tight, true, 10);
+    latch(&dispatcher, &fleet).await;
+
+    let sink = FakeSink::new();
+    let overrides = Overrides::new(vec![ManualOverride::manual(
+        "SN-FULL",
+        OverrideAction::Discharge { watts: 800.0 },
+        NOW + 30,
+    )]);
+    let outcome = tick(
+        &dispatcher,
+        &sink,
+        &fleet,
+        &plan_at(1600.0, 20.0),
+        NOW + 5,
+        &overrides,
+    )
+    .await;
+    let row = outcome.report("SN-FULL").expect("full row");
+    assert_eq!(row.requested_w, -800.0);
+    assert_eq!(row.intended_w, 0.0);
+    assert_eq!(row.reason, Reason::SocFloor);
+    assert!(
+        !negative_write_to(&sink, "SN-FULL"),
+        "the refusal reaches the device as a hold, not a discharge: {:?}",
+        sink.commands()
+    );
+}

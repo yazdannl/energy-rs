@@ -192,5 +192,6 @@ pub(crate) fn note_for(overridden: Option<&ManualOverride>) -> Option<String> {
         OverrideAction::Charge { .. } => {
             Some("full-charge maintenance: charging to the top balanced target".to_owned())
         }
+        OverrideAction::Discharge { .. } => None,
     }
 }
