@@ -15,7 +15,7 @@ use crate::db::migrations::MIGRATIONS;
 use crate::error::LedgerError;
 
 /// Current schema version; adding a migration bumps this and appends to the list.
-pub(crate) const SCHEMA_VERSION: i64 = 14;
+pub(crate) const SCHEMA_VERSION: i64 = 15;
 
 const VERSION_KEY: &str = "schema_version";
 
@@ -162,6 +162,42 @@ mod tests {
                 .unwrap();
             assert_eq!(tables, 1);
         }
+    }
+
+    #[test]
+    fn v15_adds_nullable_manual_round_trip_without_losing_rows() {
+        let mut conn = migrated_to(14);
+        conn.execute(
+            "INSERT INTO packs (sn, label_capacity_kwh, first_seen, last_seen)
+             VALUES ('ABC123', 1.92, 100, 200)",
+            [],
+        )
+        .unwrap();
+        run(&mut conn).unwrap();
+        let (sn, manual, packs): (String, Option<f64>, i64) = conn
+            .query_row(
+                "SELECT sn, manual_round_trip,
+                    (SELECT COUNT(*) FROM packs) FROM packs",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(sn, "ABC123");
+        assert_eq!(manual, None);
+        assert_eq!(packs, 1);
+        conn.execute(
+            "UPDATE packs SET manual_round_trip = 0.83 WHERE sn = 'ABC123'",
+            [],
+        )
+        .unwrap();
+        let stored: f64 = conn
+            .query_row(
+                "SELECT manual_round_trip FROM packs WHERE sn = 'ABC123'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((stored - 0.83).abs() < 1e-12);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 use energy_battery::learning::{
     CapacityBounds, CapacityPool, LearningEvent, LearningProfile, LearningReport, LearningStore,
+    NEVER_MEASURED_AT,
 };
 use energy_ledger::{Ledger, Session, SessionRules, Tier};
 
@@ -184,7 +185,17 @@ fn learn_and_publish(
     );
     let profile = LearningProfile::from_report(&report);
     let event = LearningEvent::new(state.sn.clone(), now, report.summary());
-    store_row(ledger, state.id, &report, report.measured_at.timestamp())?;
+    // `learned_at` is also the provenance stamp the precedence resolver reads. Only a confident
+    // measurement or a confident profile carried forward publishes a round trip: capacity-only
+    // and partial-pair passes keep the typed seed, so they keep the never-measured stamp and an
+    // operator's entry stays the default.
+    let published_round_trip = report.efficiency.applied || report.efficiency.kept_previous;
+    let learned_at = if published_round_trip {
+        report.measured_at.timestamp()
+    } else {
+        NEVER_MEASURED_AT.timestamp()
+    };
+    store_row(ledger, state.id, &report, learned_at)?;
     let event = store.save_with_event(&profile, event)?;
     store.publish_event(&event)?;
     Ok(report)
@@ -271,10 +282,16 @@ mod event_tests;
 #[cfg(test)]
 mod failure_tests;
 #[cfg(test)]
+mod legacy_eta_tests;
+#[cfg(test)]
 mod legacy_tests;
+#[cfg(test)]
+mod manual_eta_tests;
 #[cfg(test)]
 mod pooling_tests;
 #[cfg(test)]
 mod scheduled_tests;
 #[cfg(test)]
 mod sessions_tests;
+#[cfg(test)]
+mod upgrade_v15_tests;

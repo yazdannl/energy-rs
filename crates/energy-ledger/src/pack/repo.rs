@@ -3,7 +3,8 @@
 //! Discovery may re-register the same serial every poll; the upsert keeps `first_seen`, only moves
 //! `last_seen` forward, and never blanks a known capacity or limit with a `NULL` from a later
 //! report. The operator's `alias` is not part of the upsert at all: only [`Packs::set_alias`] writes
-//! it, so a re-registration cannot rename a pack back.
+//! it, so a re-registration cannot rename a pack back. `manual_round_trip` is likewise written
+//! only by [`Packs::set_manual_round_trip`]; discovery never overwrites the operator's entry.
 
 use std::sync::MutexGuard;
 
@@ -11,11 +12,11 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::LedgerError;
 use crate::measurement::Measurement;
-use crate::pack::{Pack, PackState};
+use crate::pack::{Pack, PackField, PackState};
 
 const COLUMNS: &str = "id, sn, name, alias, label_capacity_kwh, reported_capacity_kwh, max_charge_w, max_discharge_w, \
      first_seen, last_seen, learned_capacity_kwh, learned_round_trip, learned_confidence, learned_at, \
-     last_full_charge_at, dwell_started_at";
+     last_full_charge_at, dwell_started_at, manual_round_trip";
 
 /// Repository for the `packs` table, holding the ledger connection guard for the duration of a
 /// scope.
@@ -90,6 +91,76 @@ impl<'a> Packs<'a> {
             .conn
             .query_row(&sql, params![sn, alias], Pack::from_row)
             .optional()?;
+        Ok(pack)
+    }
+
+    /// Set or clear the operator's pre-learning round trip, returning the stored row.
+    ///
+    /// The physical range is validated by the caller; this repository stores the fraction as
+    /// given, so a corrupt row can be inspected even though readers ignore it.
+    pub fn set_manual_round_trip(
+        &self,
+        sn: &str,
+        round_trip: Option<f64>,
+    ) -> Result<Option<Pack>, LedgerError> {
+        let sql =
+            format!("UPDATE packs SET manual_round_trip = ?2 WHERE sn = ?1 RETURNING {COLUMNS}");
+        let pack = self
+            .conn
+            .query_row(&sql, params![sn, round_trip], Pack::from_row)
+            .optional()?;
+        Ok(pack)
+    }
+
+    /// Apply the operator's alias and manual round trip in one transaction.
+    ///
+    /// Both fields are optional edits: `Keep` leaves the stored value alone and `Clear` writes
+    /// `NULL`. A failure in either statement rolls both back, so a rejected PATCH cannot leave a
+    /// half-written pack.
+    pub fn patch(
+        &self,
+        sn: &str,
+        alias: PackField<&str>,
+        manual: PackField<f64>,
+    ) -> Result<Option<Pack>, LedgerError> {
+        let tx = self.conn.unchecked_transaction()?;
+        match alias {
+            PackField::Set(value) => {
+                tx.execute(
+                    "UPDATE packs SET alias = ?2 WHERE sn = ?1",
+                    params![sn, value],
+                )?;
+            }
+            PackField::Clear => {
+                tx.execute("UPDATE packs SET alias = NULL WHERE sn = ?1", params![sn])?;
+            }
+            PackField::Keep => {}
+        }
+        match manual {
+            PackField::Set(value) => {
+                tx.execute(
+                    "UPDATE packs SET manual_round_trip = ?2 WHERE sn = ?1",
+                    params![sn, value],
+                )?;
+            }
+            PackField::Clear => {
+                tx.execute(
+                    "UPDATE packs SET manual_round_trip = NULL WHERE sn = ?1",
+                    params![sn],
+                )?;
+            }
+            PackField::Keep => {}
+        }
+        let pack = tx
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM packs WHERE sn = ?1"),
+                params![sn],
+                Pack::from_row,
+            )
+            .optional()?;
+        if pack.is_some() {
+            tx.commit()?;
+        }
         Ok(pack)
     }
 

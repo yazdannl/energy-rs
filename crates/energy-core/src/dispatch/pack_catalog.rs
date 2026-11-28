@@ -6,14 +6,16 @@
 //! pack is old, which is learning, and which refused a command. The fleet aggregate exists only for
 //! the grid calculation, where the site sees four inverters as one battery.
 //!
-//! Capacity and efficiency come from the pack's own learning profile when one is published, and
-//! fall back to its own `packData` label (`AB2000` = 1.92 kWh) and the typed round trip otherwise.
-//! Nothing here reads a clock: the caller passes the registration instant.
+//! Capacity comes from the pack's own learning profile when one is published, and falls back to
+//! its own `packData` label (`AB2000` = 1.92 kWh). Efficiency uses the shared learned > manual >
+//! default rule from `round_trip`, so an operator's pre-learning entry survives an unmeasured
+//! profile. Nothing here reads a clock: the caller passes the registration instant.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use energy_battery::learning::{DEFAULT_ROUND_TRIP, LearningProfile, LearningStore};
+use energy_battery::learning::round_trip::{published_round_trip, resolve};
+use energy_battery::learning::{LearningProfile, LearningStore};
 use energy_ledger::{Ledger, Pack};
 
 use crate::plan::PackSpec;
@@ -74,8 +76,8 @@ impl PackCatalog {
     ///
     /// The learned capacity is used only when the learner published it
     /// ([`LearningProfile::effective_capacity_kwh`]); otherwise the device's own label stands. The
-    /// efficiency split is the profile's when it is usable, else the typed default, exactly as an
-    /// unlearned pack behaves today.
+    /// efficiency follows the shared learned > manual > default precedence: a profile that has not
+    /// measured a round trip cannot hide the operator's per-pack entry.
     pub fn spec(
         &self,
         sn: &str,
@@ -84,17 +86,18 @@ impl PackCatalog {
         max_discharge_w: f64,
     ) -> PackSpec {
         let profile = self.profile(sn);
-        let default_eta = DEFAULT_ROUND_TRIP.sqrt();
         let capacity_kwh = profile
             .as_ref()
             .and_then(LearningProfile::effective_capacity_kwh)
             .unwrap_or(label_capacity_kwh);
-        let eta_charge = profile
+        let (stored_learned, manual) = self.stored_round_trip(sn);
+        let learned = profile
             .as_ref()
-            .map_or(default_eta, |profile| split(profile.eta_charge));
-        let eta_discharge = profile
-            .as_ref()
-            .map_or(default_eta, |profile| split(profile.eta_discharge));
+            .filter(|profile| profile.efficiency_applied)
+            .map(|profile| profile.round_trip)
+            .or(stored_learned);
+        let (round_trip, _) = resolve(learned, manual);
+        let eta = round_trip.sqrt();
         PackSpec {
             pack_id: sn.to_owned(),
             capacity_kwh,
@@ -102,8 +105,32 @@ impl PackCatalog {
             max_soc_pct: 100.0,
             max_charge_w,
             max_discharge_w,
-            eta_charge,
-            eta_discharge,
+            eta_charge: eta,
+            eta_discharge: eta,
+        }
+    }
+
+    /// The row's published measurement and the operator's entry, in that order.
+    ///
+    /// A ledger read failure leaves both absent, so the typed default stays in charge.
+    fn stored_round_trip(&self, sn: &str) -> (Option<f64>, Option<f64>) {
+        let stored = self.ledger.packs().and_then(|packs| {
+            packs.by_sn(sn).map(|pack| {
+                pack.map(|pack| {
+                    (
+                        published_round_trip(pack.learned_round_trip, pack.learned_at),
+                        pack.manual_round_trip,
+                    )
+                })
+                .unwrap_or_default()
+            })
+        });
+        match stored {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(pack = sn, %error, "pack round trip read failed; using the default");
+                (None, None)
+            }
         }
     }
 
@@ -117,14 +144,5 @@ impl PackCatalog {
                 None
             }
         }
-    }
-}
-
-/// A usable split efficiency; anything else falls back to the typed default.
-fn split(value: f64) -> f64 {
-    if value.is_finite() && value > 0.0 && value <= 1.0 {
-        value
-    } else {
-        DEFAULT_ROUND_TRIP.sqrt()
     }
 }

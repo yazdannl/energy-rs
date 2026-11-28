@@ -7,7 +7,7 @@ use super::scheduled_tests::{seed_cycle, seed_profile_with_clock};
 use super::*;
 use crate::wiring::LedgerLearningStore;
 use energy_battery::BatteryError;
-use energy_battery::learning::{LearningProfile, LearningStore};
+use energy_battery::learning::{LearningProfile, LearningStore, NEVER_MEASURED_AT};
 use energy_ledger::Pack;
 
 #[test]
@@ -46,7 +46,8 @@ fn a_failed_profile_commit_is_repaired_by_the_immediate_retry() {
         .get(id)
         .expect("read")
         .expect("pack row");
-    assert_eq!(row.learned_at, Some(now), "the idempotent row write landed");
+    // One partial pair publishes no round trip; the row write still landed.
+    assert_eq!(row.learned_at, Some(NEVER_MEASURED_AT.timestamp()));
     let profile = store
         .load("SN-PUBLISH-FAIL")
         .expect("load")

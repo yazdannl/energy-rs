@@ -1,7 +1,8 @@
 //! The `/api/v1` router.
 //!
-//! Every route is read-only except `PATCH /mode`, `PATCH /settings`, `PATCH /packs/{sn}` and the
-//! three command POSTs, which validate their input and queue one engine command. Failures always
+//! Every route is read-only except `PATCH /mode`, `PATCH /settings`, `PATCH /packs/{sn}` (alias and
+//! pre-learning round trip) and the three command POSTs, which validate their input and queue one
+//! engine command. Failures always
 //! use the envelope from [`error`]; an unknown path under the prefix is a JSON 404, not the SPA
 //! shell.
 
@@ -16,9 +17,9 @@ mod learning;
 mod load_components;
 mod loads;
 mod mode;
-mod pack_alias;
 mod pack_lookup;
 mod pack_override;
+mod pack_patch;
 mod packs;
 mod params;
 mod plan;
@@ -52,7 +53,7 @@ pub fn router() -> Router<Arc<Service>> {
         .route("/health", get(health::health))
         .route("/site", get(site::site))
         .route("/packs", get(packs::packs))
-        .route("/packs/{sn}", patch(pack_alias::patch_alias))
+        .route("/packs/{sn}", patch(pack_patch::patch_pack))
         .route("/prices", get(prices::prices))
         .route("/plan/current", get(plan::current_plan))
         .route("/plans", get(plans::plans))

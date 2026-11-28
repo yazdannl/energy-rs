@@ -8,8 +8,9 @@
 ///
 /// `name` is what discovery registered (Home Assistant's device name); `alias` is the operator's
 /// own label, written only through the pack alias endpoint, so a re-registration never overwrites
-/// it. The `id` is assigned by the database: it is ignored when a pack is upserted and returned on
-/// the stored row.
+/// it. `manual_round_trip` is the operator's pre-learning AC round trip, written only through the
+/// pack PATCH endpoint. The `id` is assigned by the database: it is ignored when a pack is
+/// upserted and returned on the stored row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pack {
     pub id: i64,
@@ -34,6 +35,11 @@ pub struct Pack {
     pub learned_confidence: Option<f64>,
     /// When the learned numbers were written, UTC epoch seconds.
     pub learned_at: Option<i64>,
+    /// The operator's AC round trip in `(0, 1]`, or `None` for the typed default.
+    ///
+    /// Unvalidated as stored: the readers validate it against the physical envelope and ignore a
+    /// corrupt value. Learning never writes this column.
+    pub manual_round_trip: Option<f64>,
     /// Last balancing dwell completed at 100 %, UTC epoch seconds.
     pub last_full_charge_at: Option<i64>,
     /// When the current balancing dwell started, UTC epoch seconds.
@@ -58,6 +64,7 @@ impl Pack {
             learned_round_trip: None,
             learned_confidence: None,
             learned_at: None,
+            manual_round_trip: None,
             last_full_charge_at: None,
             dwell_started_at: None,
         }
@@ -99,6 +106,7 @@ impl Pack {
             learned_confidence: row.get(12)?,
             learned_at: row.get(13)?,
             last_full_charge_at: row.get(14)?,
+            manual_round_trip: row.get(16)?,
             dwell_started_at: row.get(15)?,
         })
     }

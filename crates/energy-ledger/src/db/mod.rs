@@ -10,5 +10,8 @@ pub mod migrate;
 pub mod migration;
 mod migrations;
 
+#[cfg(test)]
+mod migrate_v15_tests;
+
 pub use config::LedgerConfig;
 pub use ledger::Ledger;
