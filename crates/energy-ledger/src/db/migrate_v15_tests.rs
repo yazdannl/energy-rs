@@ -39,6 +39,18 @@ fn v15_backfills_unmeasured_packs_from_the_durable_profile() {
     }
 
     run(&mut conn).unwrap();
+    let corrupt_valid: i64 = conn
+        .query_row(
+            "SELECT json_valid(value) FROM settings
+             WHERE key = 'learning.profile.SN-CORRUPT'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        corrupt_valid, 0,
+        "the fixture must be genuinely malformed JSON"
+    );
     for sn in ["SN-SEED", "SN-MISSING", "SN-CORRUPT"] {
         let (stamp, manual): (Option<i64>, Option<f64>) = conn
             .query_row(

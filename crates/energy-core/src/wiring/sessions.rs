@@ -293,3 +293,5 @@ mod pooling_tests;
 mod scheduled_tests;
 #[cfg(test)]
 mod sessions_tests;
+#[cfg(test)]
+mod upgrade_v15_tests;
